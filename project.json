@@ -1,0 +1,352 @@
+{
+	"contentrating" : "Everyone",
+	"description" : "A retro-futuristic terminal HUD wallpaper with live, audio-reactive metrics. Scales to any resolution. Re-color the entire scheme from one swatch. Optional companion app feeds real system stats; otherwise metrics are simulated. Clock, date, audio spectrum, screen resolution, CPU cores and RAM are always real.",
+	"file" : "index.html",
+	"general" : 
+	{
+		"properties" : 
+		{
+			"alertcolor" : 
+			{
+				"index" : 2,
+				"order" : 102,
+				"text" : "Alert color (high values)",
+				"type" : "color",
+				"value" : "1 0.36 0.36"
+			},
+			"audio_react" : 
+			{
+				"index" : 9,
+				"order" : 109,
+				"text" : "Audio-reactive visualizer",
+				"type" : "bool",
+				"value" : true
+			},
+			"bgcolor" :
+			{
+				"index" : 1,
+				"order" : 101,
+				"text" : "Background color",
+				"type" : "color",
+				"value" : "0.0078 0.031 0.047"
+			},
+			"oled_mode" :
+			{
+				"index" : 35,
+				"order" : 101.5,
+				"text" : "OLED true-black mode",
+				"type" : "bool",
+				"value" : false
+			},
+			"clock_24h" : 
+			{
+				"index" : 12,
+				"order" : 112,
+				"text" : "24-hour clock",
+				"type" : "bool",
+				"value" : true
+			},
+			"elevation" : 
+			{
+				"index" : 23,
+				"order" : 123,
+				"text" : "Elevation (m)",
+				"type" : "textinput",
+				"value" : "16"
+			},
+			"glow_strength" : 
+			{
+				"index" : 3,
+				"max" : 2,
+				"min" : 0,
+				"order" : 103,
+				"step" : 0.05,
+				"text" : "Glow intensity",
+				"type" : "slider",
+				"value" : 1
+			},
+			"header_appearance" : 
+			{
+				"index" : 0,
+				"order" : 100,
+				"text" : "── APPEARANCE ──",
+				"type" : "text"
+			},
+			"header_clock" : 
+			{
+				"index" : 11,
+				"order" : 111,
+				"text" : "── CLOCK & IDENTITY ──",
+				"type" : "text"
+			},
+			"header_location" : 
+			{
+				"index" : 18,
+				"order" : 118,
+				"text" : "── LOCATION ──",
+				"type" : "text"
+			},
+			"header_metrics" : 
+			{
+				"index" : 7,
+				"order" : 107,
+				"text" : "── METRICS ──",
+				"type" : "text"
+			},
+			"header_panels" : 
+			{
+				"index" : 24,
+				"order" : 124,
+				"text" : "── PANELS (toggle on/off) ──",
+				"type" : "text"
+			},
+			"host_name" : 
+			{
+				"index" : 17,
+				"order" : 117,
+				"text" : "Host name",
+				"type" : "textinput",
+				"value" : "Nebula Station"
+			},
+			"host_user" : 
+			{
+				"index" : 15,
+				"order" : 115,
+				"text" : "Prompt (user@host)",
+				"type" : "textinput",
+				"value" : "root@unit"
+			},
+			"lat_dir" : 
+			{
+				"index" : 20,
+				"options" : 
+				[
+					{
+						"label" : "North",
+						"value" : "N"
+					},
+					{
+						"label" : "South",
+						"value" : "S"
+					}
+				],
+				"order" : 120,
+				"text" : "Lat hemisphere",
+				"type" : "combo",
+				"value" : "N"
+			},
+			"latitude" : 
+			{
+				"index" : 19,
+				"order" : 119,
+				"text" : "Latitude",
+				"type" : "textinput",
+				"value" : "37.7749"
+			},
+			"lon_dir" : 
+			{
+				"index" : 22,
+				"options" : 
+				[
+					{
+						"label" : "West",
+						"value" : "W"
+					},
+					{
+						"label" : "East",
+						"value" : "E"
+					}
+				],
+				"order" : 122,
+				"text" : "Lon hemisphere",
+				"type" : "combo",
+				"value" : "W"
+			},
+			"longitude" : 
+			{
+				"index" : 21,
+				"order" : 121,
+				"text" : "Longitude",
+				"type" : "textinput",
+				"value" : "122.4194"
+			},
+			"metric_speed" : 
+			{
+				"index" : 10,
+				"max" : 3,
+				"min" : 0.2,
+				"order" : 110,
+				"step" : 0.1,
+				"text" : "Simulated metric liveliness",
+				"type" : "slider",
+				"value" : 1
+			},
+			"os_name" : 
+			{
+				"index" : 16,
+				"order" : 116,
+				"text" : "OS name",
+				"type" : "textinput",
+				"value" : "CyberOS 2.4.1"
+			},
+			"p_audio" : 
+			{
+				"index" : 30,
+				"order" : 130,
+				"text" : "Audio visualizer",
+				"type" : "bool",
+				"value" : true
+			},
+			"p_tailnet" :
+			{
+				"index" : 29,
+				"order" : 129,
+				"text" : "Tailnet devices",
+				"type" : "bool",
+				"value" : true
+			},
+			"p_diag" : 
+			{
+				"index" : 26,
+				"order" : 126,
+				"text" : "System diagnostics",
+				"type" : "bool",
+				"value" : true
+			},
+			"p_proc" : 
+			{
+				"index" : 27,
+				"order" : 127,
+				"text" : "Process list",
+				"type" : "bool",
+				"value" : true
+			},
+			"p_sysmon" : 
+			{
+				"index" : 28,
+				"order" : 128,
+				"text" : "System monitor",
+				"type" : "bool",
+				"value" : true
+			},
+			"p_terminal" : 
+			{
+				"index" : 25,
+				"order" : 125,
+				"text" : "Terminal",
+				"type" : "bool",
+				"value" : true
+			},
+			"p_tl" : 
+			{
+				"index" : 31,
+				"order" : 131,
+				"text" : "Time / location",
+				"type" : "bool",
+				"value" : true
+			},
+			"real_metrics" : 
+			{
+				"index" : 8,
+				"order" : 108,
+				"text" : "Use real metrics if companion app is running",
+				"type" : "bool",
+				"value" : true
+			},
+			"scanlines" : 
+			{
+				"index" : 4,
+				"order" : 104,
+				"text" : "CRT scanlines",
+				"type" : "bool",
+				"value" : true
+			},
+			"schemecolor" : 
+			{
+				"order" : 1,
+				"text" : "Accent color",
+				"type" : "color",
+				"value" : "0 0.851 0.909"
+			},
+			"show_seconds" : 
+			{
+				"index" : 13,
+				"order" : 113,
+				"text" : "Show seconds",
+				"type" : "bool",
+				"value" : true
+			},
+			"show_starfield" : 
+			{
+				"index" : 5,
+				"order" : 105,
+				"text" : "Background particles",
+				"type" : "bool",
+				"value" : true
+			},
+			"show_terrain" :
+			{
+				"index" : 6,
+				"order" : 106,
+				"text" : "Wireframe terrain",
+				"type" : "bool",
+				"value" : true
+			},
+			"ui_scale" :
+			{
+				"index" : 32,
+				"max" : 1.8,
+				"min" : 0.6,
+				"order" : 132,
+				"step" : 0.05,
+				"text" : "Interface scale",
+				"type" : "slider",
+				"value" : 1.0
+			},
+			"uptime_days" :
+			{
+				"index" : 14,
+				"max" : 999,
+				"min" : 0,
+				"order" : 114,
+				"step" : 1,
+				"text" : "Uptime base (days)",
+				"type" : "slider",
+				"value" : 42
+			},
+			"weather_unit" :
+			{
+				"index" : 33,
+				"options" :
+				[
+					{ "label" : "Fahrenheit", "value" : "F" },
+					{ "label" : "Celsius", "value" : "C" }
+				],
+				"order" : 133,
+				"text" : "Weather units",
+				"type" : "combo",
+				"value" : "F"
+			},
+			"auto_location" :
+			{
+				"index" : 34,
+				"order" : 134,
+				"text" : "Auto-detect location (IP)",
+				"type" : "bool",
+				"value" : true
+			}
+		},
+		"supportsaudioprocessing" : true
+	},
+	"official" : false,
+	"preview" : "preview.jpg",
+	"ratingsex" : "none",
+	"ratingviolence" : "none",
+	"tags" : [ "Abstract" ],
+	"title" : "CyberOS // HUD",
+	"type" : "web",
+	"version" : 1,
+	"visibility" : "private",
+	"workshopid" : "3740638103",
+	"workshopurl" : "steam://url/CommunityFilePage/3740638103"
+}

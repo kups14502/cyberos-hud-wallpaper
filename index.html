@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CyberOS HUD</title>
+<style>
+/* =========================================================================
+   CyberOS // HUD Wallpaper
+   A self-contained retro-futuristic terminal dashboard for Wallpaper Engine.
+   All colors flow from CSS variables that are recomputed from the user's
+   chosen accent color, so the whole scheme is themeable from one swatch.
+   The layout is corner-anchored and sized in rem units that scale with the
+   viewport, so it adapts to any resolution / aspect ratio.
+   ========================================================================= */
+
+:root{
+  /* Base accent (overwritten at runtime). Default = cyan from the mockup. */
+  --accent:        rgb(0, 217, 232);
+  --accent-bright: rgb(140, 247, 255);
+  --accent-dim:    rgb(0, 150, 165);
+  --accent-faint:  rgba(0, 217, 232, 0.18);
+  --accent-line:   rgba(0, 217, 232, 0.32);
+  --accent-glow:   rgba(0, 217, 232, 0.55);
+
+  /* Background tones */
+  --bg:        rgb(2, 8, 12);
+  --bg-2:      rgb(4, 13, 18);
+  --panel:     rgba(2, 12, 16, 0.55);
+  --panel-brd: rgba(0, 217, 232, 0.28);
+
+  /* Text */
+  --text:      rgba(190, 245, 252, 0.92);
+  --text-dim:  rgba(120, 190, 200, 0.62);
+
+  /* Alert / critical color (used when a metric crosses threshold) */
+  --alert:     rgb(255, 92, 92);
+
+  /* Effects, set from properties */
+  --glow-strength: 1;
+  --scanline-alpha: 0.05;
+  --ui-scale: 1;
+
+  /* Master UI scale: scales the whole interface with the viewport while
+     staying readable on tiny or huge screens. vmin tracks the short edge,
+     which is what we want for desktops of any aspect ratio. The user's
+     "Interface scale" property multiplies on top. */
+  font-size: calc(clamp(9px, 1.3vmin, 30px) * var(--ui-scale));
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; }
+
+html,body{
+  width:100%; height:100%; overflow:hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Cascadia Mono","Cascadia Code","JetBrains Mono","Fira Code",
+               "Share Tech Mono",Consolas,"DejaVu Sans Mono","Liberation Mono",
+               Menlo,ui-monospace,monospace;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0.02em;
+  cursor: none; /* it's a wallpaper */
+}
+
+#stage{ position:fixed; inset:0; }
+
+/* ---- atmospheric background ---- */
+#starfield, #terrain{
+  position:fixed; left:0; width:100%;
+  pointer-events:none;
+}
+#starfield{ top:0; height:100%; z-index:0; }
+#terrain{ bottom:0; height:42%; z-index:1; }
+/* glow lives here as one composited filter per layer instead of canvas
+   shadowBlur per stroke — same look, a fraction of the raster cost */
+#terrain, #audio-cv{
+  filter: drop-shadow(0 0 calc(3px*var(--glow-strength,1)) var(--accent-glow));
+}
+body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
+
+/* radial vignette + faint background grid for depth */
+#bg-fx{
+  position:fixed; inset:0; z-index:1; pointer-events:none;
+  background:
+    radial-gradient(120% 90% at 50% 12%, transparent 40%, rgba(0,0,0,0.55) 100%),
+    linear-gradient(var(--accent-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--accent-faint) 1px, transparent 1px);
+  background-size: 100% 100%, 4.2rem 4.2rem, 4.2rem 4.2rem;
+  opacity:0.25;
+  mask-image: radial-gradient(120% 100% at 50% 30%, black 30%, transparent 85%);
+  -webkit-mask-image: radial-gradient(120% 100% at 50% 30%, black 30%, transparent 85%);
+}
+
+/* CRT scanline overlay */
+#scanlines{
+  position:fixed; inset:0; z-index:50; pointer-events:none;
+  background: repeating-linear-gradient(
+     0deg, rgba(0,0,0,var(--scanline-alpha)) 0 1px, transparent 1px 3px);
+  mix-blend-mode: multiply;
+}
+
+/* =========================== PANELS / WINDOWS =========================== */
+.win{
+  position:fixed; z-index:10;
+  background: var(--panel);
+  border:1px solid var(--panel-brd);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow:
+     0 0 calc(2.2rem * var(--glow-strength)) rgba(0,0,0,0.6),
+     inset 0 0 calc(2rem * var(--glow-strength)) rgba(0, 217, 232, 0.04);
+  opacity:0; transform: translateY(0.6rem) scale(0.992);
+  animation: panelIn 0.7s cubic-bezier(.2,.8,.2,1) forwards;
+}
+@keyframes panelIn{ to{ opacity:1; transform:none; } }
+
+/* window titlebar */
+.win .bar{
+  display:flex; align-items:center; gap:0.6rem;
+  padding:0.35rem 0.7rem;
+  font-size:0.78rem; letter-spacing:0.12em;
+  color:var(--text-dim);
+  border-bottom:1px solid var(--accent-line);
+  background:linear-gradient(90deg, rgba(0,217,232,0.06), transparent);
+  text-transform:none;
+}
+.win .bar .dot{ width:0.55rem; height:0.55rem; border:1px solid var(--accent-line); }
+.win .bar .ttl{ color:var(--accent); text-shadow:0 0 calc(0.5rem*var(--glow-strength)) var(--accent-glow); }
+.win .bar .ctrls{ margin-left:auto; display:flex; gap:0.55rem; color:var(--accent-dim); font-size:0.9rem; line-height:0.6; }
+.win .bdy{ padding:0.75rem 0.9rem; }
+
+/* section header (no titlebar variant) */
+.sec-h{
+  display:flex; align-items:center; gap:0.5rem;
+  font-size:0.78rem; letter-spacing:0.18em; color:var(--accent);
+  text-shadow:0 0 calc(0.5rem*var(--glow-strength)) var(--accent-glow);
+  margin-bottom:0.75rem;
+}
+.sec-h .plus{ color:var(--accent-dim); }
+.sec-h::after{ content:""; flex:1; height:1px; background:var(--accent-line); }
+
+/* ====================== CORNER STACKS ======================
+   Four fixed flex stacks, one per screen corner. Boxes flow top->bottom in
+   source order within each stack, so reordering is just reordering the HTML —
+   no per-box coordinate math, and nothing overlaps at any resolution. */
+.col{ position:fixed; z-index:10; display:flex; flex-direction:column; gap:1.1rem;
+  width:25rem; max-width:34vw; }
+#lt-stack{ left:2.2vw;  top:4vh; }
+#lb-stack{ left:2.2vw;  bottom:4.5vh; }
+#rt-stack{ right:2.2vw; top:4vh; }
+#rb-stack{ right:2.2vw; bottom:4.5vh; }
+.col .win{ position:relative; width:100%; }
+
+/* OS label that replaces the old top bar (e.g. "HOST//OS  v0.1.7") */
+#os-label{ display:flex; align-items:baseline; gap:0.7rem; justify-content:flex-start;
+  font-size:0.82rem; letter-spacing:0.2em; color:var(--accent);
+  text-shadow:0 0 calc(0.5rem*var(--glow-strength)) var(--accent-glow); padding:0 0.2rem 0.1rem; }
+#os-label .ver{ color:var(--text-dim); letter-spacing:0.14em; font-size:0.72rem; }
+
+/* ------------------------ SYSTEM (identity) box ------------------------ */
+#term-out{ font-size:0.82rem; line-height:1.5; }
+
+/* identity block: host-letter logo beside the spec list */
+.nf{ display:grid; grid-template-columns:auto 1fr; gap:0.2rem 1.2rem; align-items:center; }
+.nf pre{ color:var(--accent); text-shadow:0 0 calc(0.45rem*var(--glow-strength)) var(--accent-glow);
+  font-size:0.62rem; line-height:1.04; }
+.nf .info b{ color:var(--accent); font-weight:600; }
+.nf .info span{ color:var(--text); }
+.nf .info div{ font-size:0.74rem; line-height:1.55; }
+
+/* --------------------- SYSTEM MONITOR --------------------- */
+.mgrp{ font-size:0.66rem; letter-spacing:0.18em; color:var(--accent-dim); margin:0.55rem 0 0.15rem; }
+.mgrp:first-child{ margin-top:0; }
+.mrow{ display:grid; grid-template-columns:6.2rem 1fr auto; align-items:center;
+  gap:0.7rem; padding:0.45rem 0; font-size:0.76rem; }
+.mrow + .mrow{ border-top:1px solid rgba(0,217,232,0.08); }
+.mrow .lbl{ color:var(--text-dim); }
+.mrow .val{ color:var(--accent); text-align:right; min-width:5.4rem;
+  text-shadow:0 0 calc(0.4rem*var(--glow-strength)) var(--accent-glow); }
+.mrow .val.dual{ font-size:0.7rem; line-height:1.25; }
+/* segmented bar */
+.segbar{ display:flex; gap:0.16rem; height:0.7rem; }
+.segbar i{ flex:1; background:var(--accent-faint); transition:background .25s; }
+.segbar i.on{ background:var(--accent); box-shadow:0 0 0.35rem var(--accent-glow); }
+.segbar i.hot{ background:var(--alert); box-shadow:0 0 0.4rem rgba(255,92,92,.6); }
+.spark{ width:100%; height:1.35rem; display:block; }
+
+/* per-drive rows in the System Monitor (label + usage bar + size + R/W) */
+.drv{ padding:0.4rem 0; font-size:0.72rem; }
+.drv + .drv{ border-top:1px solid rgba(0,217,232,0.08); }
+.drv .top{ display:grid; grid-template-columns:1.6rem 1fr auto; align-items:center; gap:0.6rem; }
+.drv .id{ color:var(--accent-bright); font-weight:600; }
+.drv .pct{ color:var(--accent); text-align:right; font-variant-numeric:tabular-nums; min-width:2.6rem;
+  text-shadow:0 0 calc(0.35rem*var(--glow-strength)) var(--accent-glow); }
+.drv .bar{ height:0.5rem; background:var(--accent-faint); position:relative; overflow:hidden; }
+.drv .bar i{ position:absolute; left:0; top:0; bottom:0; background:var(--accent);
+  box-shadow:0 0 0.35rem var(--accent-glow); transition:width .5s; }
+.drv .bar i.hot{ background:var(--alert); box-shadow:0 0 0.35rem rgba(255,92,92,.6); }
+.drv .sub{ display:flex; justify-content:space-between; gap:0.6rem; margin-top:0.22rem;
+  color:var(--text-dim); font-size:0.66rem; letter-spacing:0.04em; }
+.drv .sub .io{ color:var(--accent-dim); white-space:nowrap; }
+
+/* ----------------------------- TAILNET ----------------------------- */
+.tnet{ display:flex; flex-direction:column; gap:0.05rem; }
+.tn{ display:grid; grid-template-columns:0.6rem 1fr auto; align-items:center;
+  gap:0.55rem; padding:0.3rem 0; font-size:0.74rem; }
+.tn + .tn{ border-top:1px solid rgba(0,217,232,0.07); }
+.tn .led{ width:0.5rem; height:0.5rem; border-radius:50%; background:var(--accent);
+  box-shadow:0 0 0.4rem var(--accent-glow); }
+.tn.off .led{ background:var(--text-dim); box-shadow:none; }
+.tn .nm{ color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tn .nm b{ color:var(--accent-bright); font-weight:600; }
+.tn .nm .os{ color:var(--text-dim); font-size:0.66rem; letter-spacing:0.08em; }
+.tn .st{ color:var(--accent-dim); font-size:0.66rem; letter-spacing:0.08em; white-space:nowrap; }
+.tn.off .st{ color:var(--text-dim); }
+.tn.off{ opacity:0.55; }
+
+/* ------------------- SYSTEM DIAGNOSTICS ------------------- */
+.gauges{ display:flex; justify-content:space-around; gap:0.5rem; }
+.gauge{ width:7.2rem; text-align:center; }
+.gauge svg{ width:100%; height:auto; display:block; }
+.gauge .g-track{ fill:none; stroke:var(--accent-faint); }
+.gauge .g-arc{ fill:none; stroke:var(--accent); stroke-linecap:round;
+  filter:drop-shadow(0 0 calc(0.25rem*var(--glow-strength)) var(--accent-glow));
+  transition:stroke-dashoffset .5s cubic-bezier(.2,.8,.2,1), stroke .3s; }
+.gauge .g-lbl{ fill:var(--text-dim); font-size:7px; letter-spacing:1.5px; }
+.gauge .g-val{ fill:var(--accent); font-size:15px; font-weight:600; }
+.gauge .g-unit{ fill:var(--text-dim); font-size:6px; letter-spacing:1px; }
+
+/* ----------------------- PROCESS LIST ----------------------- */
+.ptbl{ width:100%; border-collapse:collapse; font-size:0.76rem; }
+.ptbl th{ text-align:left; color:var(--text-dim); font-weight:400;
+  letter-spacing:0.12em; padding:0.2rem 0.3rem; border-bottom:1px solid var(--accent-line); }
+.ptbl td{ padding:0.32rem 0.3rem; color:var(--text); }
+.ptbl td.n{ text-align:right; color:var(--accent); font-variant-numeric:tabular-nums; }
+.ptbl tr td:nth-child(2){ color:var(--accent-bright); }
+.ptbl .ell{ color:var(--text-dim); letter-spacing:0.3em; padding-top:0.4rem; }
+
+/* audio visualizer: a short wide rectangle (sits below the SYSTEM box) */
+#audio{ height:6.5rem; }
+#audio .bdy{ height:100%; display:flex; align-items:center; padding:0.45rem 0.6rem; }
+#audio canvas{ width:100%; height:100%; display:block; }
+
+/* ----------------------- TIME / LOCATION / WEATHER ----------------------- */
+.tl-grid{ display:grid; grid-template-columns:1fr 1.15fr; gap:1.1rem; }
+.tl-block .h{ font-size:0.7rem; letter-spacing:0.18em; color:var(--text-dim); margin-bottom:0.3rem;
+  display:flex; align-items:center; gap:0.4rem; }
+.tl-block .h .plus{ color:var(--accent-dim); }
+#clock{ font-size:1.9rem; font-weight:600; color:var(--accent); letter-spacing:0.05em;
+  text-shadow:0 0 calc(0.7rem*var(--glow-strength)) var(--accent-glow); line-height:1; font-variant-numeric:tabular-nums; }
+#clock small{ font-size:0.42em; font-weight:400; color:var(--accent-dim); letter-spacing:0.12em; margin-left:0.35em; }
+#date{ font-size:0.8rem; color:var(--text-dim); margin-top:0.35rem; letter-spacing:0.14em; }
+#weekday{ font-size:1rem; color:var(--accent); margin-top:0.6rem; letter-spacing:0.34em; font-weight:600;
+  text-shadow:0 0 calc(0.5rem*var(--glow-strength)) var(--accent-glow); }
+#coords{ font-size:0.82rem; color:var(--accent); margin-top:0.1rem; letter-spacing:0.03em;
+  white-space:nowrap; text-shadow:0 0 calc(0.5rem*var(--glow-strength)) var(--accent-glow); }
+#elev{ font-size:0.78rem; color:var(--text-dim); margin-top:0.3rem; letter-spacing:0.14em; }
+#weather{ font-size:0.78rem; color:var(--accent); margin-top:0.55rem; letter-spacing:0.06em;
+  text-shadow:0 0 calc(0.4rem*var(--glow-strength)) var(--accent-glow); }
+#weather .wx-t{ color:var(--accent-bright); font-weight:600; }
+#weather .wx-sub{ display:block; font-size:0.7rem; color:var(--text-dim); margin-top:0.15rem;
+  letter-spacing:0.08em; text-shadow:none; }
+
+/* ============================ HUD CHROME ============================ */
+/* corner brackets */
+.corner{ position:fixed; width:2.6rem; height:2.6rem; z-index:45; pointer-events:none;
+  border:1px solid var(--accent-line); }
+.corner.tl{ top:2.2vh; left:1.4vw; border-right:0; border-bottom:0; }
+.corner.tr{ top:2.2vh; right:1.4vw; border-left:0; border-bottom:0; }
+.corner.bl{ bottom:2.4vh; left:1.4vw; border-right:0; border-top:0; }
+.corner.br{ bottom:2.4vh; right:1.4vw; border-left:0; border-top:0; }
+
+/* bottom center hashes */
+.bottom-hash{ position:fixed; bottom:1.2vh; left:50%; transform:translateX(-50%); z-index:45;
+  display:flex; gap:0.3rem; opacity:0.4; }
+.bottom-hash i{ width:1.2rem; height:0.45rem; background:var(--accent-dim);
+  transform:skewX(-25deg); display:block; }
+
+/* tiny boot flash */
+#boot{ position:fixed; inset:0; z-index:200; background:var(--accent);
+  animation: boot 0.9s ease-out forwards; pointer-events:none; }
+@keyframes boot{ 0%{opacity:0.0;} 6%{opacity:0.16;} 100%{opacity:0;} }
+
+/* status mode tag (REAL vs SIM metrics) */
+#mode-tag{ position:fixed; left:1.6vw; bottom:1.1vh; z-index:46; font-size:0.66rem;
+  letter-spacing:0.16em; color:var(--text-dim); opacity:0.55; pointer-events:none; }
+#mode-tag b{ color:var(--accent); }
+
+/* hide whole panels when toggled off */
+.hidden{ display:none !important; }
+
+/* On narrow / portrait screens, relax fixed widths so nothing clips */
+@media (max-aspect-ratio: 13/10){
+  .col{ max-width:46vw; }
+}
+</style>
+</head>
+<body>
+<div id="boot"></div>
+
+<div id="stage">
+  <canvas id="starfield"></canvas>
+  <div id="bg-fx"></div>
+  <canvas id="terrain"></canvas>
+
+  <!-- ====================== TOP-LEFT ====================== -->
+  <div id="lt-stack" class="col">
+
+  <div id="os-label"><span class="host">HOST//OS</span> <span class="ver">v0.0.0</span></div>
+
+  <!-- ============ SYSTEM (identity) ============ -->
+  <section class="win" id="terminal" style="animation-delay:.05s">
+    <div class="bdy">
+      <div class="sec-h"><span class="plus">+</span> SYSTEM</div>
+      <div id="term-out"></div>
+    </div>
+  </section>
+
+  <!-- ============ SYSTEM DIAGNOSTICS ============ -->
+  <section class="win" id="diag" style="animation-delay:.15s">
+    <div class="bdy">
+      <div class="sec-h"><span class="plus">+</span> SYSTEM DIAGNOSTICS</div>
+      <div class="gauges" id="gauges"></div>
+    </div>
+  </section>
+  </div><!-- /lt-stack -->
+
+  <!-- ====================== BOTTOM-LEFT ====================== -->
+  <div id="lb-stack" class="col">
+
+  <!-- ============ SYSTEM MONITOR ============ -->
+  <section class="win" id="sysmon" style="animation-delay:.35s">
+    <div class="bdy">
+      <div class="sec-h"><span class="plus">+</span> SYSTEM MONITOR</div>
+
+      <div class="mgrp">CPU</div>
+      <div class="mrow">
+        <span class="lbl">Usage</span>
+        <canvas class="spark" id="sp-cpu"></canvas>
+        <span class="val" id="v-cpu">0%</span>
+      </div>
+      <div class="mrow">
+        <span class="lbl">Temp</span>
+        <div class="segbar" id="bar-temp"></div>
+        <span class="val" id="v-temp">0&deg;C</span>
+      </div>
+
+      <div class="mgrp">GPU</div>
+      <div class="mrow">
+        <span class="lbl">Usage</span>
+        <canvas class="spark" id="sp-gpu"></canvas>
+        <span class="val" id="v-gpu">0%</span>
+      </div>
+      <div class="mrow">
+        <span class="lbl">Temp</span>
+        <div class="segbar" id="bar-gtemp"></div>
+        <span class="val" id="v-gtemp">0&deg;C</span>
+      </div>
+      <div class="mrow">
+        <span class="lbl">VRAM</span>
+        <div class="segbar" id="bar-vram"></div>
+        <span class="val dual" id="v-vram">0%</span>
+      </div>
+
+      <div class="mgrp">MEMORY</div>
+      <div class="mrow">
+        <span class="lbl">RAM</span>
+        <div class="segbar" id="bar-mem"></div>
+        <span class="val" id="v-mem">0%</span>
+      </div>
+      <div class="mrow">
+        <span class="lbl">Swap</span>
+        <div class="segbar" id="bar-swap"></div>
+        <span class="val" id="v-swap">0%</span>
+      </div>
+
+      <div class="mgrp">NETWORK</div>
+      <div class="mrow">
+        <span class="lbl">Traffic</span>
+        <canvas class="spark" id="sp-net"></canvas>
+        <span class="val dual" id="v-net">&darr; 0<br>&uarr; 0</span>
+      </div>
+
+      <div class="mgrp">DRIVES</div>
+      <div id="drives"></div>
+    </div>
+  </section>
+  </div><!-- /lb-stack -->
+
+  <!-- ====================== TOP-RIGHT ====================== -->
+  <div id="rt-stack" class="col">
+
+  <!-- ============ TIME / LOCATION / WEATHER ============ -->
+  <section class="win" id="tl" style="animation-delay:.1s">
+    <div class="bdy">
+      <div class="tl-grid">
+        <div class="tl-block">
+          <div class="h"><span class="plus">+</span> TIME</div>
+          <div id="clock">00:00:00</div>
+          <div id="date">0000 / 00 / 00</div>
+          <div id="weekday">—</div>
+        </div>
+        <div class="tl-block">
+          <div class="h"><span class="plus">+</span> LOCATION</div>
+          <div id="coords">0.0000&deg; N, 0.0000&deg; W</div>
+          <div id="elev">ELEV. 0M</div>
+          <div id="weather"><span class="wx-sub">WEATHER · …</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ AUDIO VISUALIZER ============ -->
+  <section class="win" id="audio" style="animation-delay:.5s">
+    <div class="bdy"><canvas id="audio-cv"></canvas></div>
+  </section>
+  </div><!-- /rt-stack -->
+
+  <!-- ====================== BOTTOM-RIGHT ====================== -->
+  <div id="rb-stack" class="col">
+
+  <!-- ============ PROCESS LIST ============ -->
+  <section class="win" id="proc" style="animation-delay:.3s">
+    <div class="bdy">
+      <div class="sec-h"><span class="plus">+</span> PROCESS LIST</div>
+      <table class="ptbl">
+        <thead><tr><th>PID</th><th>NAME</th><th style="text-align:right">CPU%</th><th style="text-align:right">MEM%</th></tr></thead>
+        <tbody id="proc-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ TAILNET ============ -->
+  <section class="win" id="tailnet" style="animation-delay:.4s">
+    <div class="bdy">
+      <div class="sec-h"><span class="plus">+</span> TAILNET</div>
+      <div class="tnet" id="tnet-body"></div>
+    </div>
+  </section>
+  </div><!-- /rb-stack -->
+
+  <!-- ============ HUD CHROME ============ -->
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <div class="bottom-hash"><i></i><i></i><i></i><i></i><i></i></div>
+  <div id="mode-tag">METRICS: <b id="mode-val">INIT</b></div>
+
+  <div id="scanlines"></div>
+</div>
+
+<script>
+/* =========================================================================
+   RUNTIME
+   ========================================================================= */
+"use strict";
+
+/* ---------- small helpers ---------- */
+const $  = (s)=>document.querySelector(s);
+const $$ = (s)=>Array.from(document.querySelectorAll(s));
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp =(a,b,t)=>a+(b-a)*t;
+const rnd  =(a,b)=>a+Math.random()*(b-a);
+
+/* rate formatting / scaling shared by the monitor and the NET gauge.
+   Sim traffic lives in 0-10 KB/s (linear, lower half of the dial);
+   real traffic can hit MB/s, so the upper half is log-scaled. */
+const fmtRate=(kbs)=> kbs>=1024 ? (kbs/1024).toFixed(kbs>=10240?0:1)+" MB/s" : kbs.toFixed(1)+" KB/s";
+const netScale=(kbs)=> clamp(kbs<=10 ? kbs*5 : 50+Math.log10(kbs/10)*12.5, 0, 100);
+
+/* =========================================================================
+   COLOR ENGINE
+   Take one accent color and derive an entire coherent palette from it.
+   Accepts either a WE "r g b" float string (0..1) or a hex/css string.
+   ========================================================================= */
+function parseColor(input, fallback){
+  try{
+    if(typeof input==="string" && input.trim().split(/\s+/).length===3 &&
+       !input.startsWith("#") && !input.startsWith("rgb")){
+      const [r,g,b]=input.trim().split(/\s+/).map(Number);
+      return {r:Math.round(r*255), g:Math.round(g*255), b:Math.round(b*255)};
+    }
+    if(typeof input==="string" && input.startsWith("#")){
+      let h=input.slice(1);
+      if(h.length===3) h=h.split("").map(c=>c+c).join("");
+      return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)};
+    }
+  }catch(e){}
+  return fallback || {r:0,g:217,b:232};
+}
+function rgbToHsl({r,g,b}){
+  r/=255;g/=255;b/=255;
+  const mx=Math.max(r,g,b),mn=Math.min(r,g,b); let h=0,s=0,l=(mx+mn)/2;
+  if(mx!==mn){ const d=mx-mn; s=l>0.5? d/(2-mx-mn): d/(mx+mn);
+    switch(mx){ case r:h=(g-b)/d+(g<b?6:0);break; case g:h=(b-r)/d+2;break; default:h=(r-g)/d+4; } h/=6; }
+  return {h:h*360,s:s*100,l:l*100};
+}
+function hslStr(h,s,l,a){ return a==null?`hsl(${h} ${s}% ${l}%)`:`hsl(${h} ${s}% ${l}% / ${a})`; }
+
+function applyAccent(rgb){
+  const {h,s,l}=rgbToHsl(rgb);
+  const root=document.documentElement.style;
+  root.setProperty("--accent",        hslStr(h,s,l));
+  root.setProperty("--accent-bright", hslStr(h, clamp(s-10,0,100), clamp(l+28,0,96)));
+  root.setProperty("--accent-dim",    hslStr(h, clamp(s-8,0,100),  clamp(l-22,4,90)));
+  root.setProperty("--accent-faint",  hslStr(h, s, clamp(l-6,0,100), 0.18));
+  root.setProperty("--accent-line",   hslStr(h, s, clamp(l,0,100),   0.32));
+  root.setProperty("--accent-glow",   hslStr(h, s, clamp(l+6,0,100), 0.55));
+  root.setProperty("--panel-brd",     hslStr(h, s, clamp(l,0,100),   0.28));
+  root.setProperty("--text",          hslStr(h, clamp(s-25,0,100), 92, 0.92));
+  root.setProperty("--text-dim",      hslStr(h, clamp(s-35,0,100), 60, 0.62));
+  // canvases read these too
+  PAL.accent = hslStr(h,s,l);
+  PAL.bright = hslStr(h, clamp(s-10,0,100), clamp(l+28,0,96));
+  PAL.dim    = hslStr(h, clamp(s-8,0,100),  clamp(l-22,4,90));
+  PAL.line   = hslStr(h, s, clamp(l,0,100), 0.32);
+  PAL.h=h; PAL.s=s; PAL.l=l;
+  // palette changed -> drop caches that bake in colors
+  AUDGRAD.clear(); STAR.colors=null;
+}
+function applyBg(rgb){
+  const {h,s,l}=rgbToHsl(rgb);
+  if(CFG.oledMode){
+    // OLED true-black: force pure #000 so background pixels switch fully off.
+    // Panels keep a faint hue-tinted tint so the HUD stays legible over black.
+    document.documentElement.style.setProperty("--bg",  "#000");
+    document.documentElement.style.setProperty("--bg-2","#000");
+    document.documentElement.style.setProperty("--panel", hslStr(h, clamp(s,0,100), clamp(l+2,0,100), 0.5));
+    PAL.bg = "#000";
+    return;
+  }
+  document.documentElement.style.setProperty("--bg",  hslStr(h, clamp(s,0,100), clamp(l,0,100)));
+  document.documentElement.style.setProperty("--bg-2",hslStr(h, clamp(s,0,100), clamp(l+3,0,100)));
+  document.documentElement.style.setProperty("--panel",hslStr(h, clamp(s,0,100), clamp(l+2,0,100), 0.55));
+  PAL.bg = hslStr(h, clamp(s,0,100), clamp(l,0,100));
+}
+function applyAlert(rgb){
+  const {h,s,l}=rgbToHsl(rgb);
+  document.documentElement.style.setProperty("--alert", hslStr(h,s,l));
+  PAL.alert = hslStr(h,s,l);
+}
+const PAL={ accent:"#00d9e8", bright:"#8cf7ff", dim:"#0096a5", line:"rgba(0,217,232,.32)",
+            bg:"#02080c", alert:"#ff5c5c", h:186, s:100, l:45 };
+
+/* =========================================================================
+   CONFIG  (defaults; overwritten by Wallpaper Engine properties)
+   ========================================================================= */
+const CFG={
+  accent:"0 0.851 0.909",
+  bg:"0.0078 0.031 0.047",
+  alert:"1 0.36 0.36",
+  audio:true,
+  terrain:true,
+  starfield:true,
+  scanlines:true,
+  oledMode:false,            // OLED true-black mode: forces a pure #000000 background
+  glow:1.0,
+  uiScale:1.0,
+  metricSpeed:1.0,
+  realMetrics:true,          // try localhost companion if present
+  use24h:true,
+  showSeconds:true,
+  hostUser:"root@unit",
+  osName:"CyberOS 2.4.1",
+  hostName:"Nebula Station",
+  lat:"37.7749",  latDir:"N",
+  lon:"122.4194", lonDir:"W",
+  elev:"16",
+  weatherUnit:"F",
+  autoLocation:true,
+  uptimeBaseDays:42,
+  panels:{ terminal:true, sysmon:true, diag:true, proc:true, tailnet:true, audio:true, tl:true }
+};
+
+/* =========================================================================
+   SHARED METRIC STATE  (single source of truth -> every panel reads this)
+   ========================================================================= */
+const M={
+  cpu:17, ram:32, net:2.7, cpuTemp:48, swap:12,
+  disk:118, netDown:2.7, netUp:1.4,
+  gpu:14, gpuTemp:42, vram:28, vramUsed:4600, vramTotal:16384,
+  cpuHist:[], diskHist:[], netHist:[], gpuHist:[],
+  procs:[
+    {pid:2150,name:"phantom", cpu:2.1, mem:1.2},
+    {pid:2203,name:"spectred",cpu:1.3, mem:0.7},
+    {pid:1542,name:"netd",    cpu:0.6, mem:0.3},
+    {pid:1891,name:"sysmon",  cpu:0.4, mem:0.2},
+    {pid:1103,name:"terminal",cpu:0.3, mem:0.2}
+  ],
+  bootTime: Date.now(),
+  source:"SIM"
+};
+const HIST=64;
+for(let i=0;i<HIST;i++){ M.cpuHist.push(17); M.diskHist.push(40); M.netHist.push(20); M.gpuHist.push(14); }
+
+/* ----- smoothed random-walk simulator ----- */
+const SIM={ cpu:17, ram:32, net:2.7, temp:48, swap:12, disk:118, nd:2.7, nu:1.4, gpu:14, gtemp:42, vram:28 };
+function walk(cur, target, lo, hi, jitter, ease){
+  if(Math.random()<0.02) target = rnd(lo,hi);          // occasional new goal
+  const v = lerp(cur, target, ease) + rnd(-jitter,jitter);
+  return { v:clamp(v,lo,hi), target };
+}
+const TGT={ cpu:20, ram:34, net:3, temp:50, swap:12, disk:120, nd:3, nu:1.5, gpu:16, gtemp:44, vram:30 };
+function simulate(dt){
+  const k = CFG.metricSpeed;
+  let r;
+  r=walk(SIM.cpu,TGT.cpu, 3, 92, 1.6*k, 0.06*k); SIM.cpu=r.v; TGT.cpu=r.target;
+  r=walk(SIM.ram,TGT.ram, 22,78, 0.5*k, 0.03*k); SIM.ram=r.v; TGT.ram=r.target;
+  r=walk(SIM.net,TGT.net, 0.1,9.9,0.4*k,0.10*k);  SIM.net=r.v; TGT.net=r.target;
+  r=walk(SIM.temp,TGT.temp,38,82, 0.5*k,0.04*k);  SIM.temp=r.v; TGT.temp=r.target;
+  r=walk(SIM.swap,TGT.swap,4, 40, 0.2*k,0.02*k);  SIM.swap=r.v; TGT.swap=r.target;
+  r=walk(SIM.disk,TGT.disk,2, 480,18*k, 0.08*k);  SIM.disk=r.v; TGT.disk=r.target;
+  r=walk(SIM.nd,TGT.nd, 0.1,28, 1.2*k,0.10*k);    SIM.nd=r.v;  TGT.nd=r.target;
+  r=walk(SIM.nu,TGT.nu, 0.1,12, 0.7*k,0.10*k);    SIM.nu=r.v;  TGT.nu=r.target;
+  r=walk(SIM.gpu,TGT.gpu, 2, 99, 2.2*k,0.07*k);   SIM.gpu=r.v; TGT.gpu=r.target;
+  r=walk(SIM.gtemp,TGT.gtemp,35,84,0.5*k,0.04*k); SIM.gtemp=r.v; TGT.gtemp=r.target;
+  r=walk(SIM.vram,TGT.vram,12,82, 0.4*k,0.02*k);  SIM.vram=r.v; TGT.vram=r.target;
+
+  M.cpu=SIM.cpu; M.ram=SIM.ram; M.net=SIM.net; M.cpuTemp=SIM.temp;
+  M.swap=SIM.swap; M.disk=SIM.disk; M.netDown=SIM.nd; M.netUp=SIM.nu;
+  M.gpu=SIM.gpu; M.gpuTemp=SIM.gtemp; M.vram=SIM.vram;
+  M.vramUsed=Math.round(M.vram/100*M.vramTotal);
+
+  // jitter the process table around plausible values
+  M.procs.forEach(p=>{
+    p.cpu = clamp(p.cpu + rnd(-0.4,0.4)*k, 0.1, 28);
+    p.mem = clamp(p.mem + rnd(-0.08,0.08)*k, 0.1, 18);
+  });
+  M.procs[0].cpu = clamp(M.cpu*0.12 + rnd(-0.5,0.5), 0.2, 40); // top proc tracks load loosely
+  M.source="SIM";
+}
+
+/* ----- optional REAL metrics via local companion (localhost:8377) ----- */
+let realOK=false, realPending=false;
+// Tag text for simulated mode: when real metrics are enabled but the companion
+// isn't answering, say so — a gentle nudge that live stats are available and the
+// companion just isn't running. When the user has turned real metrics off, it's
+// a deliberate choice, so just show SIMULATED.
+function simTag(){ return CFG.realMetrics ? "SIMULATED · companion not detected" : "SIMULATED"; }
+function dropReal(){
+  realOK=false; M.source="SIM";
+  M.realUptimeSec=undefined; M._memTotalReal=undefined;
+  setModeTag(simTag());
+}
+async function pollReal(){
+  if(!CFG.realMetrics){ if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag()); return; }
+  if(realPending) return;                    // never stack requests if one hangs
+  realPending=true;
+  const ctl=new AbortController();
+  const tmr=setTimeout(()=>ctl.abort(), 850);
+  try{
+    // 127.0.0.1 (not "localhost"): the companion binds IPv4 only, and the
+    // browser's ::1-first attempt can add seconds of latency on Windows.
+    const res = await fetch("http://127.0.0.1:8377/metrics", {cache:"no-store", signal:ctl.signal});
+    if(!res.ok) throw 0;
+    const d = await res.json();
+    if(typeof d.cpu==="number"){
+      M.cpu=clamp(d.cpu,0,100);
+      M.ram=clamp(d.ram,0,100);
+      if(typeof d.cpu_temp==="number"){ M.cpuTemp=d.cpu_temp; }
+      else{ M.cpuTemp=lerp(M.cpuTemp, 36+M.cpu*0.42, 0.1); } // no OS sensor: estimate from load
+      M.swap = (typeof d.swap==="number")? d.swap : M.swap;
+      M.disk = (typeof d.disk_mbs==="number")? d.disk_mbs : M.disk;
+      M.netDown = (typeof d.net_down_kbs==="number")? d.net_down_kbs : M.netDown;
+      M.netUp   = (typeof d.net_up_kbs==="number")? d.net_up_kbs : M.netUp;
+      M.net = M.netDown + M.netUp;
+      if(Array.isArray(d.procs) && d.procs.length){
+        M.procs = d.procs.slice(0,5).map(p=>({pid:p.pid,name:String(p.name||"").slice(0,12),cpu:p.cpu,mem:p.mem}));
+      }
+      if(typeof d.uptime_sec==="number")   M.realUptimeSec=d.uptime_sec;
+      if(typeof d.ram_total_mb==="number") M._memTotalReal=Math.round(d.ram_total_mb);
+      if(typeof d.nproc==="number") M.nproc=d.nproc;
+      if(typeof d.nusers==="number") M.nusers=d.nusers;
+      if(d.gpu && typeof d.gpu.util==="number"){
+        M.gpu     = clamp(d.gpu.util,0,100);
+        M.gpuTemp = (typeof d.gpu.temp==="number")? d.gpu.temp : M.gpuTemp;
+        if(typeof d.gpu.vram_total==="number" && d.gpu.vram_total>0){
+          M.vramTotal = d.gpu.vram_total;
+          M.vramUsed  = (typeof d.gpu.vram_used==="number")? d.gpu.vram_used : M.vramUsed;
+          M.vram      = clamp(M.vramUsed/M.vramTotal*100,0,100);
+        }
+        M.gpuReal=true;
+      } else { M.gpuReal=false; }   // companion up but no NVIDIA GPU -> simulate GPU rows
+      if(Array.isArray(d.drives)) M.drives=d.drives;
+      if("tailnet" in d){ M.tailnet = Array.isArray(d.tailnet)? d.tailnet : null; }
+      // Rebuild identity whenever the companion's system info CHANGES (not just
+      // once) — so a hardware swap / companion restart (e.g. GPU re-detected)
+      // refreshes the panel live instead of latching the first value forever.
+      if(d.sys && d.sys.os){
+        const sig=[d.sys.os,d.sys.host,d.sys.kernel,d.sys.cpu,d.sys.gpu,(d.sys.monitors||[]).join(",")].join("|");
+        if(sig!==M.sysSig){ M.sysInfo=d.sys; M.sysSig=sig; if(domReady) buildTerminal(); }
+      }
+      if(domReady){ renderDrives(); renderTailnet(); }
+      M.source="REAL"; realOK=true;
+      setModeTag("REAL · localhost");
+    }
+  }catch(e){
+    if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag());
+  }finally{ clearTimeout(tmr); realPending=false; }
+}
+function setModeTag(t){
+  const b=$("#mode-val"); if(!b) return;
+  b.textContent = t;
+}
+
+/* tick: choose real (if available) else simulate */
+function metricsTick(dt){
+  const real = realOK && M.source==="REAL";
+  if(!real) simulate(dt);
+  // companion is up but has no NVIDIA GPU to read -> keep the GPU rows alive
+  else if(M.gpuReal===false){
+    const k=CFG.metricSpeed; let r;
+    r=walk(SIM.gpu,TGT.gpu,2,99,2.2*k,0.07*k);    SIM.gpu=r.v;  TGT.gpu=r.target;  M.gpu=SIM.gpu;
+    r=walk(SIM.gtemp,TGT.gtemp,35,84,0.5*k,0.04*k);SIM.gtemp=r.v;TGT.gtemp=r.target;M.gpuTemp=SIM.gtemp;
+    r=walk(SIM.vram,TGT.vram,12,82,0.4*k,0.02*k);  SIM.vram=r.v; TGT.vram=r.target; M.vram=SIM.vram;
+    M.vramUsed=Math.round(M.vram/100*M.vramTotal);
+  }
+  // push history (works for both real + sim)
+  M.cpuHist.push(M.cpu);   if(M.cpuHist.length>HIST) M.cpuHist.shift();
+  M.gpuHist.push(M.gpu);   if(M.gpuHist.length>HIST) M.gpuHist.shift();
+  M.diskHist.push(Math.min(M.disk/5,100)); if(M.diskHist.length>HIST) M.diskHist.shift();
+  M.netHist.push(netScale(M.netDown+M.netUp)); if(M.netHist.length>HIST) M.netHist.shift();
+}
+
+/* =========================================================================
+   GAUGES (SVG ring dials)
+   ========================================================================= */
+const GAUGE_DEFS=[
+  {key:"cpu", label:"CPU", fmt:v=>Math.round(v)+"%", unit:"", scale:v=>v},
+  {key:"ram", label:"RAM", fmt:v=>Math.round(v)+"%", unit:"", scale:v=>v},
+  {key:"gpu", label:"GPU", fmt:v=>Math.round(v)+"%", unit:"", scale:v=>v}
+];
+function buildGauges(){
+  const wrap=$("#gauges"); wrap.innerHTML="";
+  const R=42, C=2*Math.PI*R, GAP=0.28; // 72% sweep
+  GAUGE_DEFS.forEach(g=>{
+    const el=document.createElement("div"); el.className="gauge";
+    el.innerHTML=`
+      <svg viewBox="0 0 110 110">
+        <g transform="rotate(135 55 55)">
+          <circle class="g-track" cx="55" cy="55" r="${R}" stroke-width="6"
+                  stroke-dasharray="${C*(1-GAP)} ${C}" />
+          <circle class="g-arc" id="arc-${g.key}" cx="55" cy="55" r="${R}" stroke-width="6"
+                  stroke-dasharray="${C*(1-GAP)} ${C}" stroke-dashoffset="${C*(1-GAP)}" />
+        </g>
+        <text class="g-lbl"  x="55" y="40" text-anchor="middle">${g.label}</text>
+        <text class="g-val"  x="55" y="62" text-anchor="middle" id="gv-${g.key}">0</text>
+        <text class="g-unit" x="55" y="74" text-anchor="middle" id="gu-${g.key}">${g.unit}</text>
+      </svg>`;
+    wrap.appendChild(el);
+    g._C=C*(1-GAP);
+  });
+}
+function updateGauges(){
+  GAUGE_DEFS.forEach(g=>{
+    const raw = ({cpu:M.cpu, ram:M.ram, gpu:M.gpu})[g.key];
+    const pct = clamp(g.scale(raw),0,100)/100;
+    const arc=$("#arc-"+g.key);
+    if(arc){
+      arc.style.strokeDashoffset = (g._C*(1-pct)).toFixed(2);
+      arc.style.stroke = (pct>0.85)? "var(--alert)" : "var(--accent)";
+    }
+    const vt=$("#gv-"+g.key); if(vt) vt.textContent=g.fmt(raw);
+    if(g.unitf){ const u=$("#gu-"+g.key); if(u) u.textContent=g.unitf(raw); }
+  });
+}
+
+/* =========================================================================
+   SEGMENTED BARS  (CPU temp, memory, swap)
+   ========================================================================= */
+function buildSeg(id,n){ const el=$(id); el.innerHTML=""; for(let i=0;i<n;i++){ el.appendChild(document.createElement("i")); } }
+function setSeg(id,pct,hotAt){
+  const segs=$(id).children, n=segs.length, on=Math.round(pct/100*n);
+  for(let i=0;i<n;i++){
+    segs[i].className = (i<on)? ((pct>=(hotAt||101))? "hot":"on") : "";
+  }
+}
+
+/* =========================================================================
+   SPARKLINES  (canvas line graphs for CPU/disk/network)
+   ========================================================================= */
+function sparkSetup(cv){
+  const dpr=Math.min(window.devicePixelRatio||1, 2);
+  const r=cv.getBoundingClientRect();
+  cv.width=Math.max(2,r.width*dpr); cv.height=Math.max(2,r.height*dpr);
+  const ctx=cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx, w:r.width, h:r.height};
+}
+function drawSpark(cv, data){
+  if(!cv._ctx || cv._w!==cv.getBoundingClientRect().width){ const s=sparkSetup(cv); cv._ctx=s.ctx; cv._w=s.w; cv._h=s.h; }
+  const ctx=cv._ctx, w=cv._w, h=cv._h, n=data.length;
+  ctx.clearRect(0,0,w,h);
+  const pad=2, mx=Math.max(...data,1);
+  ctx.beginPath();
+  for(let i=0;i<n;i++){
+    const x=pad+(i/(n-1))*(w-pad*2);
+    const y=h-pad-(data[i]/mx)*(h-pad*2);
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  }
+  // glow stroke
+  ctx.strokeStyle=PAL.accent; ctx.lineWidth=1.4; ctx.lineJoin="round";
+  ctx.shadowColor=PAL.accent; ctx.shadowBlur=6*CFG.glow; ctx.stroke();
+  ctx.shadowBlur=0;
+  // faint fill
+  ctx.lineTo(w-pad,h-pad); ctx.lineTo(pad,h-pad); ctx.closePath();
+  ctx.fillStyle=`hsl(${PAL.h} ${PAL.s}% ${PAL.l}% / 0.12)`; ctx.fill();
+}
+
+/* =========================================================================
+   PROCESS TABLE
+   ========================================================================= */
+function renderProcs(){
+  const tb=$("#proc-body"); if(!tb) return;
+  tb.innerHTML = M.procs.map(p=>
+    `<tr><td class="n">${p.pid}</td><td>${p.name}</td>`+
+    `<td class="n">${p.cpu.toFixed(1)}</td><td class="n">${p.mem.toFixed(1)}</td></tr>`
+  ).join("");
+}
+
+/* =========================================================================
+   TERMINAL  (neofetch + commands, typed in once on load)
+   ========================================================================= */
+/* 5x6 block font: the neofetch logo is the first letter of the host name,
+   rendered big. Each glyph is 6 rows of 5 cells ("#" = filled). */
+const FONT={
+  A:[" ### ","#   #","#   #","#####","#   #","#   #"],
+  B:["#### ","#   #","#### ","#   #","#   #","#### "],
+  C:[" ####","#    ","#    ","#    ","#    "," ####"],
+  D:["#### ","#   #","#   #","#   #","#   #","#### "],
+  E:["#####","#    ","#### ","#    ","#    ","#####"],
+  F:["#####","#    ","#### ","#    ","#    ","#    "],
+  G:[" ####","#    ","#  ##","#   #","#   #"," ####"],
+  H:["#   #","#   #","#####","#   #","#   #","#   #"],
+  I:["#####","  #  ","  #  ","  #  ","  #  ","#####"],
+  J:["#####","   # ","   # ","   # ","#  # "," ##  "],
+  K:["#   #","#  # ","###  ","#  # ","#   #","#   #"],
+  L:["#    ","#    ","#    ","#    ","#    ","#####"],
+  M:["#   #","## ##","# # #","#   #","#   #","#   #"],
+  N:["#   #","##  #","# # #","#  ##","#   #","#   #"],
+  O:[" ### ","#   #","#   #","#   #","#   #"," ### "],
+  P:["#### ","#   #","#### ","#    ","#    ","#    "],
+  Q:[" ### ","#   #","#   #","# # #","#  # "," ## #"],
+  R:["#### ","#   #","#### ","#  # ","#   #","#   #"],
+  S:[" ####","#    "," ### ","    #","    #","#### "],
+  T:["#####","  #  ","  #  ","  #  ","  #  ","  #  "],
+  U:["#   #","#   #","#   #","#   #","#   #"," ### "],
+  V:["#   #","#   #","#   #","#   #"," # # ","  #  "],
+  W:["#   #","#   #","#   #","# # #","## ##","#   #"],
+  X:["#   #","#   #"," # # "," # # ","#   #","#   #"],
+  Y:["#   #","#   #"," # # ","  #  ","  #  ","  #  "],
+  Z:["#####","   # ","  #  "," #   ","#    ","#####"],
+  "0":[" ### ","#  ##","# # #","##  #","#   #"," ### "],
+  "1":["  #  "," ##  ","  #  ","  #  ","  #  "," ### "],
+  "2":[" ### ","#   #","   # ","  #  "," #   ","#####"],
+  "3":["#### ","    #"," ### ","    #","    #","#### "],
+  "4":["#  # ","#  # ","#####","   # ","   # ","   # "],
+  "5":["#####","#    ","#### ","    #","    #","#### "],
+  "6":[" ####","#    ","#### ","#   #","#   #"," ### "],
+  "7":["#####","   # ","  #  "," #   "," #   "," #   "],
+  "8":[" ### ","#   #"," ### ","#   #","#   #"," ### "],
+  "9":[" ### ","#   #","#   #"," ####","    #","#### "]
+};
+function glyph(name){
+  const m=String(name||"").toUpperCase().match(/[A-Z0-9]/);
+  const g=FONT[m?m[0]:"V"]||FONT.V;
+  return g.map(row=>[...row].map(c=>c==="#"?"██":"  ").join("")).join("\n");
+}
+
+/* the host name shown everywhere: a user-set property wins, else the
+   companion's real hostname, else the default. */
+function activeHostName(){
+  const S=M.sysInfo;
+  if(CFG.hostName!=="Nebula Station") return CFG.hostName;   // user override
+  return (S && S.host) ? S.host : CFG.hostName;
+}
+
+function buildTerminal(){
+  const cores = (navigator.hardwareConcurrency||8);
+  const memGB = (navigator.deviceMemory? navigator.deviceMemory : 32);
+  const S = M.sysInfo;
+  // Resolution: each monitor with its refresh rate, primary first.
+  const resStr = (S && Array.isArray(S.monitors) && S.monitors.length)
+      ? S.monitors.map(m=> m && m.hz ? `${m.res} ${m.hz}Hz` : (m.res||m)).join(", ")
+      : `${screen.width}x${screen.height}`;
+  const pick=(v,def,real)=> v!==def ? v : (real || def);
+  const hostName = activeHostName();
+  const asciiArt = glyph(hostName);   // logo = first letter of the host name
+  const info = S ? [
+    ["OS",         pick(CFG.osName,"CyberOS 2.4.1",S.os)],
+    ["Host",       hostName],
+    ["Uptime",     "__UPTIME__"],
+    ["Resolution", resStr],
+    ["CPU",        `${S.cpu || "Unknown CPU"} (${cores})`],
+    ["GPU",        S.gpu || "—"],
+    ["Memory",     "__MEMGB__"]
+  ] : [
+    ["OS", CFG.osName],
+    ["Host", CFG.hostName],
+    ["Uptime","__UPTIME__"],
+    ["Resolution", resStr],
+    ["CPU",`12th Gen Intel i7 (${cores})`],
+    ["GPU","CyberCore RTX"],
+    ["Memory","__MEMGB__"]
+  ];
+  M._memTotal = memGB*1024;
+
+  const infoHTML = info.map(([k,v])=>
+     `<div data-key="${k}"><b>${k}</b><span>: ${v}</span></div>`).join("");
+  $("#term-out").innerHTML =
+    `<div class="nf"><pre>${asciiArt}</pre><div class="info">${infoHTML}</div></div>`;
+  updateMemLine();
+  updateOsLabel();
+}
+
+/* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
+const VERSION = "0.1.7";
+function updateOsLabel(){
+  const el=$("#os-label"); if(!el) return;
+  el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
+  el.querySelector(".ver").textContent  = "v"+VERSION;
+}
+
+/* Memory spec line, in GB (companion's true total beats the browser 8GB cap) */
+function updateMemLine(){
+  const span=document.querySelector('.nf .info [data-key="Memory"] span');
+  if(!span) return;
+  const totMB = M._memTotalReal || M._memTotal || 0;
+  const usedMB = M.ram/100*totMB;
+  span.textContent = `: ${(usedMB/1024).toFixed(1)} / ${(totMB/1024).toFixed(1)} GB`;
+}
+
+/* =========================================================================
+   DRIVES + TAILNET  (rendered from companion data; sim fallbacks otherwise)
+   ========================================================================= */
+function fmtSize(gb){ return gb>=1024 ? (gb/1024).toFixed(gb>=10240?0:1)+"TB" : Math.round(gb)+"GB"; }
+function renderDrives(){
+  const box=$("#drives"); if(!box) return;
+  const list = (M.drives && M.drives.length) ? M.drives : SIM_DRIVES;
+  box.innerHTML = list.map(d=>{
+    const pct=clamp(d.used_pct,0,100);
+    const lbl=d.label ? d.label : "";
+    const io=`R ${d.read_mbs.toFixed(1)} \u00B7 W ${d.write_mbs.toFixed(1)} MB/s`;
+    return `<div class="drv">
+      <div class="top"><span class="id">${d.id}</span>
+        <span class="bar"><i class="${pct>=90?'hot':''}" style="width:${pct}%"></i></span>
+        <span class="pct">${pct}%</span></div>
+      <div class="sub"><span>${lbl?lbl+" \u00B7 ":""}${fmtSize(d.total_gb)}</span><span class="io">${io}</span></div>
+    </div>`;
+  }).join("");
+}
+const SIM_DRIVES=[
+  {id:"C:",label:"System",total_gb:931,used_pct:64,read_mbs:1.2,write_mbs:0.4},
+  {id:"D:",label:"Games", total_gb:466,used_pct:72,read_mbs:0.0,write_mbs:0.0}
+];
+
+function tnStatus(d){
+  if(d.online) return "active";
+  if(!d.last_seen || d.last_seen.startsWith("0001")) return "offline";
+  const secs=(Date.now()-Date.parse(d.last_seen))/1000;
+  if(isNaN(secs)) return "offline";
+  if(secs<3600) return Math.max(1,Math.round(secs/60))+"m ago";
+  if(secs<86400) return Math.round(secs/3600)+"h ago";
+  return Math.round(secs/86400)+"d ago";
+}
+function renderTailnet(){
+  const box=$("#tnet-body"); if(!box) return;
+  const list = M.tailnet;
+  if(!list || !list.length){
+    box.innerHTML = `<div class="tn off"><span class="led"></span>`+
+      `<span class="nm"><span class="os">companion offline</span></span><span class="st">\u2014</span></div>`;
+    return;
+  }
+  box.innerHTML = list.map(d=>{
+    const nm = d.self ? `<b>${d.name}</b> <span class="os">[self] \u00B7 ${d.os}</span>`
+                      : `<b>${d.name}</b> <span class="os">\u00B7 ${d.os}</span>`;
+    return `<div class="tn ${d.online?'':'off'}"><span class="led"></span>`+
+           `<span class="nm">${nm}</span><span class="st">${tnStatus(d)}</span></div>`;
+  }).join("");
+}
+
+/* =========================================================================
+   AUDIO VISUALIZER
+   Uses Wallpaper Engine's audio listener when present (128 freq values:
+   64 left + 64 right). Falls back to a gentle idle waveform otherwise.
+   ========================================================================= */
+const AUD={ data:new Array(64).fill(0), smooth:new Array(64).fill(0), live:false };
+function onAudioSamples(samples){
+  if(!samples || !samples.length){ return; }
+  // average L/R -> 64 bins
+  const half=Math.floor(samples.length/2);
+  for(let i=0;i<64;i++){
+    const l=samples[i]||0, r=samples[i+half]||0;
+    AUD.data[i]=(l+r)*0.5;
+  }
+  AUD.live=true;
+}
+function audioSetup(){
+  const cv=$("#audio-cv");
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const r=cv.getBoundingClientRect();
+  cv.width=Math.max(2,r.width*dpr); cv.height=Math.max(2,r.height*dpr);
+  const ctx=cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0);
+  cv._ctx=ctx; cv._w=r.width; cv._h=r.height;
+  AUDGRAD.clear();
+}
+const AUDGRAD=new Map();   // gradients keyed by 1px-quantized bar height
+function drawAudio(t){
+  const cv=AUD.cv||(AUD.cv=$("#audio-cv")); if(!cv) return;
+  // re-measure at most twice a second; per-frame getBoundingClientRect forces layout
+  if(!cv._ctx || t-(cv._chk||0)>500){
+    cv._chk=t;
+    if(!cv._ctx || Math.abs(cv._w-cv.getBoundingClientRect().width)>1){ audioSetup(); AUDGRAD.clear(); }
+  }
+  const ctx=cv._ctx, w=cv._w, h=cv._h, mid=h/2, N=64;
+  ctx.clearRect(0,0,w,h);
+
+  // idle synthesis when no live audio (or audio reactivity turned off)
+  if(!(AUD.live && CFG.audio)){
+    for(let i=0;i<N;i++){
+      const f=i/N;
+      AUD.data[i]=(Math.sin(t*0.0026 + i*0.5)*0.5+0.5)*(0.10+0.16*Math.sin(t*0.0009+f*6))*(1-f*0.4);
+    }
+  }
+  // smooth
+  for(let i=0;i<N;i++){ AUD.smooth[i]=lerp(AUD.smooth[i], AUD.data[i], 0.35); }
+
+  const bw=w/N;
+  ctx.lineWidth=Math.max(1,bw*0.45);
+  for(let i=0;i<N;i++){
+    const amp=clamp(AUD.smooth[i],0,1)*(mid-2);
+    const x=i*bw+bw*0.5;
+    const q=Math.max(1,Math.round(amp));
+    let grad=AUDGRAD.get(q);
+    if(!grad){
+      grad=ctx.createLinearGradient(0,mid-q,0,mid+q);
+      grad.addColorStop(0,PAL.bright); grad.addColorStop(0.5,PAL.accent); grad.addColorStop(1,PAL.bright);
+      AUDGRAD.set(q,grad);
+    }
+    ctx.strokeStyle=grad;
+    ctx.beginPath(); ctx.moveTo(x,mid-amp); ctx.lineTo(x,mid+amp); ctx.stroke();
+  }
+  // center line
+  ctx.strokeStyle=PAL.line; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,mid); ctx.lineTo(w,mid); ctx.stroke();
+}
+
+/* =========================================================================
+   STARFIELD  (subtle drifting particles)
+   ========================================================================= */
+const STAR={ cv:null, ctx:null, stars:[], w:0,h:0,dpr:1 };
+function starInit(){
+  const cv=$("#starfield"); STAR.cv=cv;
+  STAR.dpr=Math.min(window.devicePixelRatio||1,2);
+  resizeStars();
+  STAR.ctx=cv.getContext("2d");
+  STAR.stars=[];
+  const n=Math.round((STAR.w*STAR.h)/26000);
+  for(let i=0;i<n;i++){
+    STAR.stars.push({x:Math.random()*STAR.w,y:Math.random()*STAR.h,
+      z:rnd(0.2,1), s:rnd(0.4,1.6), tw:rnd(0,Math.PI*2)});
+  }
+}
+function resizeStars(){
+  const cv=STAR.cv; const w=window.innerWidth,h=window.innerHeight;
+  STAR.w=w; STAR.h=h; cv.width=w*STAR.dpr; cv.height=h*STAR.dpr;
+  cv.getContext("2d").setTransform(STAR.dpr,0,0,STAR.dpr,0,0);
+}
+function drawStars(t){
+  if(!CFG.starfield){ STAR.ctx&&STAR.ctx.clearRect(0,0,STAR.w,STAR.h); return; }
+  const ctx=STAR.ctx; ctx.clearRect(0,0,STAR.w,STAR.h);
+  // alpha quantized to 1/20 steps so fillStyle strings come from a small cache
+  if(!STAR.colors){
+    const l=clamp(PAL.l+25,0,90);
+    STAR.colors=Array.from({length:21},(_,j)=>`hsl(${PAL.h} ${PAL.s}% ${l}% / ${(j/20).toFixed(2)})`);
+  }
+  for(const s of STAR.stars){
+    s.x -= s.z*0.10; if(s.x<0){ s.x=STAR.w; s.y=Math.random()*STAR.h; }
+    const a=(0.25+0.55*(Math.sin(t*0.001+s.tw)*0.5+0.5))*s.z;
+    ctx.fillStyle=STAR.colors[clamp(Math.round(a*20),0,20)];
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  }
+}
+
+/* =========================================================================
+   TERRAIN  (animated perspective wireframe — the flowing cyber-grid)
+   ========================================================================= */
+const TER={ cv:null, ctx:null, w:0,h:0,dpr:1, t:0,
+  cols:46, rows:30, spacing:1.0, focal:0, camY:1.55, scroll:0 };
+function terrainInit(){
+  const cv=$("#terrain"); TER.cv=cv; TER.dpr=Math.min(window.devicePixelRatio||1,2);
+  TER.ctx=cv.getContext("2d"); resizeTerrain();
+}
+function resizeTerrain(){
+  const cv=TER.cv; const r=cv.getBoundingClientRect();
+  TER.w=r.width; TER.h=r.height;
+  cv.width=Math.max(2,r.width*TER.dpr); cv.height=Math.max(2,r.height*TER.dpr);
+  TER.ctx.setTransform(TER.dpr,0,0,TER.dpr,0,0);
+  TER.focal=TER.w*0.9;
+  // density scales gently with width so ultrawide isn't sparse
+  TER.cols = clamp(Math.round(TER.w/34), 30, 80);
+}
+function project(wx, wy, wz){
+  // pinhole-ish projection; horizon near top of the terrain band
+  const horizon = TER.h*0.06;
+  const sx = TER.w/2 + (wx / wz) * TER.focal;
+  const sy = horizon + ((TER.camY - wy) / wz) * TER.focal;
+  return [sx, sy, wz];
+}
+function drawTerrain(dt){
+  if(!CFG.terrain){ TER.ctx&&TER.ctx.clearRect(0,0,TER.w,TER.h); return; }
+  const ctx=TER.ctx, cols=TER.cols, rows=TER.rows;
+  ctx.clearRect(0,0,TER.w,TER.h);
+  TER.t += dt*0.001;
+  TER.scroll = (TER.scroll + dt*0.0016) % TER.spacing;
+
+  // audio energy lifts the waves a touch (reacts to music)
+  let energy=0; for(let i=0;i<16;i++) energy+=AUD.smooth[i]; energy/=16;
+  const ampBase = 0.16 + energy*0.5;
+
+  const zNear=1.15, halfW=(cols-1)/2;
+  const pts=[];
+  for(let r=0;r<rows;r++){
+    const row=[];
+    const wz = zNear + r*TER.spacing - TER.scroll;
+    for(let c=0;c<cols;c++){
+      const wx=(c-halfW)*TER.spacing;
+      // layered sine field, flowing toward viewer
+      const wy = ampBase*(
+            Math.sin(wx*0.55 + TER.t*0.9) * Math.cos(wz*0.5 - TER.t*1.1)
+          + 0.5*Math.sin((wx+wz)*0.33 - TER.t*0.7) );
+      row.push(project(wx,wy,wz));
+    }
+    pts.push(row);
+  }
+
+  // distance fade is constant across a row (shared wz), so we can batch.
+  // glow comes from the CSS drop-shadow on #terrain, not canvas shadowBlur.
+  const lit = clamp(PAL.l+8,0,80);
+  ctx.lineWidth=1;
+
+  // vertical lines first (cheap): one polyline per column, flat dim alpha
+  ctx.strokeStyle=`hsl(${PAL.h} ${PAL.s}% ${lit}% / 0.14)`;
+  for(let c=0;c<cols;c++){
+    ctx.beginPath();
+    for(let r=0;r<rows;r++){ const p=pts[r][c]; r===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]); }
+    ctx.stroke();
+  }
+
+  // horizontal lines: one path per row, alpha keyed to that row's depth
+  for(let r=0;r<rows;r++){
+    const fade = clamp(1 - (pts[r][0][2]-zNear)/(rows*TER.spacing), 0.05, 1);
+    ctx.strokeStyle=`hsl(${PAL.h} ${PAL.s}% ${lit}% / ${(fade*fade*0.85).toFixed(3)})`;
+    ctx.beginPath();
+    for(let c=0;c<cols;c++){ const p=pts[r][c]; c===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]); }
+    ctx.stroke();
+  }
+  // bright vertex dots on the near rows (depth is shared per row -> one style per row)
+  const dotL = clamp(PAL.l+25,0,90);
+  for(let r=rows-10;r<rows;r++){ if(r<0) continue;
+    const fade=clamp(1-(pts[r][0][2]-zNear)/(rows*TER.spacing),0,1);
+    ctx.fillStyle=`hsl(${PAL.h} ${PAL.s}% ${dotL}% / ${(fade*0.5).toFixed(3)})`;
+    for(let c=0;c<cols;c+=1){
+      const p=pts[r][c];
+      ctx.fillRect(p[0]-0.7,p[1]-0.7,1.4,1.4);
+    }
+  }
+}
+
+/* =========================================================================
+   CLOCK / DATE / UPTIME  (real)
+   ========================================================================= */
+function pad(n){ return String(n).padStart(2,"0"); }
+function tickClock(){
+  const d=new Date();
+  const H=d.getHours();
+  let hh=H, ampm="";
+  if(!CFG.use24h){ hh = H%12 || 12; ampm = `<small>${H<12?"AM":"PM"}</small>`; }
+  const time = CFG.showSeconds
+      ? `${pad(hh)}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+      : `${pad(hh)}:${pad(d.getMinutes())}`;
+  $("#clock").innerHTML = time + ampm;
+  $("#date").textContent  = `${d.getFullYear()} / ${pad(d.getMonth()+1)} / ${pad(d.getDate())}`;
+  const WD=["SUNDAY","MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY"];
+  const wd=$("#weekday"); if(wd) wd.textContent = WD[d.getDay()];
+
+  // uptime: real (companion) else a plausible base + elapsed
+  let secs;
+  if(typeof M.realUptimeSec==="number"){ secs=M.realUptimeSec; }
+  else{ secs = CFG.uptimeBaseDays*86400 + Math.floor((Date.now()-M.bootTime)/1000) + 7*3600+23*60; }
+  const days=Math.floor(secs/86400), hrs=Math.floor((secs%86400)/3600), mins=Math.floor((secs%3600)/60);
+  const nfUp = document.querySelector('.nf .info [data-key="Uptime"] span');
+  if(nfUp) nfUp.textContent = `: ${days}d ${hrs}h ${mins}m`;
+  updateMemLine();
+}
+
+/* =========================================================================
+   SLOW UI UPDATE  (~3 Hz) — text + bars + gauges + sparklines + procs
+   ========================================================================= */
+function updateUI(){
+  $("#v-cpu").textContent  = Math.round(M.cpu)+"%";
+  $("#v-temp").textContent = Math.round(M.cpuTemp)+"°C";
+  $("#v-mem").textContent  = Math.round(M.ram)+"%";
+  $("#v-swap").textContent = Math.round(M.swap)+"%";
+  $("#v-net").innerHTML    = `↓ ${fmtRate(M.netDown)}<br>↑ ${fmtRate(M.netUp)}`;
+
+  $("#v-gpu").textContent  = Math.round(M.gpu)+"%";
+  $("#v-gtemp").textContent= Math.round(M.gpuTemp)+"°C";
+  const vGB=(M.vramUsed/1024).toFixed(1), vtGB=(M.vramTotal/1024).toFixed(0);
+  $("#v-vram").innerHTML   = `${Math.round(M.vram)}%<br>${vGB}/${vtGB} GB`;
+
+  setSeg("#bar-temp", clamp((M.cpuTemp-30)/55*100,0,100), 80); // 30..85°C range, hot >80%
+  setSeg("#bar-mem",  M.ram, 90);
+  setSeg("#bar-swap", M.swap, 90);
+  setSeg("#bar-gtemp",clamp((M.gpuTemp-30)/55*100,0,100), 80);
+  setSeg("#bar-vram", M.vram, 90);
+
+  if(CFG.panels.diag) updateGauges();
+  if(CFG.panels.proc) renderProcs();
+  if(CFG.panels.sysmon) renderDrives();
+}
+
+/* =========================================================================
+   APPLY CONFIG -> DOM
+   ========================================================================= */
+function applyConfig(){
+  applyAccent(parseColor(CFG.accent));
+  applyBg(parseColor(CFG.bg, {r:2,g:8,b:12}));
+  applyAlert(parseColor(CFG.alert, {r:255,g:92,b:92}));
+  document.documentElement.style.setProperty("--glow-strength", CFG.glow);
+  document.body.classList.toggle("no-glow", !(CFG.glow>0));
+  document.documentElement.style.setProperty("--ui-scale", CFG.uiScale);
+  document.documentElement.style.setProperty("--scanline-alpha", CFG.scanlines? 0.05 : 0);
+  $("#scanlines").classList.toggle("hidden", !CFG.scanlines);
+
+  // coords (auto or manual) + elevation
+  updateCoordsDisplay();
+  const ev=parseFloat(CFG.elev);
+  $("#elev").textContent = `ELEV. ${isFinite(ev)? ev : 0}M`;
+
+  // panel visibility
+  const map={terminal:"#terminal",sysmon:"#sysmon",diag:"#diag",proc:"#proc",tailnet:"#tailnet",audio:"#audio",tl:"#tl"};
+  Object.entries(map).forEach(([k,sel])=>{ const el=$(sel); if(el) el.classList.toggle("hidden", !CFG.panels[k]); });
+}
+
+/* =========================================================================
+   WALLPAPER ENGINE PROPERTY BRIDGE
+   ========================================================================= */
+let domReady=false;
+function asBool(p){ return !!p && (p.value===true || p.value==="true" || p.value===1); }
+window.wallpaperPropertyListener = {
+  applyUserProperties:(p)=>{
+    try{
+      if(p.schemecolor)   CFG.accent = p.schemecolor.value;
+      if(p.bgcolor)       CFG.bg     = p.bgcolor.value;
+      if(p.alertcolor)    CFG.alert  = p.alertcolor.value;
+      if(p.audio_react)   CFG.audio  = asBool(p.audio_react);
+      if(p.show_terrain)  CFG.terrain= asBool(p.show_terrain);
+      if(p.show_starfield)CFG.starfield=asBool(p.show_starfield);
+      if(p.scanlines)     CFG.scanlines=asBool(p.scanlines);
+      if(p.oled_mode)     CFG.oledMode = asBool(p.oled_mode);
+      if(p.glow_strength) CFG.glow   = +p.glow_strength.value;
+      if(p.ui_scale)      CFG.uiScale= +p.ui_scale.value || 1;
+      if(p.metric_speed)  CFG.metricSpeed = +p.metric_speed.value;
+      if(p.real_metrics)  CFG.realMetrics = asBool(p.real_metrics);
+      if(p.clock_24h)     CFG.use24h = asBool(p.clock_24h);
+      if(p.show_seconds)  CFG.showSeconds = asBool(p.show_seconds);
+      if(p.host_user && p.host_user.value)  CFG.hostUser = p.host_user.value;
+      if(p.os_name && p.os_name.value)      CFG.osName   = p.os_name.value;
+      if(p.host_name && p.host_name.value)  CFG.hostName = p.host_name.value;
+      if(p.latitude && p.latitude.value!=="")  CFG.lat = p.latitude.value;
+      if(p.longitude && p.longitude.value!=="") CFG.lon = p.longitude.value;
+      if(p.lat_dir)  CFG.latDir = p.lat_dir.value;
+      if(p.lon_dir)  CFG.lonDir = p.lon_dir.value;
+      if(p.elevation && p.elevation.value!=="") CFG.elev = p.elevation.value;
+      if(p.weather_unit) CFG.weatherUnit = p.weather_unit.value;
+      if(p.auto_location) CFG.autoLocation = asBool(p.auto_location);
+      if(p.uptime_days) CFG.uptimeBaseDays = +p.uptime_days.value;
+      // location or unit changed -> refresh weather (re-detect if auto)
+      const wxKeys=["latitude","longitude","lat_dir","lon_dir","weather_unit","auto_location"];
+      const wxChanged = wxKeys.some(k=>p[k]!==undefined);
+      // individual panel toggles
+      const pk={p_terminal:"terminal",p_sysmon:"sysmon",p_diag:"diag",p_proc:"proc",p_tailnet:"tailnet",p_audio:"audio",p_tl:"tl"};
+      Object.entries(pk).forEach(([k,v])=>{ if(p[k]!==undefined) CFG.panels[v]=asBool(p[k]); });
+
+      // WE can deliver properties before DOMContentLoaded; CFG is stored
+      // above either way and applied once the DOM exists.
+      if(domReady){
+        applyConfig();
+        // a few things need rebuilding when their inputs change
+        buildTerminal();
+        if(wxChanged) refreshLocation();
+      }
+    }catch(e){ console.error("prop apply error", e); }
+  },
+  applyGeneralProperties:(p)=>{ /* fps etc. handled by WE */ }
+};
+// Wallpaper Engine audio
+if(window.wallpaperRegisterAudioListener){
+  try{ window.wallpaperRegisterAudioListener(onAudioSamples); }catch(e){}
+}
+
+/* =========================================================================
+   WEATHER  (open-meteo, no API key; uses the configured lat/lon)
+   ========================================================================= */
+// WMO weather codes -> short label.
+const WX={0:"CLEAR",1:"MOSTLY CLEAR",2:"PARTLY CLOUDY",3:"OVERCAST",
+  45:"FOG",48:"RIME FOG",51:"LT DRIZZLE",53:"DRIZZLE",55:"HVY DRIZZLE",
+  56:"FRZ DRIZZLE",57:"FRZ DRIZZLE",61:"LT RAIN",63:"RAIN",65:"HVY RAIN",
+  66:"FRZ RAIN",67:"FRZ RAIN",71:"LT SNOW",73:"SNOW",75:"HVY SNOW",77:"SNOW GRAINS",
+  80:"LT SHOWERS",81:"SHOWERS",82:"VIOL SHOWERS",85:"SNOW SHOWERS",86:"SNOW SHOWERS",
+  95:"THUNDERSTORM",96:"STORM + HAIL",99:"STORM + HAIL"};
+// Signed lat/lon for whatever location source is active: auto-detected (IP)
+// when "auto location" is on and we have a fix, otherwise the manual props.
+function activeCoords(){
+  if(CFG.autoLocation && M.geo) return {lat:M.geo.lat, lon:M.geo.lon};
+  const lat=parseFloat(CFG.lat), lon=parseFloat(CFG.lon);
+  if(!isFinite(lat)||!isFinite(lon)) return null;
+  return { lat:(CFG.latDir==="S"?-1:1)*Math.abs(lat),
+           lon:(CFG.lonDir==="W"?-1:1)*Math.abs(lon) };
+}
+function updateCoordsDisplay(){
+  const el=$("#coords"); if(!el) return;
+  // Only show LOCATING while a detection attempt is still in flight. Once we've
+  // tried (success or fail), fall through to activeCoords() which uses the
+  // manual lat/lon as a fallback so we never hang on "LOCATING…".
+  if(CFG.autoLocation && !M.geo && !M.geoTried){ el.textContent="LOCATING…"; return; }
+  const c=activeCoords();
+  if(!c){ el.textContent="—"; return; }
+  el.innerHTML = `${Math.abs(c.lat).toFixed(4)}° ${c.lat>=0?"N":"S"}, `+
+                 `${Math.abs(c.lon).toFixed(4)}° ${c.lon>=0?"E":"W"}`;
+}
+// One-shot IP geolocation (city-level). No key; the third party already sees
+// your IP when you make the request. Used only when auto location is enabled.
+async function detectLocation(){
+  try{
+    const ctl=new AbortController(); const tmr=setTimeout(()=>ctl.abort(),6000);
+    const r=await fetch("https://ipapi.co/json/",{cache:"no-store",signal:ctl.signal});
+    clearTimeout(tmr);
+    const d=await r.json();
+    if(isFinite(d.latitude)&&isFinite(d.longitude))
+      return {lat:+d.latitude, lon:+d.longitude, city:d.city||""};
+  }catch(e){}
+  return null;
+}
+async function refreshLocation(){
+  if(CFG.autoLocation && !M.geo){       // detect once; IP rarely changes
+    const g=await detectLocation();
+    if(g) M.geo=g;
+    M.geoTried=true;                    // mark attempted so we stop showing LOCATING…
+  }
+  if(!CFG.autoLocation) M.geo=null;      // manual mode -> drop any cached fix
+  updateCoordsDisplay();
+  fetchWeather();
+}
+
+let wxPending=false;
+async function fetchWeather(){
+  if(wxPending) return; wxPending=true;
+  try{
+    const c=activeCoords(); if(!c) throw 0;
+    const unit = CFG.weatherUnit==="C" ? "celsius" : "fahrenheit";
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lon}`+
+                `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m`+
+                `&temperature_unit=${unit}&wind_speed_unit=mph&timezone=auto`;
+    const ctl=new AbortController(); const tmr=setTimeout(()=>ctl.abort(),6000);
+    const res=await fetch(url,{cache:"no-store",signal:ctl.signal}); clearTimeout(tmr);
+    if(!res.ok) throw 0;
+    const cur=(await res.json()).current; if(!cur) throw 0;
+    const deg=CFG.weatherUnit==="C"?"°C":"°F";
+    const label=WX[cur.weather_code] || "—";
+    const place=(CFG.autoLocation && M.geo && M.geo.city) ? M.geo.city.toUpperCase()+" · " : "";
+    const el=$("#weather"); if(!el) return;
+    el.innerHTML =
+      `<span class="wx-t">${Math.round(cur.temperature_2m)}${deg}</span> · ${label}`+
+      `<span class="wx-sub">${place}HUMIDITY ${Math.round(cur.relative_humidity_2m)}% · `+
+      `WIND ${Math.round(cur.wind_speed_10m)} MPH</span>`;
+  }catch(e){
+    const el=$("#weather"); if(el && !el.dataset.had) el.innerHTML=`<span class="wx-sub">WEATHER · OFFLINE</span>`;
+  }finally{
+    const el=$("#weather"); if(el) el.dataset.had="1";
+    wxPending=false;
+  }
+}
+
+/* =========================================================================
+   BOOT + MAIN LOOP
+   ========================================================================= */
+function buildAll(){
+  buildGauges();
+  buildSeg("#bar-temp",18); buildSeg("#bar-mem",18); buildSeg("#bar-swap",18);
+  buildSeg("#bar-gtemp",18); buildSeg("#bar-vram",18);
+  buildTerminal();
+  starInit(); terrainInit(); audioSetup();
+  renderProcs(); renderDrives(); renderTailnet();
+}
+
+let last=performance.now(), uiAcc=0, metricAcc=0, realAcc=0, cvAcc=0;
+function loop(now){
+  const dt=Math.min(now-last, 64); last=now;
+  // physics-ish
+  metricAcc+=dt; if(metricAcc>=120){ metricsTick(metricAcc); metricAcc=0; }
+  uiAcc+=dt; if(uiAcc>=320){ updateUI();
+      if(CFG.panels.sysmon){
+        drawSpark($("#sp-cpu"),M.cpuHist);
+        drawSpark($("#sp-gpu"),M.gpuHist);
+        drawSpark($("#sp-net"),M.netHist);
+      }
+      uiAcc=0; }
+  realAcc+=dt; if(realAcc>=1000){ pollReal(); realAcc=0; } // poll companion once/sec
+
+  // smooth canvases, capped at ~60fps so high-refresh displays don't multiply the work
+  cvAcc+=dt;
+  if(cvAcc>=15.5){
+    if(CFG.panels.audio) drawAudio(now);
+    drawStars(now);
+    drawTerrain(cvAcc);   // pass real elapsed so scroll speed is refresh-independent
+    cvAcc=0;
+  }
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener("resize", ()=>{
+  starInit(); resizeTerrain(); audioSetup();   // full re-init so star density tracks the new area
+  // sparkline canvases recompute lazily on next draw
+  ["#sp-cpu","#sp-gpu","#sp-net"].forEach(s=>{ const c=$(s); if(c){ c._ctx=null; } });
+});
+
+document.addEventListener("DOMContentLoaded", ()=>{
+  domReady=true;
+  applyConfig();
+  buildAll();
+  // clock
+  tickClock(); setInterval(tickClock, 1000);
+  // first paint
+  metricsTick(120); updateUI();
+  setModeTag(CFG.realMetrics? "SIMULATED (probing…)" : "SIMULATED");
+  refreshLocation(); setInterval(fetchWeather, 15*60*1000); // detect once, refresh weather every 15 min
+  requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>
