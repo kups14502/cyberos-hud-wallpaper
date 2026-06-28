@@ -8,15 +8,21 @@ Resolution-scalable (any aspect ratio), fully recolorable, and runs on any machi
 
 ---
 
-## Install
+## Install (Steam Workshop)
 
-1. Open **Wallpaper Engine** → **Create Wallpaper**.
-2. Choose **Files** and select the `index.html` in this folder (or just drag this
-   whole folder onto the Wallpaper Engine window).
-3. Give it a name, save, and apply. That's it.
+The recommended way is to subscribe on the Steam Workshop:
 
-The wallpaper is one HTML file with no external dependencies — nothing to download,
-no internet required.
+1. Open the wallpaper page and click **Subscribe**:
+   **https://steamcommunity.com/sharedfiles/filedetails/?id=3742359990**
+2. In **Wallpaper Engine**, open your **Installed** wallpapers and select **CyberOS HUD**.
+3. Tune anything you like from the **Properties** panel (see Customize below).
+
+That is all the wallpaper needs. It runs on any machine with zero setup and shows
+realistic simulated metrics out of the box. There is nothing to import by hand.
+
+> This repository holds the source and the **optional companion app** (for real
+> system stats, see below). You do not need to load `index.html` yourself: just
+> subscribe on the Workshop.
 
 ---
 
@@ -65,10 +71,17 @@ size and the live audio spectrum from whatever is playing.
 ### Want real CPU / RAM / disk / network?
 
 Wallpaper Engine runs wallpapers in a sandboxed browser that can't read true system
-stats on its own. To show **real** numbers, run the tiny companion server included in
-this folder:
+stats on its own. To show **real** numbers, install the small companion app.
 
-1. Install Python 3 and the one dependency:
+**Easiest (recommended):** download the latest companion from the
+[Releases page](https://github.com/kups14502/cyberos-hud-wallpaper/releases), unzip
+it, and double-click **Install.bat**. It needs no admin rights, sets itself to
+auto-start at login, and can install Python for you if it is missing. Then turn
+**Real metrics** on in the wallpaper's Properties.
+
+**Manual (if you already have Python):**
+
+1. Install the one dependency:
    ```
    pip install psutil
    ```
