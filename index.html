@@ -41,6 +41,19 @@
   --scanline-alpha: 0.05;
   --ui-scale: 1;
 
+  /* Ultrawide guard. The HUD is four corner-anchored stacks; left to the raw
+     viewport edges they fly to the far corners on 21:9 / 32:9 screens, leaving
+     a huge dead void in the middle. Instead we anchor them to a centered
+     "content band" capped to a 2:1 max aspect (200vh wide). --edge is the
+     horizontal inset from each screen edge to that band. On 16:9 and taller the
+     band is wider than the screen so --edge collapses to the normal 2.2vw
+     margin and the layout is byte-for-byte the original. The full-screen
+     background (starfield + terrain) is deliberately NOT capped, so it keeps
+     filling the entire ultrawide behind the centered HUD. */
+  --band: 200vh;
+  --edge: max(2.2vw, calc((100vw - var(--band)) / 2));
+  --edge-brk: max(1.4vw, calc(var(--edge) - 0.8vw));
+
   /* Master UI scale: scales the whole interface with the viewport while
      staying readable on tiny or huge screens. vmin tracks the short edge,
      which is what we want for desktops of any aspect ratio. The user's
@@ -145,10 +158,10 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
    no per-box coordinate math, and nothing overlaps at any resolution. */
 .col{ position:fixed; z-index:10; display:flex; flex-direction:column; gap:1.1rem;
   width:25rem; max-width:34vw; }
-#lt-stack{ left:2.2vw;  top:4vh; }
-#lb-stack{ left:2.2vw;  bottom:4.5vh; }
-#rt-stack{ right:2.2vw; top:4vh; }
-#rb-stack{ right:2.2vw; bottom:4.5vh; }
+#lt-stack{ left:var(--edge);  top:4vh; }
+#lb-stack{ left:var(--edge);  bottom:4.5vh; }
+#rt-stack{ right:var(--edge); top:4vh; }
+#rb-stack{ right:var(--edge); bottom:4.5vh; }
 .col .win{ position:relative; width:100%; }
 
 /* OS label that replaces the old top bar (e.g. "HOST//OS  v0.1.7") */
@@ -265,10 +278,10 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
 /* corner brackets */
 .corner{ position:fixed; width:2.6rem; height:2.6rem; z-index:45; pointer-events:none;
   border:1px solid var(--accent-line); }
-.corner.tl{ top:2.2vh; left:1.4vw; border-right:0; border-bottom:0; }
-.corner.tr{ top:2.2vh; right:1.4vw; border-left:0; border-bottom:0; }
-.corner.bl{ bottom:2.4vh; left:1.4vw; border-right:0; border-top:0; }
-.corner.br{ bottom:2.4vh; right:1.4vw; border-left:0; border-top:0; }
+.corner.tl{ top:2.2vh; left:var(--edge-brk); border-right:0; border-bottom:0; }
+.corner.tr{ top:2.2vh; right:var(--edge-brk); border-left:0; border-bottom:0; }
+.corner.bl{ bottom:2.4vh; left:var(--edge-brk); border-right:0; border-top:0; }
+.corner.br{ bottom:2.4vh; right:var(--edge-brk); border-left:0; border-top:0; }
 
 /* bottom center hashes */
 .bottom-hash{ position:fixed; bottom:1.2vh; left:50%; transform:translateX(-50%); z-index:45;
@@ -282,7 +295,7 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
 @keyframes boot{ 0%{opacity:0.0;} 6%{opacity:0.16;} 100%{opacity:0;} }
 
 /* status mode tag (REAL vs SIM metrics) */
-#mode-tag{ position:fixed; left:1.6vw; bottom:1.1vh; z-index:46; font-size:0.66rem;
+#mode-tag{ position:fixed; left:calc(var(--edge) - 0.6vw); bottom:1.1vh; z-index:46; font-size:0.66rem;
   letter-spacing:0.16em; color:var(--text-dim); opacity:0.55; pointer-events:none; }
 #mode-tag b{ color:var(--accent); }
 
@@ -912,7 +925,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "0.1.7";
+const VERSION = "2.0";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
