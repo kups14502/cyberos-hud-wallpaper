@@ -1,8 +1,8 @@
 # CyberOS HUD — Wallpaper Engine Wallpaper
 
 A self-contained cyberpunk terminal HUD wallpaper: glowing cyan-on-black terminal,
-live diagnostics gauges, process list, system monitor with sparklines, syntax-lit
-code window, audio-reactive waveform, animated wireframe terrain, and a live clock.
+live diagnostics gauges, process list, system monitor with sparklines,
+audio-reactive waveform, animated wireframe terrain, and a live clock.
 
 Resolution-scalable (any aspect ratio), fully recolorable, and runs on any machine.
 
@@ -44,7 +44,7 @@ adjustable live, no editing required:
 - **Glow strength** and **Scanline overlay**.
 
 **Panels** — toggle any panel on/off independently: terminal, diagnostics,
-process list, system monitor, code window, audio visualizer, time/location.
+process list, system monitor, audio visualizer, time/location.
 
 **Scene** — starfield on/off, wireframe terrain on/off, audio reactivity on/off,
 metric animation speed.
@@ -113,6 +113,10 @@ audio feed (or during silence) it falls back to the idle wave by design.
 
 ### Auto-start the companion on login (Windows)
 
+The recommended installer above already sets this up via a Startup-folder
+shortcut, so most people can skip this section. It is here for anyone who wants a
+self-healing Scheduled Task instead.
+
 > **Why this can't live inside the wallpaper:** Wallpaper Engine runs web
 > wallpapers in a sandboxed Chromium browser that is not allowed to launch
 > external programs — and the same applies to anything published to the Steam
@@ -175,62 +179,6 @@ a JSON blob. (Simpler alternative: a shortcut to the same `pythonw` + script in
 > switches to `LIVE` on its own. Once running, the steady-state poll is fully
 > native (psutil + the NVIDIA NVML library), so it spawns no per-second
 > processes. Nothing to do.
-
----
-
-## Publishing to the Steam Workshop
-
-When you publish this from Wallpaper Engine, the `.html`, `project.json` and
-`preview.jpg` go up as the wallpaper. **The companion (`metrics_server.py`) is not
-part of the wallpaper and cannot be auto-run from the Workshop** — a Workshop
-wallpaper has no permission to launch programs. The wallpaper still works fully on
-its own (simulated metrics); real metrics are an opt-in extra the user sets up
-locally.
-
-So in the Workshop **description**, tell users that real metrics are optional and
-where to get the companion. Paste-ready text:
-
-> **CyberOS HUD** — a cyberpunk terminal dashboard: live clock, diagnostics
-> gauges, process list, system monitor, audio-reactive waveform and an animated
-> wireframe terrain. Fully recolorable from a single accent color, scales to any
-> resolution, and runs on any machine with zero setup.
->
-> **Optional real metrics:** by default the gauges show realistic *simulated*
-> system stats. To display your *actual* CPU / RAM / GPU / disk / network,
-> download the small companion add-on from [your GitHub/download link],
-> double-click **Install.bat**, then enable "Real metrics" in Properties. The
-> wallpaper auto-detects it within a second and falls back to simulation if it
-> isn't running. The companion binds to localhost only and serves read-only stats.
->
-> The installer needs no admin rights, sets the companion to auto-start at login,
-> and offers to install Python for you if it's missing. Remove it any time with
-> Uninstall.bat.
-
-Because the Workshop won't host the companion files, distribute them separately
-as a GitHub release / zip and link it from the description above. Two ready-made
-download packages are built in this folder — ship whichever you like (or both):
-
-- **`CyberOS-HUD-Companion.zip`** (~14 KB) — the Python-script edition. Tiny, no
-  antivirus issues; the installer finds or offers to install Python + psutil.
-  Source folder: `companion-dist/`.
-- **`CyberOS-HUD-Companion-NoPython.zip`** (~9 MB) — a fully self-contained
-  `.exe` build (PyInstaller); the user needs nothing installed. May trip an
-  antivirus false-positive on some machines. Source folder:
-  `companion-dist-nopython/`.
-
-Both installers are **no-admin**: they copy the companion to
-`%LOCALAPPDATA%\CyberOS-HUD` and auto-start it at login via a Startup-folder
-shortcut. Each `Install.bat` is double-click-and-done; `Uninstall.bat` reverses
-it. Recommended: offer the no-Python edition as the default download for most
-people, and link the script edition for users who already have Python.
-
-### Rebuilding the `.exe` (only if you change `metrics_server.py`)
-
-```powershell
-pip install --user pyinstaller
-pyinstaller --noconfirm --clean --onedir --windowed --name "CyberOS-HUD-Companion" --hidden-import psutil metrics_server.py
-# then copy dist\CyberOS-HUD-Companion\ into companion-dist-nopython\ and re-zip.
-```
 
 ---
 

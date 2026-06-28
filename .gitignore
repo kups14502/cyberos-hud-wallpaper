@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# Internal maintainer notes (publishing playbook, exe rebuild) - keep local only
+MAINTAINER.md
