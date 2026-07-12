@@ -644,13 +644,60 @@ class Sampler:
         except Exception:
             return None
 
+    def _drives_posix(self, dt):
+        """Linux/macOS drives: real mounts via psutil (fixed filesystems only),
+        with live per-device throughput where the kernel exposes it. Matters for
+        the remote-server use: a Linux companion should show its real disks."""
+        SKIP_FS = {"tmpfs", "devtmpfs", "squashfs", "overlay", "ramfs", "zram",
+                   "proc", "sysfs", "efivarfs", "autofs", "fuse.gvfsd-fuse"}
+        try:
+            perdisk = psutil.disk_io_counters(perdisk=True) or {}
+        except Exception:
+            perdisk = {}
+        out, seen_dev = [], set()
+        try:
+            parts = psutil.disk_partitions(all=False)
+        except Exception:
+            return []
+        for part in parts:
+            if part.fstype.lower() in SKIP_FS or not part.device.startswith("/dev/"):
+                continue
+            if part.device in seen_dev:        # bind mounts / btrfs subvolumes
+                continue
+            seen_dev.add(part.device)
+            try:
+                u = psutil.disk_usage(part.mountpoint)
+            except Exception:
+                continue
+            dev = os.path.basename(part.device)
+            c = perdisk.get(dev)
+            rb = c.read_bytes if c else 0
+            wb = c.write_bytes if c else 0
+            prev = self._last_perdisk.get(dev)
+            self._last_perdisk[dev] = (rb, wb)
+            read_mbs = write_mbs = 0.0
+            if prev and dt > 0 and (rb or wb):
+                read_mbs = max(rb - prev[0], 0) / dt / (1024 * 1024)
+                write_mbs = max(wb - prev[1], 0) / dt / (1024 * 1024)
+            mp = part.mountpoint
+            out.append({
+                "id": "/" if mp == "/" else (os.path.basename(mp)[:6] or mp[:6]),
+                "label": dev,
+                "total_gb": round(u.total / (1024 ** 3), 1),
+                "used_pct": round(u.used / u.total * 100) if u.total else 0,
+                "read_mbs": round(read_mbs, 1),
+                "write_mbs": round(write_mbs, 1),
+            })
+        out.sort(key=lambda d: (d["id"] != "/", d["id"]))
+        return out[:6]                          # HUD panel space is finite
+
     def _drives_native(self, dt):
         """Every fixed drive with usage + live read/write throughput, computed
         natively via psutil (no subprocess). Label and physical-disk mapping
         come from the cached startup map; an unmapped drive simply reports 0 R/W
         but still shows correct usage."""
         if sys.platform != "win32":
-            return []
+            return self._drives_posix(dt)
         try:
             perdisk = psutil.disk_io_counters(perdisk=True) or {}
         except Exception:
@@ -834,16 +881,31 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="CyberOS HUD metrics companion (read-only stats server)")
+    ap.add_argument("--host", default=HOST,
+                    help="interface to bind (default 127.0.0.1 = this PC only). "
+                         "To feed the wallpaper on ANOTHER machine, bind a LAN/"
+                         "tailnet IP or 0.0.0.0 and set that host in the "
+                         "wallpaper's 'Remote metrics host' property.")
+    ap.add_argument("--port", type=int, default=PORT,
+                    help=f"TCP port to serve on (default {PORT})")
+    args = ap.parse_args()
     try:
-        server = Server((HOST, PORT), Handler)
+        server = Server((args.host, args.port), Handler)
     except OSError:
         raise SystemExit(
-            f"\n[!] Port {PORT} is already in use — the companion is probably "
-            "already running.\n    Close the other window first.\n"
+            f"\n[!] Can't bind {args.host}:{args.port} — the companion is probably "
+            "already running (or the address isn't local).\n"
+            "    Close the other window first.\n"
         )
     print("=" * 52)
     print("  CyberOS HUD — Real Metrics Companion")
-    print(f"  Serving live stats at  http://{HOST}:{PORT}/metrics")
+    print(f"  Serving live stats at  http://{args.host}:{args.port}/metrics")
+    if args.host != "127.0.0.1":
+        print("  NOTE: bound to a non-loopback address, so these read-only")
+        print("  stats are visible to other machines that can reach this one.")
     print("  The wallpaper will pick this up automatically.")
     print("  Leave this running (you can minimize it). Ctrl+C to stop.")
     print("=" * 52)

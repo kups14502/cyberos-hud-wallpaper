@@ -92,8 +92,8 @@ auto-start at login, and can install Python for you if it is missing. Then turn
 3. In the wallpaper's Properties, turn **Real metrics** on.
 
 The wallpaper auto-detects the server within about a second and the mode tag
-(bottom-left) switches from `SIMULATED` to `LIVE`. If the server isn't running it
-silently falls back to simulated — nothing breaks.
+(bottom-left) switches from `SIMULATED` to `REAL · localhost`. If the server isn't
+running it silently falls back to simulated — nothing breaks.
 
 The server binds to `127.0.0.1:8377` (localhost only — it is not reachable from the
 network) and serves CPU %, RAM %, swap %, CPU temperature, disk MB/s, network
@@ -102,6 +102,31 @@ read/write throughput, NVIDIA GPU load/temp/VRAM, your Tailscale devices, and
 your machine identity (OS, hostname, kernel build, CPU model, GPU). When
 connected, the terminal's neofetch block shows your real system instead of the
 fictional CyberOS one.
+
+### Show another machine's stats (like a server)
+
+The wallpaper can display metrics from a **different machine** running the
+companion — a home server, NAS, or lab box. Linux works: drives, processes,
+temperatures, and clocks are all real (GPU rows need an NVIDIA card; the RAM
+speed hides if the OS won't expose it).
+
+1. On the other machine, run the companion bound to a reachable address:
+   ```
+   python3 metrics_server.py --host 0.0.0.0
+   ```
+   (or bind a specific LAN / VPN / Tailscale IP instead of `0.0.0.0`; only
+   `psutil` is required: `pip install psutil`.)
+2. In the wallpaper's Properties, set **Remote metrics host** to that machine's
+   hostname or IP — `myserver`, `192.168.1.50:8377`, or a Tailscale name all
+   work. Leave it **blank** to go back to this PC's companion.
+
+The mode tag switches to `REAL · <host>` and the whole HUD (identity block,
+gauges, monitor, process list, drives, uptime) mirrors the remote machine.
+
+> Exposure note: the companion serves **read-only** stats, but once it binds a
+> non-loopback address, anything that can reach that port can read them (OS,
+> hostname, process names, and so on). Prefer a Tailscale/VPN address or
+> firewall the port to your own machines.
 
 ### Audio visualizer shows only a gentle idle wave?
 

@@ -253,6 +253,14 @@
 				"type" : "bool",
 				"value" : true
 			},
+			"metrics_url" :
+			{
+				"index" : 37,
+				"order" : 108.3,
+				"text" : "Remote metrics host (blank = this PC)",
+				"type" : "textinput",
+				"value" : ""
+			},
 			"clock_units" :
 			{
 				"index" : 36,
@@ -356,7 +364,7 @@
 	"ratingsex" : "none",
 	"ratingviolence" : "none",
 	"tags" : [ "Abstract" ],
-	"title" : "CyberOS  HUD v0.2.2",
+	"title" : "CyberOS  HUD v0.2.3",
 	"type" : "web",
 	"version" : 1,
 	"visibility" : "private",

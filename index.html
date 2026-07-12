@@ -206,7 +206,7 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
 /* per-drive rows in the System Monitor (label + usage bar + size + R/W) */
 .drv{ padding:0.4rem 0; font-size:0.72rem; }
 .drv + .drv{ border-top:1px solid rgba(0,217,232,0.08); }
-.drv .top{ display:grid; grid-template-columns:1.6rem 1fr auto; align-items:center; gap:0.6rem; }
+.drv .top{ display:grid; grid-template-columns:minmax(1.6rem,auto) 1fr auto; align-items:center; gap:0.6rem; }
 .drv .id{ color:var(--accent-bright); font-weight:600; }
 .drv .pct{ color:var(--accent); text-align:right; font-variant-numeric:tabular-nums; min-width:2.6rem;
   text-shadow:0 0 calc(0.35rem*var(--glow-strength)) var(--accent-glow); }
@@ -580,7 +580,11 @@ const CFG={
   glow:1.0,
   uiScale:1.0,
   metricSpeed:1.0,
-  realMetrics:true,          // try localhost companion if present
+  realMetrics:true,          // try companion if present
+  metricsUrl:"",             // companion address; empty = this PC (127.0.0.1:8377).
+                             // Accepts "host", "host:port", or a full http URL —
+                             // e.g. a server on your LAN/tailnet running the
+                             // companion with --host.
   clockUnits:"GHz",          // clock readouts: "GHz" or "MHz"
   use24h:true,
   showSeconds:true,
@@ -661,28 +665,51 @@ function simulate(dt){
   M.source="SIM";
 }
 
-/* ----- optional REAL metrics via local companion (localhost:8377) ----- */
+/* ----- optional REAL metrics via the companion (local or a remote machine) ----- */
 let realOK=false, realPending=false;
+/* Resolve the companion endpoint from the "Remote metrics host" property.
+   Empty = the local companion. Accepts "host", "host:port", or a full URL;
+   port defaults to 8377 and the path to /metrics.
+   127.0.0.1 (not "localhost") for the local default: the companion binds IPv4
+   only, and the browser's ::1-first attempt can add seconds of latency. */
+function metricsEndpoint(){
+  let v=(CFG.metricsUrl||"").trim();
+  if(v && !/^https?:\/\//i.test(v)) v="http://"+v;
+  if(v){
+    try{
+      const u=new URL(v);
+      if(!u.port) u.port="8377";
+      if(u.pathname==="/"||u.pathname==="") u.pathname="/metrics";
+      return {url:u.href, host:u.hostname, remote:true};
+    }catch(e){ /* malformed property -> fall through to local */ }
+  }
+  return {url:"http://127.0.0.1:8377/metrics", host:"localhost", remote:false};
+}
 // Tag text for simulated mode: when real metrics are enabled but the companion
 // isn't answering, say so — a gentle nudge that live stats are available and the
 // companion just isn't running. When the user has turned real metrics off, it's
 // a deliberate choice, so just show SIMULATED.
-function simTag(){ return CFG.realMetrics ? "SIMULATED · companion not detected" : "SIMULATED"; }
+function simTag(){
+  if(!CFG.realMetrics) return "SIMULATED";
+  const ep=metricsEndpoint();
+  return ep.remote ? `SIMULATED · ${ep.host} unreachable` : "SIMULATED · companion not detected";
+}
 function dropReal(){
   realOK=false; M.source="SIM";
-  M.realUptimeSec=undefined; M._memTotalReal=undefined; M.gpuMemClkReal=undefined;
+  M.realUptimeSec=undefined; M._memTotalReal=undefined;
+  M.gpuMemClkReal=undefined; M.ramMhzReal=undefined;
   setModeTag(simTag());
 }
 async function pollReal(){
   if(!CFG.realMetrics){ if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag()); return; }
   if(realPending) return;                    // never stack requests if one hangs
   realPending=true;
+  const ep=metricsEndpoint();
   const ctl=new AbortController();
-  const tmr=setTimeout(()=>ctl.abort(), 850);
+  // a remote host gets a longer leash than loopback before we call it down
+  const tmr=setTimeout(()=>ctl.abort(), ep.remote?2500:850);
   try{
-    // 127.0.0.1 (not "localhost"): the companion binds IPv4 only, and the
-    // browser's ::1-first attempt can add seconds of latency on Windows.
-    const res = await fetch("http://127.0.0.1:8377/metrics", {cache:"no-store", signal:ctl.signal});
+    const res = await fetch(ep.url, {cache:"no-store", signal:ctl.signal});
     if(!res.ok) throw 0;
     const d = await res.json();
     if(typeof d.cpu==="number"){
@@ -705,7 +732,9 @@ async function pollReal(){
       }
       if(typeof d.uptime_sec==="number")   M.realUptimeSec=d.uptime_sec;
       if(typeof d.ram_total_mb==="number") M._memTotalReal=Math.round(d.ram_total_mb);
-      if(typeof d.ram_mhz==="number" && d.ram_mhz>0) M.ramMhz=d.ram_mhz;
+      // RAM clock: only shown real; hidden when this companion can't read it
+      // (Linux without root, or an older companion build)
+      M.ramMhzReal = (typeof d.ram_mhz==="number" && d.ram_mhz>0) ? d.ram_mhz : null;
       if(typeof d.nproc==="number") M.nproc=d.nproc;
       if(typeof d.nusers==="number") M.nusers=d.nusers;
       if(d.gpu && typeof d.gpu.util==="number"){
@@ -736,7 +765,7 @@ async function pollReal(){
       }
       if(domReady){ renderDrives(); renderTailnet(); }
       M.source="REAL"; realOK=true;
-      setModeTag("REAL · localhost");
+      setModeTag("REAL · "+ep.host);
     }
   }catch(e){
     if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag());
@@ -967,7 +996,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.2";
+const VERSION = "2.3";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -1262,12 +1291,14 @@ function updateUI(){
   const vGB=(M.vramUsed/1024).toFixed(1), vtGB=(M.vramTotal/1024).toFixed(0);
   $("#v-vram").innerHTML   = `${Math.round(M.vram)}%<br>${vGB}/${vtGB} GB`;
 
-  // header clock readouts. GPU shows core · memory; on a real feed the memory
-  // clock only appears if the companion reports it (no fake pairing with real data).
+  // header clock readouts. On a real feed, GPU memory clock and RAM speed only
+  // appear if the companion reports them (no fake values mixed into real data).
   $("#clk-cpu").textContent = fmtClk(M.cpuClk);
-  const realFeed = realOK && M.source==="REAL" && M.gpuReal!==false;
-  $("#clk-gpu").textContent = fmtClkPair(M.gpuClk, realFeed ? M.gpuMemClkReal : M.gpuMemClk);
-  $("#clk-mem").textContent = Math.round(M.ramMhz)+" MT/s";
+  const isReal = realOK && M.source==="REAL";
+  $("#clk-gpu").textContent = fmtClkPair(M.gpuClk, (isReal && M.gpuReal!==false) ? M.gpuMemClkReal : M.gpuMemClk);
+  $("#clk-mem").textContent = isReal
+      ? (M.ramMhzReal ? Math.round(M.ramMhzReal)+" MT/s" : "")
+      : Math.round(M.ramMhz)+" MT/s";
 
   setSeg("#bar-temp", clamp((M.cpuTemp-30)/55*100,0,100), 80); // 30..85°C range, hot >80%
   setSeg("#bar-mem",  M.ram, 90);
@@ -1323,6 +1354,7 @@ window.wallpaperPropertyListener = {
       if(p.ui_scale)      CFG.uiScale= +p.ui_scale.value || 1;
       if(p.metric_speed)  CFG.metricSpeed = +p.metric_speed.value;
       if(p.real_metrics)  CFG.realMetrics = asBool(p.real_metrics);
+      if(p.metrics_url!==undefined) CFG.metricsUrl = String(p.metrics_url.value||"").trim();
       if(p.clock_units)   CFG.clockUnits = p.clock_units.value;
       if(p.clock_24h)     CFG.use24h = asBool(p.clock_24h);
       if(p.show_seconds)  CFG.showSeconds = asBool(p.show_seconds);
