@@ -377,10 +377,11 @@ class _NVML:
             lib.nvmlDeviceGetTemperature.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
         except Exception:
             return
-        # Graphics clock (clock type 0 = NVML_CLOCK_GRAPHICS). Guarded
+        # Clocks (type 0 = NVML_CLOCK_GRAPHICS, 2 = NVML_CLOCK_MEM). Guarded
         # separately so a driver without these entry points still serves
-        # util/temp/VRAM. The max boost clock never changes; read it once.
+        # util/temp/VRAM. The max clocks never change; read them once.
         self.clock_max = None
+        self.mem_clock_max = None
         self._has_clock = False
         try:
             lib.nvmlDeviceGetClockInfo.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
@@ -389,6 +390,8 @@ class _NVML:
             c = ctypes.c_uint()
             if lib.nvmlDeviceGetMaxClockInfo(h, 0, ctypes.byref(c)) == 0:
                 self.clock_max = float(c.value)
+            if lib.nvmlDeviceGetMaxClockInfo(h, 2, ctypes.byref(c)) == 0:
+                self.mem_clock_max = float(c.value)
         except Exception:
             pass
         self.lib = lib
@@ -409,13 +412,16 @@ class _NVML:
             t = ctypes.c_uint()
             if self.lib.nvmlDeviceGetTemperature(self.h, 0, ctypes.byref(t)) == 0:
                 temp = float(t.value)
-            clock = None
+            clock = mem_clock = None
             if self._has_clock:
                 c = ctypes.c_uint()
                 if self.lib.nvmlDeviceGetClockInfo(self.h, 0, ctypes.byref(c)) == 0:
                     clock = float(c.value)
+                if self.lib.nvmlDeviceGetClockInfo(self.h, 2, ctypes.byref(c)) == 0:
+                    mem_clock = float(c.value)
             return {"util": float(u.gpu), "temp": temp,
                     "clock": clock, "clock_max": self.clock_max,
+                    "mem_clock": mem_clock, "mem_clock_max": self.mem_clock_max,
                     "vram_used": round(m.used / (1024 * 1024), 1),
                     "vram_total": round(m.total / (1024 * 1024), 1)}
         except Exception:
@@ -430,21 +436,21 @@ def _gpu_query():
         out = subprocess.check_output(
             ["nvidia-smi",
              "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,"
-             "clocks.gr,clocks.max.gr",
+             "clocks.gr,clocks.max.gr,clocks.mem,clocks.max.mem",
              "--format=csv,noheader,nounits"],
             text=True, timeout=3, creationflags=NO_WINDOW)
         vals = [x.strip() for x in out.strip().splitlines()[0].split(",")]
 
-        def _f(s):
+        def _f(i):
             try:
-                return float(s)
+                return float(vals[i])
             except Exception:
-                return None      # nvidia-smi prints "[N/A]" for unsupported fields
+                return None      # missing column, or "[N/A]" for unsupported fields
 
         return {"util": float(vals[0]), "temp": float(vals[1]),
                 "vram_used": float(vals[2]), "vram_total": float(vals[3]),
-                "clock": _f(vals[4]) if len(vals) > 4 else None,
-                "clock_max": _f(vals[5]) if len(vals) > 5 else None}
+                "clock": _f(4), "clock_max": _f(5),
+                "mem_clock": _f(6), "mem_clock_max": _f(7)}
     except Exception:
         return None
 
@@ -473,6 +479,28 @@ class _GPU:
 
 
 GPU = _GPU()
+
+
+def _ram_mhz():
+    """Installed RAM speed in MT/s (what vendors label 'MHz'). Hardware-static,
+    so it is read once at startup. ConfiguredClockSpeed is the speed the module
+    actually runs at (XMP/JEDEC); Speed is the rated fallback."""
+    if sys.platform != "win32":
+        return None
+    try:
+        out = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_PhysicalMemory | ForEach-Object { "
+             "if ($_.ConfiguredClockSpeed) { $_.ConfiguredClockSpeed } "
+             "elseif ($_.Speed) { $_.Speed } }"],
+            text=True, timeout=15, creationflags=NO_WINDOW)
+        speeds = [int(x) for x in out.split() if x.strip().isdigit()]
+        return max(speeds) if speeds else None
+    except Exception:
+        return None
+
+
+RAM_MHZ = _ram_mhz()
 
 
 def _collect_sysinfo():
@@ -739,6 +767,7 @@ class Sampler:
             "cpu_mhz": cpu_mhz,
             "cpu_mhz_max": cpu_mhz_max,
             "ram": round(vm.percent, 1),
+            "ram_mhz": RAM_MHZ,
             "ram_total_mb": round(vm.total / (1024 * 1024)),
             "cpu_count": NCORES,
             "swap": round(sm.percent, 1),

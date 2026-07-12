@@ -245,13 +245,26 @@
 				"type" : "bool",
 				"value" : true
 			},
-			"real_metrics" : 
+			"real_metrics" :
 			{
 				"index" : 8,
 				"order" : 108,
 				"text" : "Use real metrics if companion app is running",
 				"type" : "bool",
 				"value" : true
+			},
+			"clock_units" :
+			{
+				"index" : 36,
+				"options" :
+				[
+					{ "label" : "GHz", "value" : "GHz" },
+					{ "label" : "MHz", "value" : "MHz" }
+				],
+				"order" : 108.5,
+				"text" : "CPU clock units",
+				"type" : "combo",
+				"value" : "GHz"
 			},
 			"scanlines" : 
 			{
@@ -343,7 +356,7 @@
 	"ratingsex" : "none",
 	"ratingviolence" : "none",
 	"tags" : [ "Abstract" ],
-	"title" : "CyberOS HUD v2.1",
+	"title" : "CyberOS  HUD v0.2.2",
 	"type" : "web",
 	"version" : 1,
 	"visibility" : "private",

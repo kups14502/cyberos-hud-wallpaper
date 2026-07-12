@@ -182,8 +182,13 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
 .nf .info div{ font-size:0.74rem; line-height:1.55; }
 
 /* --------------------- SYSTEM MONITOR --------------------- */
-.mgrp{ font-size:0.66rem; letter-spacing:0.18em; color:var(--accent-dim); margin:0.55rem 0 0.15rem; }
+.mgrp{ font-size:0.66rem; letter-spacing:0.18em; color:var(--accent-dim); margin:0.55rem 0 0.15rem;
+  display:flex; align-items:baseline; }
 .mgrp:first-child{ margin-top:0; }
+/* live clock readout on the right side of a group header */
+.mgrp .clk{ margin-left:auto; letter-spacing:0.06em; color:var(--accent);
+  font-variant-numeric:tabular-nums;
+  text-shadow:0 0 calc(0.35rem*var(--glow-strength)) var(--accent-glow); }
 .mrow{ display:grid; grid-template-columns:6.2rem 1fr auto; align-items:center;
   gap:0.7rem; padding:0.45rem 0; font-size:0.76rem; }
 .mrow + .mrow{ border-top:1px solid rgba(0,217,232,0.08); }
@@ -346,16 +351,11 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
     <div class="bdy">
       <div class="sec-h"><span class="plus">+</span> SYSTEM MONITOR</div>
 
-      <div class="mgrp">CPU</div>
+      <div class="mgrp">CPU<span class="clk" id="clk-cpu"></span></div>
       <div class="mrow">
         <span class="lbl">Usage</span>
         <canvas class="spark" id="sp-cpu"></canvas>
         <span class="val" id="v-cpu">0%</span>
-      </div>
-      <div class="mrow">
-        <span class="lbl">Clock</span>
-        <div class="segbar" id="bar-cclk"></div>
-        <span class="val" id="v-cclk">0.00 GHz</span>
       </div>
       <div class="mrow">
         <span class="lbl">Temp</span>
@@ -363,16 +363,11 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
         <span class="val" id="v-temp">0&deg;C</span>
       </div>
 
-      <div class="mgrp">GPU</div>
+      <div class="mgrp">GPU<span class="clk" id="clk-gpu"></span></div>
       <div class="mrow">
         <span class="lbl">Usage</span>
         <canvas class="spark" id="sp-gpu"></canvas>
         <span class="val" id="v-gpu">0%</span>
-      </div>
-      <div class="mrow">
-        <span class="lbl">Clock</span>
-        <div class="segbar" id="bar-gclk"></div>
-        <span class="val" id="v-gclk">0.00 GHz</span>
       </div>
       <div class="mrow">
         <span class="lbl">Temp</span>
@@ -385,7 +380,7 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
         <span class="val dual" id="v-vram">0%</span>
       </div>
 
-      <div class="mgrp">MEMORY</div>
+      <div class="mgrp">MEMORY<span class="clk" id="clk-mem"></span></div>
       <div class="mrow">
         <span class="lbl">RAM</span>
         <div class="segbar" id="bar-mem"></div>
@@ -488,7 +483,12 @@ const rnd  =(a,b)=>a+Math.random()*(b-a);
    Sim traffic lives in 0-10 KB/s (linear, lower half of the dial);
    real traffic can hit MB/s, so the upper half is log-scaled. */
 const fmtRate=(kbs)=> kbs>=1024 ? (kbs/1024).toFixed(kbs>=10240?0:1)+" MB/s" : kbs.toFixed(1)+" KB/s";
-const fmtGHz=(mhz)=> (mhz/1000).toFixed(2)+" GHz";
+/* CPU clock honors the "CPU clock units" property (GHz or MHz). GPU clocks are
+   always whole MHz, Afterburner-style (e.g. "2797 · M 15201 MHz"). */
+const fmtClk=(mhz)=> CFG.clockUnits==="MHz" ? Math.round(mhz)+" MHz" : (mhz/1000).toFixed(2)+" GHz";
+const fmtClkPair=(core,mem)=> mem==null
+  ? `${Math.round(core)} MHz`
+  : `${Math.round(core)} · M ${Math.round(mem)} MHz`;
 const netScale=(kbs)=> clamp(kbs<=10 ? kbs*5 : 50+Math.log10(kbs/10)*12.5, 0, 100);
 
 /* =========================================================================
@@ -581,6 +581,7 @@ const CFG={
   uiScale:1.0,
   metricSpeed:1.0,
   realMetrics:true,          // try localhost companion if present
+  clockUnits:"GHz",          // clock readouts: "GHz" or "MHz"
   use24h:true,
   showSeconds:true,
   hostUser:"root@unit",
@@ -603,6 +604,7 @@ const M={
   disk:118, netDown:2.7, netUp:1.4,
   gpu:14, gpuTemp:42, vram:28, vramUsed:4600, vramTotal:16384,
   cpuClk:1800, cpuClkMax:5000, gpuClk:600, gpuClkMax:2800,
+  gpuMemClk:9000, gpuMemClkMax:10500, ramMhz:6000,
   cpuHist:[], diskHist:[], netHist:[], gpuHist:[],
   procs:[
     {pid:2150,name:"phantom", cpu:2.1, mem:1.2},
@@ -648,6 +650,7 @@ function simulate(dt){
   // clocks track load loosely: idle near the floor, boosting with usage
   M.cpuClk=clamp(1200 + M.cpu/100*(M.cpuClkMax-1200) + rnd(-80,80)*k, 800, M.cpuClkMax);
   M.gpuClk=clamp(300  + M.gpu/100*(M.gpuClkMax-300)  + rnd(-40,40)*k, 210, M.gpuClkMax);
+  M.gpuMemClk=clamp(810 + M.gpu/100*(M.gpuMemClkMax-810) + rnd(-60,60)*k, 405, M.gpuMemClkMax);
 
   // jitter the process table around plausible values
   M.procs.forEach(p=>{
@@ -667,7 +670,7 @@ let realOK=false, realPending=false;
 function simTag(){ return CFG.realMetrics ? "SIMULATED · companion not detected" : "SIMULATED"; }
 function dropReal(){
   realOK=false; M.source="SIM";
-  M.realUptimeSec=undefined; M._memTotalReal=undefined;
+  M.realUptimeSec=undefined; M._memTotalReal=undefined; M.gpuMemClkReal=undefined;
   setModeTag(simTag());
 }
 async function pollReal(){
@@ -702,6 +705,7 @@ async function pollReal(){
       }
       if(typeof d.uptime_sec==="number")   M.realUptimeSec=d.uptime_sec;
       if(typeof d.ram_total_mb==="number") M._memTotalReal=Math.round(d.ram_total_mb);
+      if(typeof d.ram_mhz==="number" && d.ram_mhz>0) M.ramMhz=d.ram_mhz;
       if(typeof d.nproc==="number") M.nproc=d.nproc;
       if(typeof d.nusers==="number") M.nusers=d.nusers;
       if(d.gpu && typeof d.gpu.util==="number"){
@@ -717,6 +721,8 @@ async function pollReal(){
           if(typeof d.gpu.clock_max==="number" && d.gpu.clock_max>0) M.gpuClkMax=d.gpu.clock_max;
           M.gpuClkMax=Math.max(M.gpuClkMax, M.gpuClk);
         } else { M.gpuClk=lerp(M.gpuClk, 300+M.gpu/100*(M.gpuClkMax-300), 0.15); } // old companion: estimate from load
+        // GPU memory clock: only shown real; hidden if the companion predates it
+        M.gpuMemClkReal = (typeof d.gpu.mem_clock==="number") ? d.gpu.mem_clock : null;
         M.gpuReal=true;
       } else { M.gpuReal=false; }   // companion up but no NVIDIA GPU -> simulate GPU rows
       if(Array.isArray(d.drives)) M.drives=d.drives;
@@ -753,6 +759,7 @@ function metricsTick(dt){
     r=walk(SIM.vram,TGT.vram,12,82,0.4*k,0.02*k);  SIM.vram=r.v; TGT.vram=r.target; M.vram=SIM.vram;
     M.vramUsed=Math.round(M.vram/100*M.vramTotal);
     M.gpuClk=clamp(300 + M.gpu/100*(M.gpuClkMax-300) + rnd(-40,40)*k, 210, M.gpuClkMax);
+    M.gpuMemClk=clamp(810 + M.gpu/100*(M.gpuMemClkMax-810) + rnd(-60,60)*k, 405, M.gpuMemClkMax);
   }
   // push history (works for both real + sim)
   M.cpuHist.push(M.cpu);   if(M.cpuHist.length>HIST) M.cpuHist.shift();
@@ -845,15 +852,23 @@ function drawSpark(cv, data){
   ctx.fillStyle=`hsl(${PAL.h} ${PAL.s}% ${PAL.l}% / 0.12)`; ctx.fill();
 }
 
+/* innerHTML assignment re-parses even when the markup is identical (browsers
+   only fast-path identical textContent), so the table-ish panels — whose data
+   changes every 1-5 s but whose render functions run every 320 ms — go through
+   this guard. Byte-identical markup = skip the rebuild entirely. */
+function setHTML(el, html){
+  if(el._lastHTML!==html){ el._lastHTML=html; el.innerHTML=html; }
+}
+
 /* =========================================================================
    PROCESS TABLE
    ========================================================================= */
 function renderProcs(){
   const tb=$("#proc-body"); if(!tb) return;
-  tb.innerHTML = M.procs.map(p=>
+  setHTML(tb, M.procs.map(p=>
     `<tr><td class="n">${p.pid}</td><td>${p.name}</td>`+
     `<td class="n">${p.cpu.toFixed(1)}</td><td class="n">${p.mem.toFixed(1)}</td></tr>`
-  ).join("");
+  ).join(""));
 }
 
 /* =========================================================================
@@ -952,7 +967,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.1";
+const VERSION = "2.2";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -975,7 +990,7 @@ function fmtSize(gb){ return gb>=1024 ? (gb/1024).toFixed(gb>=10240?0:1)+"TB" : 
 function renderDrives(){
   const box=$("#drives"); if(!box) return;
   const list = (M.drives && M.drives.length) ? M.drives : SIM_DRIVES;
-  box.innerHTML = list.map(d=>{
+  setHTML(box, list.map(d=>{
     const pct=clamp(d.used_pct,0,100);
     const lbl=d.label ? d.label : "";
     const io=`R ${d.read_mbs.toFixed(1)} \u00B7 W ${d.write_mbs.toFixed(1)} MB/s`;
@@ -985,7 +1000,7 @@ function renderDrives(){
         <span class="pct">${pct}%</span></div>
       <div class="sub"><span>${lbl?lbl+" \u00B7 ":""}${fmtSize(d.total_gb)}</span><span class="io">${io}</span></div>
     </div>`;
-  }).join("");
+  }).join(""));
 }
 const SIM_DRIVES=[
   {id:"C:",label:"System",total_gb:931,used_pct:64,read_mbs:1.2,write_mbs:0.4},
@@ -1005,16 +1020,16 @@ function renderTailnet(){
   const box=$("#tnet-body"); if(!box) return;
   const list = M.tailnet;
   if(!list || !list.length){
-    box.innerHTML = `<div class="tn off"><span class="led"></span>`+
-      `<span class="nm"><span class="os">companion offline</span></span><span class="st">\u2014</span></div>`;
+    setHTML(box, `<div class="tn off"><span class="led"></span>`+
+      `<span class="nm"><span class="os">companion offline</span></span><span class="st">\u2014</span></div>`);
     return;
   }
-  box.innerHTML = list.map(d=>{
+  setHTML(box, list.map(d=>{
     const nm = d.self ? `<b>${d.name}</b> <span class="os">[self] \u00B7 ${d.os}</span>`
                       : `<b>${d.name}</b> <span class="os">\u00B7 ${d.os}</span>`;
     return `<div class="tn ${d.online?'':'off'}"><span class="led"></span>`+
            `<span class="nm">${nm}</span><span class="st">${tnStatus(d)}</span></div>`;
-  }).join("");
+  }).join(""));
 }
 
 /* =========================================================================
@@ -1247,17 +1262,18 @@ function updateUI(){
   const vGB=(M.vramUsed/1024).toFixed(1), vtGB=(M.vramTotal/1024).toFixed(0);
   $("#v-vram").innerHTML   = `${Math.round(M.vram)}%<br>${vGB}/${vtGB} GB`;
 
-  $("#v-cclk").textContent = fmtGHz(M.cpuClk);
-  $("#v-gclk").textContent = fmtGHz(M.gpuClk);
+  // header clock readouts. GPU shows core · memory; on a real feed the memory
+  // clock only appears if the companion reports it (no fake pairing with real data).
+  $("#clk-cpu").textContent = fmtClk(M.cpuClk);
+  const realFeed = realOK && M.source==="REAL" && M.gpuReal!==false;
+  $("#clk-gpu").textContent = fmtClkPair(M.gpuClk, realFeed ? M.gpuMemClkReal : M.gpuMemClk);
+  $("#clk-mem").textContent = Math.round(M.ramMhz)+" MT/s";
 
   setSeg("#bar-temp", clamp((M.cpuTemp-30)/55*100,0,100), 80); // 30..85°C range, hot >80%
   setSeg("#bar-mem",  M.ram, 90);
   setSeg("#bar-swap", M.swap, 90);
   setSeg("#bar-gtemp",clamp((M.gpuTemp-30)/55*100,0,100), 80);
   setSeg("#bar-vram", M.vram, 90);
-  // clock bars scale to the chip's max; a pegged bar just means full boost, not danger
-  setSeg("#bar-cclk", clamp(M.cpuClk/(M.cpuClkMax||1)*100,0,100));
-  setSeg("#bar-gclk", clamp(M.gpuClk/(M.gpuClkMax||1)*100,0,100));
 
   if(CFG.panels.diag) updateGauges();
   if(CFG.panels.proc) renderProcs();
@@ -1307,6 +1323,7 @@ window.wallpaperPropertyListener = {
       if(p.ui_scale)      CFG.uiScale= +p.ui_scale.value || 1;
       if(p.metric_speed)  CFG.metricSpeed = +p.metric_speed.value;
       if(p.real_metrics)  CFG.realMetrics = asBool(p.real_metrics);
+      if(p.clock_units)   CFG.clockUnits = p.clock_units.value;
       if(p.clock_24h)     CFG.use24h = asBool(p.clock_24h);
       if(p.show_seconds)  CFG.showSeconds = asBool(p.show_seconds);
       if(p.host_user && p.host_user.value)  CFG.hostUser = p.host_user.value;
@@ -1374,17 +1391,28 @@ function updateCoordsDisplay(){
   el.innerHTML = `${Math.abs(c.lat).toFixed(4)}° ${c.lat>=0?"N":"S"}, `+
                  `${Math.abs(c.lon).toFixed(4)}° ${c.lon>=0?"E":"W"}`;
 }
-// One-shot IP geolocation (city-level). No key; the third party already sees
-// your IP when you make the request. Used only when auto location is enabled.
+// IP geolocation (city-level). No key; the third party already sees your IP
+// when you make the request. Used only when auto location is enabled.
+// Several providers are tried in order: any one of them can be down, blocked,
+// or rate-limiting (ipapi.co 403s some networks), and a miss here used to
+// strand the wallpaper on the default coords (and their weather) forever.
+const GEO_PROVIDERS=[
+  ["https://ipapi.co/json/",  d=>({lat:+d.latitude, lon:+d.longitude, city:d.city||""})],
+  ["https://ipwho.is/",       d=>({lat:+d.latitude, lon:+d.longitude, city:d.city||""})],
+  ["https://ipinfo.io/json",  d=>{ const [la,lo]=String(d.loc||"").split(",");
+                                   return {lat:+la, lon:+lo, city:d.city||""}; }],
+];
 async function detectLocation(){
-  try{
-    const ctl=new AbortController(); const tmr=setTimeout(()=>ctl.abort(),6000);
-    const r=await fetch("https://ipapi.co/json/",{cache:"no-store",signal:ctl.signal});
-    clearTimeout(tmr);
-    const d=await r.json();
-    if(isFinite(d.latitude)&&isFinite(d.longitude))
-      return {lat:+d.latitude, lon:+d.longitude, city:d.city||""};
-  }catch(e){}
+  for(const [url,parse] of GEO_PROVIDERS){
+    try{
+      const ctl=new AbortController(); const tmr=setTimeout(()=>ctl.abort(),6000);
+      const r=await fetch(url,{cache:"no-store",signal:ctl.signal});
+      clearTimeout(tmr);
+      if(!r.ok) continue;
+      const g=parse(await r.json());
+      if(isFinite(g.lat)&&isFinite(g.lon)) return g;
+    }catch(e){}
+  }
   return null;
 }
 async function refreshLocation(){
@@ -1402,6 +1430,12 @@ let wxPending=false;
 async function fetchWeather(){
   if(wxPending) return; wxPending=true;
   try{
+    // no auto-location fix yet? keep retrying on the weather cadence instead of
+    // latching onto the manual/default coords for the rest of the session.
+    if(CFG.autoLocation && !M.geo){
+      const g=await detectLocation();
+      if(g){ M.geo=g; updateCoordsDisplay(); }
+    }
     const c=activeCoords(); if(!c) throw 0;
     const unit = CFG.weatherUnit==="C" ? "celsius" : "fahrenheit";
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lon}`+
@@ -1434,7 +1468,6 @@ function buildAll(){
   buildGauges();
   buildSeg("#bar-temp",18); buildSeg("#bar-mem",18); buildSeg("#bar-swap",18);
   buildSeg("#bar-gtemp",18); buildSeg("#bar-vram",18);
-  buildSeg("#bar-cclk",18); buildSeg("#bar-gclk",18);
   buildTerminal();
   starInit(); terrainInit(); audioSetup();
   renderProcs(); renderDrives(); renderTailnet();
@@ -1480,7 +1513,10 @@ document.addEventListener("DOMContentLoaded", ()=>{
   // first paint
   metricsTick(120); updateUI();
   setModeTag(CFG.realMetrics? "SIMULATED (probing…)" : "SIMULATED");
-  refreshLocation(); setInterval(fetchWeather, 15*60*1000); // detect once, refresh weather every 15 min
+  refreshLocation(); setInterval(fetchWeather, 15*60*1000); // refresh weather every 15 min
+  // if the first location attempt missed (provider down/blocked), retry soon
+  // rather than waiting a full weather cycle showing the wrong city's weather
+  setTimeout(()=>{ if(CFG.autoLocation && !M.geo) refreshLocation(); }, 90*1000);
   requestAnimationFrame(loop);
 });
 </script>
