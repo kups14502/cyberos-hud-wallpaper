@@ -252,6 +252,90 @@ def _tailnet():
 
 
 # ---------------------------------------------------------------------------
+# CPU clock: current core frequency in MHz. On Windows psutil.cpu_freq()
+# reports a near-constant value (the base clock), so we compute it the way
+# Task Manager does: the documented PDH counter "% Processor Performance"
+# (percent of nominal frequency; exceeds 100 when boosting) times the base
+# MHz. PDH is loaded once via ctypes; each 1 Hz sample is two cheap C calls.
+# Falls back to psutil.cpu_freq() (accurate on Linux/macOS).
+# ---------------------------------------------------------------------------
+class _PdhValue(ctypes.Structure):
+    # PDH_FMT_COUNTERVALUE with the union collapsed to its double member
+    # (ctypes 8-aligns the double, matching the C struct layout).
+    _fields_ = [("CStatus", ctypes.c_ulong), ("doubleValue", ctypes.c_double)]
+
+
+class _CpuClock:
+    def __init__(self):
+        self.base = None          # nominal (base) MHz
+        self.hi = None            # highest MHz seen (Windows has no documented
+                                  # boost-ceiling API; base * %Performance exceeds
+                                  # base whenever boosting, so report a high-water
+                                  # mark that converges on the true boost clock)
+        self.ok = False           # PDH counter usable
+        try:
+            f = psutil.cpu_freq()
+            if f:
+                self.base = float(f.max or f.current or 0) or None
+        except Exception:
+            pass
+        if sys.platform != "win32":
+            return
+        if not self.base:
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                     r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+                self.base = float(winreg.QueryValueEx(key, "~MHz")[0])
+            except Exception:
+                return
+        try:
+            pdh = ctypes.WinDLL("pdh.dll")
+            self._q = ctypes.c_void_p()
+            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(self._q)) != 0:
+                return
+            self._c = ctypes.c_void_p()
+            path = r"\Processor Information(_Total)\% Processor Performance"
+            if pdh.PdhAddEnglishCounterW(self._q, path, 0, ctypes.byref(self._c)) != 0:
+                return
+            pdh.PdhCollectQueryData(self._q)  # prime: rate counters need two samples
+            self._pdh = pdh
+            self.ok = True
+        except Exception:
+            pass
+
+    def _seen(self, mhz):
+        # max = high-water mark, never below base: the wallpaper scales its
+        # clock bar against this, so it must stay >= the current reading.
+        if self.hi is None or mhz > self.hi:
+            self.hi = mhz
+        return mhz, round(max(self.hi, self.base or 0)) or None
+
+    def query(self):
+        """Return (current_mhz, max_mhz); either may be None."""
+        if self.ok:
+            try:
+                if self._pdh.PdhCollectQueryData(self._q) == 0:
+                    v = _PdhValue()
+                    # 0x200 = PDH_FMT_DOUBLE
+                    if self._pdh.PdhGetFormattedCounterValue(
+                            self._c, 0x200, None, ctypes.byref(v)) == 0:
+                        return self._seen(round(self.base * v.doubleValue / 100.0))
+            except Exception:
+                self.ok = False
+        try:
+            f = psutil.cpu_freq()
+            if f and f.current:
+                return self._seen(round(f.current))
+        except Exception:
+            pass
+        return None, round(self.base) if self.base else None
+
+
+CPU_CLOCK = _CpuClock()
+
+
+# ---------------------------------------------------------------------------
 # GPU: live NVIDIA stats via the driver's NVML library, loaded once through
 # ctypes. query() is a few cheap C calls — no per-second subprocess. Falls back
 # to nvidia-smi (then to the wallpaper's simulated GPU) if NVML is unavailable.
@@ -293,6 +377,20 @@ class _NVML:
             lib.nvmlDeviceGetTemperature.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
         except Exception:
             return
+        # Graphics clock (clock type 0 = NVML_CLOCK_GRAPHICS). Guarded
+        # separately so a driver without these entry points still serves
+        # util/temp/VRAM. The max boost clock never changes; read it once.
+        self.clock_max = None
+        self._has_clock = False
+        try:
+            lib.nvmlDeviceGetClockInfo.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
+            lib.nvmlDeviceGetMaxClockInfo.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
+            self._has_clock = True
+            c = ctypes.c_uint()
+            if lib.nvmlDeviceGetMaxClockInfo(h, 0, ctypes.byref(c)) == 0:
+                self.clock_max = float(c.value)
+        except Exception:
+            pass
         self.lib = lib
         self.h = h
         self.ok = True
@@ -311,7 +409,13 @@ class _NVML:
             t = ctypes.c_uint()
             if self.lib.nvmlDeviceGetTemperature(self.h, 0, ctypes.byref(t)) == 0:
                 temp = float(t.value)
+            clock = None
+            if self._has_clock:
+                c = ctypes.c_uint()
+                if self.lib.nvmlDeviceGetClockInfo(self.h, 0, ctypes.byref(c)) == 0:
+                    clock = float(c.value)
             return {"util": float(u.gpu), "temp": temp,
+                    "clock": clock, "clock_max": self.clock_max,
                     "vram_used": round(m.used / (1024 * 1024), 1),
                     "vram_total": round(m.total / (1024 * 1024), 1)}
         except Exception:
@@ -325,12 +429,22 @@ def _gpu_query():
     try:
         out = subprocess.check_output(
             ["nvidia-smi",
-             "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total",
+             "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,"
+             "clocks.gr,clocks.max.gr",
              "--format=csv,noheader,nounits"],
             text=True, timeout=3, creationflags=NO_WINDOW)
-        util, temp, used, total = [x.strip() for x in out.strip().splitlines()[0].split(",")]
-        return {"util": float(util), "temp": float(temp),
-                "vram_used": float(used), "vram_total": float(total)}
+        vals = [x.strip() for x in out.strip().splitlines()[0].split(",")]
+
+        def _f(s):
+            try:
+                return float(s)
+            except Exception:
+                return None      # nvidia-smi prints "[N/A]" for unsupported fields
+
+        return {"util": float(vals[0]), "temp": float(vals[1]),
+                "vram_used": float(vals[2]), "vram_total": float(vals[3]),
+                "clock": _f(vals[4]) if len(vals) > 4 else None,
+                "clock_max": _f(vals[5]) if len(vals) > 5 else None}
     except Exception:
         return None
 
@@ -596,6 +710,7 @@ class Sampler:
         dt = max(now - self._last_t, 1e-3)
 
         cpu = self._cpu_percent()
+        cpu_mhz, cpu_mhz_max = CPU_CLOCK.query()
         vm = psutil.virtual_memory()
         sm = psutil.swap_memory()
 
@@ -621,6 +736,8 @@ class Sampler:
 
         return {
             "cpu": round(cpu, 1),
+            "cpu_mhz": cpu_mhz,
+            "cpu_mhz_max": cpu_mhz_max,
             "ram": round(vm.percent, 1),
             "ram_total_mb": round(vm.total / (1024 * 1024)),
             "cpu_count": NCORES,

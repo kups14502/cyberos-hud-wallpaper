@@ -353,6 +353,11 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
         <span class="val" id="v-cpu">0%</span>
       </div>
       <div class="mrow">
+        <span class="lbl">Clock</span>
+        <div class="segbar" id="bar-cclk"></div>
+        <span class="val" id="v-cclk">0.00 GHz</span>
+      </div>
+      <div class="mrow">
         <span class="lbl">Temp</span>
         <div class="segbar" id="bar-temp"></div>
         <span class="val" id="v-temp">0&deg;C</span>
@@ -363,6 +368,11 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
         <span class="lbl">Usage</span>
         <canvas class="spark" id="sp-gpu"></canvas>
         <span class="val" id="v-gpu">0%</span>
+      </div>
+      <div class="mrow">
+        <span class="lbl">Clock</span>
+        <div class="segbar" id="bar-gclk"></div>
+        <span class="val" id="v-gclk">0.00 GHz</span>
       </div>
       <div class="mrow">
         <span class="lbl">Temp</span>
@@ -478,6 +488,7 @@ const rnd  =(a,b)=>a+Math.random()*(b-a);
    Sim traffic lives in 0-10 KB/s (linear, lower half of the dial);
    real traffic can hit MB/s, so the upper half is log-scaled. */
 const fmtRate=(kbs)=> kbs>=1024 ? (kbs/1024).toFixed(kbs>=10240?0:1)+" MB/s" : kbs.toFixed(1)+" KB/s";
+const fmtGHz=(mhz)=> (mhz/1000).toFixed(2)+" GHz";
 const netScale=(kbs)=> clamp(kbs<=10 ? kbs*5 : 50+Math.log10(kbs/10)*12.5, 0, 100);
 
 /* =========================================================================
@@ -591,6 +602,7 @@ const M={
   cpu:17, ram:32, net:2.7, cpuTemp:48, swap:12,
   disk:118, netDown:2.7, netUp:1.4,
   gpu:14, gpuTemp:42, vram:28, vramUsed:4600, vramTotal:16384,
+  cpuClk:1800, cpuClkMax:5000, gpuClk:600, gpuClkMax:2800,
   cpuHist:[], diskHist:[], netHist:[], gpuHist:[],
   procs:[
     {pid:2150,name:"phantom", cpu:2.1, mem:1.2},
@@ -633,6 +645,10 @@ function simulate(dt){
   M.gpu=SIM.gpu; M.gpuTemp=SIM.gtemp; M.vram=SIM.vram;
   M.vramUsed=Math.round(M.vram/100*M.vramTotal);
 
+  // clocks track load loosely: idle near the floor, boosting with usage
+  M.cpuClk=clamp(1200 + M.cpu/100*(M.cpuClkMax-1200) + rnd(-80,80)*k, 800, M.cpuClkMax);
+  M.gpuClk=clamp(300  + M.gpu/100*(M.gpuClkMax-300)  + rnd(-40,40)*k, 210, M.gpuClkMax);
+
   // jitter the process table around plausible values
   M.procs.forEach(p=>{
     p.cpu = clamp(p.cpu + rnd(-0.4,0.4)*k, 0.1, 28);
@@ -671,6 +687,11 @@ async function pollReal(){
       M.ram=clamp(d.ram,0,100);
       if(typeof d.cpu_temp==="number"){ M.cpuTemp=d.cpu_temp; }
       else{ M.cpuTemp=lerp(M.cpuTemp, 36+M.cpu*0.42, 0.1); } // no OS sensor: estimate from load
+      if(typeof d.cpu_mhz==="number"){
+        M.cpuClk=d.cpu_mhz;
+        if(typeof d.cpu_mhz_max==="number" && d.cpu_mhz_max>0) M.cpuClkMax=d.cpu_mhz_max;
+        M.cpuClkMax=Math.max(M.cpuClkMax, M.cpuClk); // reading above max stretches the bar scale instead of pegging it
+      } else { M.cpuClk=lerp(M.cpuClk, 1200+M.cpu/100*(M.cpuClkMax-1200), 0.15); } // old companion: estimate from load
       M.swap = (typeof d.swap==="number")? d.swap : M.swap;
       M.disk = (typeof d.disk_mbs==="number")? d.disk_mbs : M.disk;
       M.netDown = (typeof d.net_down_kbs==="number")? d.net_down_kbs : M.netDown;
@@ -691,6 +712,11 @@ async function pollReal(){
           M.vramUsed  = (typeof d.gpu.vram_used==="number")? d.gpu.vram_used : M.vramUsed;
           M.vram      = clamp(M.vramUsed/M.vramTotal*100,0,100);
         }
+        if(typeof d.gpu.clock==="number"){
+          M.gpuClk=d.gpu.clock;
+          if(typeof d.gpu.clock_max==="number" && d.gpu.clock_max>0) M.gpuClkMax=d.gpu.clock_max;
+          M.gpuClkMax=Math.max(M.gpuClkMax, M.gpuClk);
+        } else { M.gpuClk=lerp(M.gpuClk, 300+M.gpu/100*(M.gpuClkMax-300), 0.15); } // old companion: estimate from load
         M.gpuReal=true;
       } else { M.gpuReal=false; }   // companion up but no NVIDIA GPU -> simulate GPU rows
       if(Array.isArray(d.drives)) M.drives=d.drives;
@@ -726,6 +752,7 @@ function metricsTick(dt){
     r=walk(SIM.gtemp,TGT.gtemp,35,84,0.5*k,0.04*k);SIM.gtemp=r.v;TGT.gtemp=r.target;M.gpuTemp=SIM.gtemp;
     r=walk(SIM.vram,TGT.vram,12,82,0.4*k,0.02*k);  SIM.vram=r.v; TGT.vram=r.target; M.vram=SIM.vram;
     M.vramUsed=Math.round(M.vram/100*M.vramTotal);
+    M.gpuClk=clamp(300 + M.gpu/100*(M.gpuClkMax-300) + rnd(-40,40)*k, 210, M.gpuClkMax);
   }
   // push history (works for both real + sim)
   M.cpuHist.push(M.cpu);   if(M.cpuHist.length>HIST) M.cpuHist.shift();
@@ -925,7 +952,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.0";
+const VERSION = "2.1";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -1220,11 +1247,17 @@ function updateUI(){
   const vGB=(M.vramUsed/1024).toFixed(1), vtGB=(M.vramTotal/1024).toFixed(0);
   $("#v-vram").innerHTML   = `${Math.round(M.vram)}%<br>${vGB}/${vtGB} GB`;
 
+  $("#v-cclk").textContent = fmtGHz(M.cpuClk);
+  $("#v-gclk").textContent = fmtGHz(M.gpuClk);
+
   setSeg("#bar-temp", clamp((M.cpuTemp-30)/55*100,0,100), 80); // 30..85°C range, hot >80%
   setSeg("#bar-mem",  M.ram, 90);
   setSeg("#bar-swap", M.swap, 90);
   setSeg("#bar-gtemp",clamp((M.gpuTemp-30)/55*100,0,100), 80);
   setSeg("#bar-vram", M.vram, 90);
+  // clock bars scale to the chip's max; a pegged bar just means full boost, not danger
+  setSeg("#bar-cclk", clamp(M.cpuClk/(M.cpuClkMax||1)*100,0,100));
+  setSeg("#bar-gclk", clamp(M.gpuClk/(M.gpuClkMax||1)*100,0,100));
 
   if(CFG.panels.diag) updateGauges();
   if(CFG.panels.proc) renderProcs();
@@ -1401,6 +1434,7 @@ function buildAll(){
   buildGauges();
   buildSeg("#bar-temp",18); buildSeg("#bar-mem",18); buildSeg("#bar-swap",18);
   buildSeg("#bar-gtemp",18); buildSeg("#bar-vram",18);
+  buildSeg("#bar-cclk",18); buildSeg("#bar-gclk",18);
   buildTerminal();
   starInit(); terrainInit(); audioSetup();
   renderProcs(); renderDrives(); renderTailnet();
