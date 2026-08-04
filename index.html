@@ -1066,16 +1066,27 @@ function renderTailnet(){
    Uses Wallpaper Engine's audio listener when present (128 freq values:
    64 left + 64 right). Falls back to a gentle idle waveform otherwise.
    ========================================================================= */
-const AUD={ data:new Array(64).fill(0), smooth:new Array(64).fill(0), live:false };
+const AUD={ data:new Array(64).fill(0), smooth:new Array(64).fill(0), live:false, quietSince:0 };
+// WE keeps calling the listener with all-zero frames when the captured device is
+// silent (or its capture has died), which would latch live=true forever and draw
+// a dead flat line. Drop back to the idle waveform after this much silence.
+const AUD_QUIET_MS=3000, AUD_QUIET_SUM=0.002;
 function onAudioSamples(samples){
   if(!samples || !samples.length){ return; }
   // average L/R -> 64 bins
   const half=Math.floor(samples.length/2);
+  let sum=0;
   for(let i=0;i<64;i++){
     const l=samples[i]||0, r=samples[i+half]||0;
     AUD.data[i]=(l+r)*0.5;
+    sum+=AUD.data[i];
   }
-  AUD.live=true;
+  const now=performance.now();
+  if(sum>AUD_QUIET_SUM){ AUD.quietSince=0; AUD.live=true; }
+  else if(AUD.live){
+    if(!AUD.quietSince) AUD.quietSince=now;
+    else if(now-AUD.quietSince>AUD_QUIET_MS) AUD.live=false;
+  }
 }
 function audioSetup(){
   const cv=$("#audio-cv");
