@@ -685,6 +685,24 @@ function metricsEndpoint(){
   }
   return {url:"http://127.0.0.1:8377/metrics", host:"localhost", remote:false};
 }
+/* Piggyback our audio state on the metrics request the companion already
+   answers, so its (opt-in) capture watchdog can tell "WE is feeding us silence"
+   apart from "nothing is playing". It compares this against the real output
+   level it reads from the audio endpoint.
+     aud=1  receiving live samples
+     aud=0  starved: WE is sending all-zero frames, or not calling us at all
+     aud=x  reactivity switched off by the user, so nothing to diagnose
+   Only for a LOCAL companion: a remote one runs beside a different WE. Old
+   companions ignore the extra query params, so this stays backward compatible. */
+function metricsUrlWithAudio(ep){
+  if(ep.remote) return ep.url;
+  try{
+    const u=new URL(ep.url);
+    u.searchParams.set("aud", CFG.audio ? (AUD.live?"1":"0") : "x");
+    u.searchParams.set("audsum", (AUD.lastSum||0).toFixed(5));
+    return u.href;
+  }catch(e){ return ep.url; }
+}
 // Tag text for simulated mode: when real metrics are enabled but the companion
 // isn't answering, say so — a gentle nudge that live stats are available and the
 // companion just isn't running. When the user has turned real metrics off, it's
@@ -709,7 +727,7 @@ async function pollReal(){
   // a remote host gets a longer leash than loopback before we call it down
   const tmr=setTimeout(()=>ctl.abort(), ep.remote?2500:850);
   try{
-    const res = await fetch(ep.url, {cache:"no-store", signal:ctl.signal});
+    const res = await fetch(metricsUrlWithAudio(ep), {cache:"no-store", signal:ctl.signal});
     if(!res.ok) throw 0;
     const d = await res.json();
     if(typeof d.cpu==="number"){
@@ -996,7 +1014,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.3";
+const VERSION = "2.5";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -1066,7 +1084,7 @@ function renderTailnet(){
    Uses Wallpaper Engine's audio listener when present (128 freq values:
    64 left + 64 right). Falls back to a gentle idle waveform otherwise.
    ========================================================================= */
-const AUD={ data:new Array(64).fill(0), smooth:new Array(64).fill(0), live:false, quietSince:0 };
+const AUD={ data:new Array(64).fill(0), smooth:new Array(64).fill(0), live:false, quietSince:0, lastSum:0 };
 // WE keeps calling the listener with all-zero frames when the captured device is
 // silent (or its capture has died), which would latch live=true forever and draw
 // a dead flat line. Drop back to the idle waveform after this much silence.
@@ -1081,6 +1099,7 @@ function onAudioSamples(samples){
     AUD.data[i]=(l+r)*0.5;
     sum+=AUD.data[i];
   }
+  AUD.lastSum=sum;
   const now=performance.now();
   if(sum>AUD_QUIET_SUM){ AUD.quietSince=0; AUD.live=true; }
   else if(AUD.live){

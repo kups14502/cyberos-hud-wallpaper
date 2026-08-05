@@ -40,6 +40,7 @@ import subprocess
 import sys
 import time
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # When launched with pythonw.exe (no console) — which is how it auto-starts at
@@ -841,6 +842,342 @@ class Sampler:
 SAMPLER = Sampler()
 
 # ---------------------------------------------------------------------------
+# Wallpaper Engine audio-capture watchdog  (opt-in, Windows only)
+#
+# WE captures desktop audio by loopback from whatever endpoint is the Windows
+# default. When that default changes under it (headset connects, BT dongle
+# sleeps, you flip output in the volume flyout) its capture can keep reading the
+# old endpoint and hand the wallpaper all-zero frames indefinitely. Nothing logs
+# an error; the visualizer just goes dead. Restarting WE reattaches capture.
+#
+# Acting on every device switch would blink the wallpaper constantly, so we
+# remediate only on evidence of the real fault: audio IS playing (we read the
+# endpoint's own peak meter) AND the wallpaper reports it is receiving silence
+# (aud=0 on the metrics request it already makes every second).
+#
+# Off unless --we-audio-watchdog is passed. A stats app that restarts another
+# program is intrusive, and a misfire costs a visible wallpaper reload.
+# ---------------------------------------------------------------------------
+WE_DIR_DEFAULT = r"C:\Program Files (x86)\Steam\steamapps\common\wallpaper_engine"
+
+# what the wallpaper last told us about its audio feed
+_AUDIO_LOCK = threading.Lock()
+_AUDIO_REPORT = {"state": None, "sum": 0.0, "ts": 0.0}
+
+
+def _note_audio_report(path):
+    """Record ?aud=/&audsum= from a /metrics request. Absent on old wallpapers
+    and on remote setups, in which case the watchdog simply stays idle."""
+    if "?" not in path:
+        return
+    try:
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+    except Exception:
+        return
+    state = (q.get("aud") or [None])[0]
+    if state not in ("0", "1", "x"):
+        return
+    try:
+        total = float((q.get("audsum") or ["0"])[0])
+    except ValueError:
+        total = 0.0
+    with _AUDIO_LOCK:
+        _AUDIO_REPORT["state"] = state
+        _AUDIO_REPORT["sum"] = total
+        _AUDIO_REPORT["ts"] = time.time()
+
+
+_CLSCTX_ALL = 23
+_CLSID_MMDEVICE_ENUM = "{BCDE0395-E52F-467C-8E3D-C4579291692E}"
+_IID_IMMDEVICE_ENUM = "{A95664D2-9614-4F35-A746-DE8DB63617E6}"
+_IID_IAUDIO_METER = "{C02216F6-8C67-4B5B-9D00-D008E73E0064}"
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+
+_GUID_CACHE = {}
+
+
+def _guid(text):
+    """Parsed once and cached: CLSIDFromString on every poll would be wasteful,
+    and holding the objects keeps them alive for byref() calls."""
+    g = _GUID_CACHE.get(text)
+    if g is None:
+        g = _GUID()
+        if ctypes.windll.ole32.CLSIDFromString(ctypes.c_wchar_p(text), ctypes.byref(g)) != 0:
+            raise OSError("bad GUID: " + text)
+        _GUID_CACHE[text] = g
+    return g
+
+
+def _vcall(ptr, index, *argtypes):
+    """Call COM method #index through the vtable, no comtypes/pycaw needed.
+    That matters: the no-Python edition is a PyInstaller bundle, and this keeps
+    its dependency list (psutil only) unchanged."""
+    vtbl = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    proto = ctypes.WINFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, *argtypes)
+    return proto(vtbl[index])
+
+
+def _com_release(ptr):
+    if ptr:
+        _vcall(ptr, 2)(ptr)
+
+
+_COM_TLS = threading.local()
+
+
+def _ensure_com():
+    """CoCreateInstance fails with CO_E_NOTINITIALIZED unless the *calling*
+    thread has initialized COM, so do it lazily per thread (once: repeat calls
+    would just inflate the init count)."""
+    if getattr(_COM_TLS, "ready", False):
+        return
+    ctypes.windll.ole32.CoInitialize(None)
+    _COM_TLS.ready = True
+
+
+def _default_output_level():
+    """(device_id, peak 0..1) for the default multimedia output endpoint.
+    Returns (None, 0.0) if anything goes wrong, which keeps the watchdog idle
+    rather than guessing."""
+    _ensure_com()
+    ole32 = ctypes.windll.ole32
+    enum = ctypes.c_void_p()
+    hr = ole32.CoCreateInstance(ctypes.byref(_guid(_CLSID_MMDEVICE_ENUM)), None,
+                                _CLSCTX_ALL,
+                                ctypes.byref(_guid(_IID_IMMDEVICE_ENUM)),
+                                ctypes.byref(enum))
+    if hr != 0 or not enum:
+        return (None, 0.0)
+    dev = ctypes.c_void_p()
+    meter = ctypes.c_void_p()
+    try:
+        # IMMDeviceEnumerator::GetDefaultAudioEndpoint(eRender=0, eMultimedia=1)
+        hr = _vcall(enum, 4, ctypes.c_int32, ctypes.c_int32,
+                    ctypes.POINTER(ctypes.c_void_p))(enum, 0, 1, ctypes.byref(dev))
+        if hr != 0 or not dev:
+            return (None, 0.0)
+        dev_id = None
+        pid = ctypes.c_wchar_p()
+        if _vcall(dev, 5, ctypes.POINTER(ctypes.c_wchar_p))(dev, ctypes.byref(pid)) == 0:
+            dev_id = pid.value
+            ole32.CoTaskMemFree(pid)
+        # IMMDevice::Activate(IAudioMeterInformation)
+        hr = _vcall(dev, 3, ctypes.POINTER(_GUID), ctypes.c_uint32, ctypes.c_void_p,
+                    ctypes.POINTER(ctypes.c_void_p))(
+                        dev, ctypes.byref(_guid(_IID_IAUDIO_METER)),
+                        _CLSCTX_ALL, None, ctypes.byref(meter))
+        if hr != 0 or not meter:
+            return (dev_id, 0.0)
+        peak = ctypes.c_float()
+        if _vcall(meter, 3, ctypes.POINTER(ctypes.c_float))(meter, ctypes.byref(peak)) != 0:
+            return (dev_id, 0.0)
+        return (dev_id, float(peak.value))
+    finally:
+        _com_release(meter)
+        _com_release(dev)
+        _com_release(enum)
+
+
+_ENUM_PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+
+def _stacked_view_count():
+    """Largest number of CEF views inside one of WE's desktop wallpaper windows.
+
+    2 or more is WE's duplicate-view bug: two Chrome_WidgetWin_1 views stack in
+    the same WPEDesktopCEFWindow and the one on top receives no user properties
+    and no audio callbacks, so the wallpaper renders defaults and ignores audio
+    even when capture is perfectly healthy. Restarting WE can land in this state,
+    so we check for it after remediating."""
+    user32 = ctypes.windll.user32
+    buf = ctypes.create_unicode_buffer(256)
+
+    def class_of(hwnd):
+        user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
+
+    desktop_windows = []
+
+    def find_desktop(hwnd, _lparam):
+        if class_of(hwnd) == "WPEDesktopCEFWindow":
+            desktop_windows.append(hwnd)
+        return True
+
+    find_cb = _ENUM_PROC(find_desktop)
+
+    def descend(parent, depth=0):
+        # WE's wallpaper window hangs off Progman/WorkerW, so a plain EnumWindows
+        # never sees it; walk down a few levels instead.
+        if depth > 4:
+            return
+        kids = []
+
+        def collect(hwnd, _lparam):
+            kids.append(hwnd)
+            return True
+
+        cb = _ENUM_PROC(collect)
+        user32.EnumChildWindows(parent, cb, None)
+        for k in kids:
+            find_desktop(k, None)
+            descend(k, depth + 1)
+
+    tops = []
+
+    def collect_top(hwnd, _lparam):
+        if class_of(hwnd) in ("Progman", "WorkerW"):
+            tops.append(hwnd)
+        return True
+
+    top_cb = _ENUM_PROC(collect_top)
+    user32.EnumWindows(top_cb, None)
+    for t in tops:
+        find_desktop(t, None)
+        descend(t)
+
+    best = 0
+    for dw in set(desktop_windows):
+        views = []
+
+        def count_views(hwnd, _lparam):
+            if class_of(hwnd) == "Chrome_WidgetWin_1":
+                views.append(hwnd)
+            return True
+
+        cb = _ENUM_PROC(count_views)
+        user32.EnumChildWindows(dw, cb, None)
+        best = max(best, len(set(views)))
+    del find_cb, top_cb
+    return best
+
+
+def _default_watchdog_log():
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "CyberOS-HUD", "we-watchdog.log")
+
+
+class WeAudioWatchdog(threading.Thread):
+    PEAK_MIN = 0.01          # output level that counts as "audio is playing"
+    STARVE_SECONDS = 8.0     # mismatch must hold this long before we act
+    COOLDOWN = 180.0         # never remediate more often than this
+    REPORT_MAX_AGE = 6.0     # older wallpaper reports are stale, ignore them
+    POLL = 2.0
+
+    def __init__(self, we_dir=WE_DIR_DEFAULT, wallpaper_path="", verbose=False,
+                 log_path=None):
+        super().__init__(daemon=True)
+        self.we_dir = we_dir
+        self.wallpaper_path = wallpaper_path
+        self.verbose = verbose
+        self.log_path = log_path or _default_watchdog_log()
+        self._starved_since = None
+        self._last_fix = 0.0
+        self._last_device = None
+
+    def _log(self, msg):
+        print("[we-watchdog] " + msg)
+        # This auto-starts at login under pythonw.exe, where stdout is the null
+        # device, so the file is the only place these lines survive. Without it
+        # there is no way to tell whether the watchdog ever fired.
+        try:
+            os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+            with open(self.log_path, "a", encoding="utf-8") as fh:
+                fh.write("%s  %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+        except Exception:
+            pass
+
+    def _restart_we(self):
+        exe = os.path.join(self.we_dir, "wallpaper64.exe")
+        if not os.path.isfile(exe):
+            self._log("wallpaper64.exe not found under " + self.we_dir)
+            return False
+        subprocess.run(["taskkill", "/F", "/IM", "wallpaper64.exe"],
+                       capture_output=True, creationflags=NO_WINDOW)
+        time.sleep(3)
+        subprocess.Popen([exe], creationflags=NO_WINDOW)
+        time.sleep(14)
+        return True
+
+    def _repair_stacked_view(self):
+        """Last resort. Letting WE auto-restore preserves the user's monitor
+        layout (clone mirrors and all), which the control CLI cannot express, so
+        we only force a single-view reload when the duplicate view really is
+        there. This does collapse the wallpaper to monitor 0."""
+        if not self.wallpaper_path:
+            self._log("stacked view present but --we-wallpaper not set, leaving it")
+            return
+        cli = os.path.join(self.we_dir, "wallpaper32.exe")
+        if not os.path.isfile(cli):
+            return
+        subprocess.run([cli, "-control", "closeWallpaper", "-monitor", "0"],
+                       capture_output=True, creationflags=NO_WINDOW)
+        time.sleep(3)
+        subprocess.run([cli, "-control", "openWallpaper", "-file", self.wallpaper_path,
+                        "-monitor", "0"], capture_output=True, creationflags=NO_WINDOW)
+        time.sleep(6)
+        self._log("reapplied wallpaper on monitor 0 to clear the stacked view")
+
+    def _remediate(self):
+        self._log("remediating: audio is playing but the wallpaper reports silence")
+        # Stamp the cooldown up front: if the restart fails (WE not installed
+        # where we think, permissions, whatever) we must not retry every poll.
+        self._last_fix = time.time()
+        self._starved_since = None
+        if not self._restart_we():
+            return
+        try:
+            views = _stacked_view_count()
+        except Exception as exc:
+            views = 0
+            self._log("view check failed: %s" % exc)
+        if views > 1:
+            self._log("WE came back with %d stacked views" % views)
+            self._repair_stacked_view()
+        self._last_fix = time.time()
+        self._starved_since = None
+
+    def run(self):
+        self._log("started (peak>%.2f + wallpaper reporting silence for %.0fs)"
+                  % (self.PEAK_MIN, self.STARVE_SECONDS))
+        while True:
+            time.sleep(self.POLL)
+            try:
+                device, peak = _default_output_level()
+                if device and device != self._last_device:
+                    if self._last_device is not None and self.verbose:
+                        self._log("default output changed")
+                    self._last_device = device
+
+                with _AUDIO_LOCK:
+                    state = _AUDIO_REPORT["state"]
+                    age = time.time() - _AUDIO_REPORT["ts"]
+
+                # No fresh report means no wallpaper is talking to us (or it is a
+                # remote setup, or an older build): nothing to diagnose.
+                fresh = state is not None and age < self.REPORT_MAX_AGE
+                starved = fresh and state == "0" and peak > self.PEAK_MIN
+
+                now = time.time()
+                if not starved:
+                    self._starved_since = None
+                    continue
+                if self._starved_since is None:
+                    self._starved_since = now
+                    if self.verbose:
+                        self._log("starvation suspected (peak %.3f)" % peak)
+                if (now - self._starved_since >= self.STARVE_SECONDS
+                        and now - self._last_fix >= self.COOLDOWN):
+                    self._remediate()
+            except Exception as exc:
+                self._log("error: %s" % exc)
+
+
+# ---------------------------------------------------------------------------
 # HTTP handler with permissive CORS so the wallpaper's browser can fetch it.
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
@@ -856,7 +1193,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/metrics"):
+            # the wallpaper piggybacks its audio-feed state on this request
+            _note_audio_report(self.path)
             payload = json.dumps(SAMPLER.get()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._cors()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        elif self.path.startswith("/audio"):
+            # Diagnostic: what the wallpaper last reported about its audio feed,
+            # next to the real output level. Lets you tell "WE is feeding the
+            # wallpaper silence" from "nothing is playing" with one curl.
+            with _AUDIO_LOCK:
+                state = _AUDIO_REPORT["state"]
+                total = _AUDIO_REPORT["sum"]
+                ts = _AUDIO_REPORT["ts"]
+            device, peak = (None, 0.0)
+            if sys.platform == "win32":
+                try:
+                    device, peak = _default_output_level()
+                except Exception:
+                    pass
+            body = {
+                "wallpaper_audio": state,            # "1" live, "0" starved, "x" off, null none
+                "wallpaper_frame_sum": round(total, 6),
+                "report_age_s": round(time.time() - ts, 2) if ts else None,
+                "output_peak": round(peak, 5),
+                "output_device": device,
+            }
+            payload = json.dumps(body).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._cors()
@@ -868,7 +1235,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain")
             self._cors()
             self.end_headers()
-            self.wfile.write(b"CyberOS HUD metrics companion. GET /metrics")
+            self.wfile.write(b"CyberOS HUD metrics companion. GET /metrics or /audio")
 
     def log_message(self, *args):
         pass  # stay quiet
@@ -891,6 +1258,17 @@ def main():
                          "wallpaper's 'Remote metrics host' property.")
     ap.add_argument("--port", type=int, default=PORT,
                     help=f"TCP port to serve on (default {PORT})")
+    ap.add_argument("--we-audio-watchdog", action="store_true",
+                    help="Windows only. Watch for Wallpaper Engine's audio capture "
+                         "going deaf after the default output device changes, and "
+                         "restart WE when the wallpaper reports it is receiving "
+                         "silence while audio is actually playing. Off by default.")
+    ap.add_argument("--we-dir", default=WE_DIR_DEFAULT,
+                    help="Wallpaper Engine install folder (for --we-audio-watchdog)")
+    ap.add_argument("--we-wallpaper", default="",
+                    help="path to your wallpaper's index.html/project.json. Only used "
+                         "as a fallback when WE restarts into its duplicate-view bug; "
+                         "reapplying collapses the wallpaper to monitor 0.")
     args = ap.parse_args()
     try:
         server = Server((args.host, args.port), Handler)
@@ -907,6 +1285,14 @@ def main():
         print("  NOTE: bound to a non-loopback address, so these read-only")
         print("  stats are visible to other machines that can reach this one.")
     print("  The wallpaper will pick this up automatically.")
+    if args.we_audio_watchdog:
+        if sys.platform == "win32":
+            WeAudioWatchdog(we_dir=args.we_dir,
+                            wallpaper_path=args.we_wallpaper,
+                            verbose=True).start()
+            print("  WE audio-capture watchdog: ON")
+        else:
+            print("  WE audio-capture watchdog: ignored (Windows only)")
     print("  Leave this running (you can minimize it). Ctrl+C to stop.")
     print("=" * 52)
     try:
