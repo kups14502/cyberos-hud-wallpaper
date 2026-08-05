@@ -3,3 +3,8 @@ __pycache__/
 
 # Internal maintainer notes (publishing playbook, exe rebuild) - keep local only
 MAINTAINER.md
+
+# PyInstaller rebuild output, not source
+build/
+dist/
+*.spec
