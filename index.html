@@ -41,24 +41,16 @@
   --scanline-alpha: 0.05;
   --ui-scale: 1;
 
-  /* Ultrawide guard. The HUD is four corner-anchored stacks; left to the raw
-     viewport edges they fly to the far corners on 21:9 / 32:9 screens, leaving
-     a huge dead void in the middle. Instead we anchor them to a centered
-     "content band" capped to a 2:1 max aspect (200vh wide). --edge is the
-     horizontal inset from each screen edge to that band. On 16:9 and taller the
-     band is wider than the screen so --edge collapses to the normal 2.2vw
-     margin and the layout is byte-for-byte the original. The full-screen
-     background (starfield + terrain) is deliberately NOT capped, so it keeps
-     filling the entire ultrawide behind the centered HUD. */
-  --band: 200vh;
-  --edge: max(2.2vw, calc((100vw - var(--band)) / 2));
-  --edge-brk: max(1.4vw, calc(var(--edge) - 0.8vw));
-
-  /* Master UI scale: scales the whole interface with the viewport while
-     staying readable on tiny or huge screens. vmin tracks the short edge,
-     which is what we want for desktops of any aspect ratio. The user's
-     "Interface scale" property multiplies on top. */
-  font-size: calc(clamp(9px, 1.3vmin, 30px) * var(--ui-scale));
+  /* Master UI scale: scales the whole interface with the display while staying
+     readable on tiny or huge screens. vmin tracks the short edge, which is what
+     we want for desktops of any aspect ratio. The user's "Interface scale"
+     property multiplies on top.
+     On a multi-monitor span the layout engine overrides --rem-base with the
+     SMALLEST monitor's value and gives every screen layer a `zoom` >= 1 to make
+     up the difference, so each monitor is scaled by its own short edge rather
+     than by the short edge of the whole span. */
+  --rem-base: clamp(9px, 1.3vmin, 30px);
+  font-size: calc(var(--rem-base) * var(--ui-scale));
 }
 
 *{ margin:0; padding:0; box-sizing:border-box; }
@@ -75,25 +67,29 @@ html,body{
   cursor: none; /* it's a wallpaper */
 }
 
-#stage{ position:fixed; inset:0; }
+/* The wallpaper never swallows a desktop click: the stage is transparent to
+   the mouse, and only layout-edit mode re-enables hit testing on the panels. */
+#stage{ position:fixed; inset:0; pointer-events:none; }
 
 /* ---- atmospheric background ---- */
-#starfield, #terrain{
-  position:fixed; left:0; width:100%;
-  pointer-events:none;
+#starfield{
+  position:fixed; left:0; top:0; width:100%; height:100%;
+  z-index:0; pointer-events:none;
 }
-#starfield{ top:0; height:100%; z-index:0; }
-#terrain{ bottom:0; height:42%; z-index:1; }
+/* One background layer per monitor (or one for the whole span, user's choice) */
+#bglayers{ position:fixed; inset:0; z-index:1; pointer-events:none; }
+.bglayer{ position:absolute; overflow:hidden; }
+.terrain{ position:absolute; left:0; bottom:0; width:100%; height:42%; }
 /* glow lives here as one composited filter per layer instead of canvas
    shadowBlur per stroke — same look, a fraction of the raster cost */
-#terrain, #audio-cv{
+.terrain, #audio-cv{
   filter: drop-shadow(0 0 calc(3px*var(--glow-strength,1)) var(--accent-glow));
 }
-body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
+body.no-glow .terrain, body.no-glow #audio-cv{ filter:none; }
 
 /* radial vignette + faint background grid for depth */
-#bg-fx{
-  position:fixed; inset:0; z-index:1; pointer-events:none;
+.bg-fx{
+  position:absolute; inset:0; pointer-events:none;
   background:
     radial-gradient(120% 90% at 50% 12%, transparent 40%, rgba(0,0,0,0.55) 100%),
     linear-gradient(var(--accent-faint) 1px, transparent 1px),
@@ -126,6 +122,11 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
   animation: panelIn 0.7s cubic-bezier(.2,.8,.2,1) forwards;
 }
 @keyframes panelIn{ to{ opacity:1; transform:none; } }
+/* The boot fade-in is a one-shot. Moving a panel in the DOM cancels and restarts
+   its CSS animation, and the layout engine re-parents every panel whenever a
+   placement changes, so without this the whole HUD would flash on each drag,
+   dock or monitor change. Set once the intro has finished playing. */
+.win.settled{ animation:none; opacity:1; transform:none; }
 
 /* window titlebar */
 .win .bar{
@@ -152,16 +153,47 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
 .sec-h .plus{ color:var(--accent-dim); }
 .sec-h::after{ content:""; flex:1; height:1px; background:var(--accent-line); }
 
-/* ====================== CORNER STACKS ======================
-   Four fixed flex stacks, one per screen corner. Boxes flow top->bottom in
-   source order within each stack, so reordering is just reordering the HTML —
-   no per-box coordinate math, and nothing overlaps at any resolution. */
-.col{ position:fixed; z-index:10; display:flex; flex-direction:column; gap:1.1rem;
-  width:25rem; max-width:34vw; }
-#lt-stack{ left:var(--edge);  top:4vh; }
-#lb-stack{ left:var(--edge);  bottom:4.5vh; }
-#rt-stack{ right:var(--edge); top:4vh; }
-#rb-stack{ right:var(--edge); bottom:4.5vh; }
+/* ====================== SCREENS + ANCHORED STACKS ======================
+   Wallpaper Engine hands a SPANNED wallpaper one viewport covering the whole
+   virtual desktop, so 100vw/100vh is the bounding box of every monitor at once
+   and corner-anchored boxes land on the seams (or in the dead space above a
+   short monitor). Instead the HUD draws into one .screen layer per detected
+   monitor. Two rules keep a layer self-contained:
+
+     * geometry inside a screen is a % of THAT SCREEN, never vw/vh;
+     * each screen carries a `zoom`, which Blink folds into every used length in
+       the subtree — rem included — so a 1440p panel next to a 4K one gets the
+       same APPARENT size instead of the same pixel size.
+
+   --rem-base is pinned to the smallest monitor so every zoom is >= 1 and
+   hairline borders never round away. A single-monitor desktop resolves to one
+   screen at zoom 1 filling the viewport, i.e. byte-identical to before.
+
+   --edge is the ultrawide guard, now per screen: the stacks anchor to a
+   centered content band capped at 2:1, so a 21:9 / 32:9 monitor keeps its HUD
+   together instead of flinging it to the far physical corners. On 16:9 and
+   taller the band is wider than the screen and --edge collapses to the plain
+   2.2% margin. The background layers are deliberately NOT capped.
+
+   Panels sharing an anchor flow top->bottom in a flex column, so nothing
+   overlaps at any resolution without per-box coordinate math. */
+#screens{ position:fixed; inset:0; z-index:10; }
+/* Clip a screen to itself: a stack tall enough to overflow (every panel docked to
+   one corner of a short monitor) used to run off the bottom of the viewport and be
+   cut there, and must not instead spill across the bezel onto its neighbour. */
+.screen{ position:absolute; overflow:hidden; --edge:2.2%; --edge-brk:1.4%; --col-max:34%; }
+
+.col{ position:absolute; z-index:10; display:flex; flex-direction:column; gap:1.1rem;
+  width:25rem; max-width:var(--col-max); }
+.col.x-l{ left:var(--edge); }
+.col.x-r{ right:var(--edge); }
+.col.x-c{ left:50%; transform:translateX(-50%); }
+.col.y-t{ top:4%; }
+.col.y-b{ bottom:4.5%; }
+.col.y-m{ top:50%; transform:translateY(-50%); }
+.col.x-c.y-m{ transform:translate(-50%,-50%); }
+/* a dragged panel gets its own one-item column with explicit offsets */
+.col.free{ transform:none; }
 .col .win{ position:relative; width:100%; }
 
 /* OS label that replaces the old top bar (e.g. "HOST//OS  v0.1.7") */
@@ -280,16 +312,16 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
   letter-spacing:0.08em; text-shadow:none; }
 
 /* ============================ HUD CHROME ============================ */
-/* corner brackets */
-.corner{ position:fixed; width:2.6rem; height:2.6rem; z-index:45; pointer-events:none;
+/* corner brackets — one set per screen */
+.corner{ position:absolute; width:2.6rem; height:2.6rem; z-index:45; pointer-events:none;
   border:1px solid var(--accent-line); }
-.corner.tl{ top:2.2vh; left:var(--edge-brk); border-right:0; border-bottom:0; }
-.corner.tr{ top:2.2vh; right:var(--edge-brk); border-left:0; border-bottom:0; }
-.corner.bl{ bottom:2.4vh; left:var(--edge-brk); border-right:0; border-top:0; }
-.corner.br{ bottom:2.4vh; right:var(--edge-brk); border-left:0; border-top:0; }
+.corner.tl{ top:2.2%; left:var(--edge-brk); border-right:0; border-bottom:0; }
+.corner.tr{ top:2.2%; right:var(--edge-brk); border-left:0; border-bottom:0; }
+.corner.bl{ bottom:2.4%; left:var(--edge-brk); border-right:0; border-top:0; }
+.corner.br{ bottom:2.4%; right:var(--edge-brk); border-left:0; border-top:0; }
 
 /* bottom center hashes */
-.bottom-hash{ position:fixed; bottom:1.2vh; left:50%; transform:translateX(-50%); z-index:45;
+.bottom-hash{ position:absolute; bottom:1.2%; left:50%; transform:translateX(-50%); z-index:45;
   display:flex; gap:0.3rem; opacity:0.4; }
 .bottom-hash i{ width:1.2rem; height:0.45rem; background:var(--accent-dim);
   transform:skewX(-25deg); display:block; }
@@ -300,17 +332,63 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
 @keyframes boot{ 0%{opacity:0.0;} 6%{opacity:0.16;} 100%{opacity:0;} }
 
 /* status mode tag (REAL vs SIM metrics) */
-#mode-tag{ position:fixed; left:calc(var(--edge) - 0.6vw); bottom:1.1vh; z-index:46; font-size:0.66rem;
+#mode-tag{ position:absolute; left:calc(var(--edge) - 0.6%); bottom:1.1%; z-index:46; font-size:0.66rem;
   letter-spacing:0.16em; color:var(--text-dim); opacity:0.55; pointer-events:none; }
 #mode-tag b{ color:var(--accent); }
 
+/* ===================== LARGE-SURFACE ECONOMY =====================
+   backdrop-filter, mix-blend-mode and mask-image each cost the compositor a
+   full-surface render target, and across a multi-monitor span that surface is
+   the whole desktop. On a GPU that is already busy (a game holding most of the
+   VRAM) that extra pressure is what evicts the wallpaper's context, and a web
+   wallpaper that loses its context goes black. Above ~9 megapixels the three
+   most expensive effects are dropped; over a near-black background the
+   difference is close to invisible, and a single monitor never triggers it. */
+body.economy .win{ backdrop-filter:none; -webkit-backdrop-filter:none; }
+body.economy .terrain{ filter:none; }
+body.economy .bg-fx{ mask-image:none; -webkit-mask-image:none; opacity:0.16; }
+body.economy #scanlines{ mix-blend-mode:normal; }
+
 /* hide whole panels when toggled off */
 .hidden{ display:none !important; }
+/* panels wait in here until the layout engine deals them onto a screen */
+#panel-pool{ display:none; }
 
-/* On narrow / portrait screens, relax fixed widths so nothing clips */
-@media (max-aspect-ratio: 13/10){
-  .col{ max-width:46vw; }
+/* ======================= LAYOUT EDIT MODE =======================
+   Off by default: the wallpaper is inert and every click goes to the desktop.
+   Turned on from the wallpaper properties, the panels become draggable and
+   the mouse is captured only over the panels themselves. */
+body.edit{ cursor:default; user-select:none; -webkit-user-select:none; }
+body.edit .win, body.edit #os-label, body.edit #le-bar, body.edit .le-btn{
+  pointer-events:auto; cursor:grab;
 }
+body.edit .win.dragging, body.edit #os-label.dragging{ cursor:grabbing; }
+body.edit .win, body.edit #os-label{ outline:1px dashed var(--accent-line); outline-offset:2px; }
+body.edit .win:hover, body.edit #os-label:hover{ outline:1px dashed var(--accent-bright); }
+.le-tag{ position:absolute; left:0; top:0; z-index:70; pointer-events:none;
+  font-size:0.6rem; letter-spacing:0.14em; color:var(--bg); white-space:nowrap;
+  background:var(--accent); padding:0.05rem 0.3rem; transform:translateY(-100%); }
+.le-frame{ position:absolute; inset:0; z-index:55; pointer-events:none;
+  border:2px dashed var(--accent-line); }
+.le-id{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  z-index:55; pointer-events:none; text-align:center;
+  color:var(--accent); opacity:0.16; font-size:14rem; font-weight:700; line-height:0.9; }
+.le-id small{ display:block; font-size:0.09em; letter-spacing:0.3em; opacity:0.9; }
+/* the nine dock targets shown while snapping */
+.le-zone{ position:absolute; z-index:56; pointer-events:none;
+  border:1px solid var(--accent-line); background:var(--accent-faint);
+  width:5.5rem; height:3.2rem; opacity:0.35; transition:opacity .15s, background .15s; }
+.le-zone.hot{ opacity:1; background:var(--accent-glow); }
+#le-bar{ position:absolute; z-index:80; left:50%; top:1.2%; transform:translateX(-50%);
+  display:flex; align-items:center; gap:0.7rem; white-space:nowrap;
+  background:rgba(0,0,0,0.72); border:1px solid var(--accent); padding:0.5rem 0.8rem;
+  font-size:0.72rem; letter-spacing:0.1em; color:var(--text); }
+#le-bar .t{ color:var(--accent); font-weight:600; letter-spacing:0.2em; }
+#le-bar .hint{ color:var(--text-dim); letter-spacing:0.06em; }
+.le-btn{ border:1px solid var(--accent-line); color:var(--accent);
+  padding:0.25rem 0.6rem; cursor:pointer; user-select:none; }
+.le-btn:hover{ background:var(--accent-faint); }
+.le-btn.on{ background:var(--accent); color:var(--bg); }
 </style>
 </head>
 <body>
@@ -318,11 +396,20 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
 
 <div id="stage">
   <canvas id="starfield"></canvas>
-  <div id="bg-fx"></div>
-  <canvas id="terrain"></canvas>
+  <!-- one background layer per monitor (terrain + vignette), built at runtime -->
+  <div id="bglayers"></div>
+  <!-- one .screen layer per monitor; the layout engine deals the panels below
+       into anchored stacks inside these -->
+  <div id="screens"></div>
+  <div id="scanlines"></div>
+</div>
 
-  <!-- ====================== TOP-LEFT ====================== -->
-  <div id="lt-stack" class="col">
+<!-- ================== PANEL POOL ==================
+     Every placeable element starts here and is moved onto a screen layer by the
+     layout engine. Source order here is the stacking order when several panels
+     share the same monitor + anchor, which reproduces the classic layout
+     exactly on a single-monitor desktop. -->
+<div id="panel-pool">
 
   <div id="os-label"><span class="host">HOST//OS</span> <span class="ver">v0.0.0</span></div>
 
@@ -341,10 +428,31 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
       <div class="gauges" id="gauges"></div>
     </div>
   </section>
-  </div><!-- /lt-stack -->
 
-  <!-- ====================== BOTTOM-LEFT ====================== -->
-  <div id="lb-stack" class="col">
+  <!-- ============ TIME / LOCATION / WEATHER ============ -->
+  <section class="win" id="tl" style="animation-delay:.1s">
+    <div class="bdy">
+      <div class="tl-grid">
+        <div class="tl-block">
+          <div class="h"><span class="plus">+</span> TIME</div>
+          <div id="clock">00:00:00</div>
+          <div id="date">0000 / 00 / 00</div>
+          <div id="weekday">—</div>
+        </div>
+        <div class="tl-block">
+          <div class="h"><span class="plus">+</span> LOCATION</div>
+          <div id="coords">0.0000&deg; N, 0.0000&deg; W</div>
+          <div id="elev">ELEV. 0M</div>
+          <div id="weather"><span class="wx-sub">WEATHER · …</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ AUDIO VISUALIZER ============ -->
+  <section class="win" id="audio" style="animation-delay:.5s">
+    <div class="bdy"><canvas id="audio-cv"></canvas></div>
+  </section>
 
   <!-- ============ SYSTEM MONITOR ============ -->
   <section class="win" id="sysmon" style="animation-delay:.35s">
@@ -403,39 +511,6 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
       <div id="drives"></div>
     </div>
   </section>
-  </div><!-- /lb-stack -->
-
-  <!-- ====================== TOP-RIGHT ====================== -->
-  <div id="rt-stack" class="col">
-
-  <!-- ============ TIME / LOCATION / WEATHER ============ -->
-  <section class="win" id="tl" style="animation-delay:.1s">
-    <div class="bdy">
-      <div class="tl-grid">
-        <div class="tl-block">
-          <div class="h"><span class="plus">+</span> TIME</div>
-          <div id="clock">00:00:00</div>
-          <div id="date">0000 / 00 / 00</div>
-          <div id="weekday">—</div>
-        </div>
-        <div class="tl-block">
-          <div class="h"><span class="plus">+</span> LOCATION</div>
-          <div id="coords">0.0000&deg; N, 0.0000&deg; W</div>
-          <div id="elev">ELEV. 0M</div>
-          <div id="weather"><span class="wx-sub">WEATHER · …</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ AUDIO VISUALIZER ============ -->
-  <section class="win" id="audio" style="animation-delay:.5s">
-    <div class="bdy"><canvas id="audio-cv"></canvas></div>
-  </section>
-  </div><!-- /rt-stack -->
-
-  <!-- ====================== BOTTOM-RIGHT ====================== -->
-  <div id="rb-stack" class="col">
 
   <!-- ============ PROCESS LIST ============ -->
   <section class="win" id="proc" style="animation-delay:.3s">
@@ -455,16 +530,12 @@ body.no-glow #terrain, body.no-glow #audio-cv{ filter:none; }
       <div class="tnet" id="tnet-body"></div>
     </div>
   </section>
-  </div><!-- /rb-stack -->
 
   <!-- ============ HUD CHROME ============ -->
-  <div class="corner tl"></div><div class="corner tr"></div>
-  <div class="corner bl"></div><div class="corner br"></div>
+  <!-- these two ride along on whichever screen is primary -->
   <div class="bottom-hash"><i></i><i></i><i></i><i></i><i></i></div>
   <div id="mode-tag">METRICS: <b id="mode-val">INIT</b></div>
-
-  <div id="scanlines"></div>
-</div>
+</div><!-- /panel-pool -->
 
 <script>
 /* =========================================================================
@@ -597,7 +668,24 @@ const CFG={
   weatherUnit:"F",
   autoLocation:true,
   uptimeBaseDays:42,
-  panels:{ terminal:true, sysmon:true, diag:true, proc:true, tailnet:true, audio:true, tl:true }
+  panels:{ terminal:true, sysmon:true, diag:true, proc:true, tailnet:true, audio:true, tl:true },
+
+  /* ---- multi-monitor ---- */
+  screenMode:"auto",         // auto | single | span
+  monitorLayout:"",          // manual geometry, e.g. "2560x1440+-2560+419, 3840x2160+0+0*, 1440x2560+3840+0"
+  thisMonitor:"auto",        // when NOT spanning: which monitor this instance is on
+  spanPreset:"spread",       // spread | primary  — where the default layout puts things
+  /* Background layers are the expensive part of a span: each one is a masked
+     div plus a filtered canvas, and multiplying them by monitor count is what
+     made the spanned build's compositing far heavier than the single-surface
+     version that ran fine. Default to ONE background across the whole span (what
+     v0.2.5 did) and let per-monitor horizons be opt-in. */
+  bgPerMonitor:false,        // terrain + vignette per monitor, or one across the span
+  heavyFx:"auto",            // panel blur / blend / mask on big surfaces: auto | keep | drop
+  editLayout:false,          // drag-to-place mode
+  layoutReset:false,         // toggle on to forget dragged positions
+  // per-panel placement: {mon:"auto"|"1".."8", pos:"auto"|"tl".."br"}
+  place:{ terminal:{}, diag:{}, sysmon:{}, tl:{}, audio:{}, proc:{}, tailnet:{} }
 };
 
 /* =========================================================================
@@ -700,6 +788,11 @@ function metricsUrlWithAudio(ep){
     const u=new URL(ep.url);
     u.searchParams.set("aud", CFG.audio ? (AUD.live?"1":"0") : "x");
     u.searchParams.set("audsum", (AUD.lastSum||0).toFixed(5));
+    // Piggyback the resolved layout too. On a spanned desktop this is the only
+    // way to see which layout the wallpaper actually settled on without
+    // screenshotting the desktop or opening a CEF debug port: curl /audio.
+    u.searchParams.set("scr", String((LAY.screens||[]).length));
+    u.searchParams.set("vp", window.innerWidth+"x"+window.innerHeight);
     return u.href;
   }catch(e){ return ep.url; }
 }
@@ -778,8 +871,21 @@ async function pollReal(){
       // once) — so a hardware swap / companion restart (e.g. GPU re-detected)
       // refreshes the panel live instead of latching the first value forever.
       if(d.sys && d.sys.os){
-        const sig=[d.sys.os,d.sys.host,d.sys.kernel,d.sys.cpu,d.sys.gpu,(d.sys.monitors||[]).join(",")].join("|");
-        if(sig!==M.sysSig){ M.sysInfo=d.sys; M.sysSig=sig; if(domReady) buildTerminal(); }
+        // monitors are objects, so stringify them — joining would collapse every
+        // display change into the same "[object Object]" and latch the panel
+        const sig=[d.sys.os,d.sys.host,d.sys.kernel,d.sys.cpu,d.sys.gpu,
+                   JSON.stringify(d.sys.monitors||[])].join("|");
+        if(sig!==M.sysSig){
+          const hadMons=JSON.stringify((M.sysInfo||{}).monitors||[]);
+          M.sysInfo=d.sys; M.sysSig=sig;
+          if(domReady){
+            buildTerminal();
+            // A local companion is our only exact source of monitor geometry, so
+            // a change there can rearrange the whole HUD. A remote one describes
+            // another desktop and must not churn this layout.
+            if(!ep.remote && hadMons!==JSON.stringify(d.sys.monitors||[])) relayout();
+          }
+        }
       }
       if(domReady){ renderDrives(); renderTailnet(); }
       M.source="REAL"; realOK=true;
@@ -789,9 +895,16 @@ async function pollReal(){
     if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag());
   }finally{ clearTimeout(tmr); realPending=false; }
 }
+/* The little corner readout doubles as the multi-monitor diagnostic: on a span
+   it says how many screens were detected and where the geometry came from, so a
+   layout problem can be read off the desktop instead of needing a debug port. */
+function layoutTag(){
+  if(!LAY.screens || LAY.screens.length<2) return "";
+  return ` · ${LAY.screens.length} SCREENS (${LAY.monSrc})`;
+}
 function setModeTag(t){
   const b=$("#mode-val"); if(!b) return;
-  b.textContent = t;
+  b.textContent = t + layoutTag();
 }
 
 /* tick: choose real (if available) else simulate */
@@ -1014,7 +1127,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.5";
+const VERSION = "2.6";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -1160,14 +1273,14 @@ function drawAudio(t){
 /* =========================================================================
    STARFIELD  (subtle drifting particles)
    ========================================================================= */
-const STAR={ cv:null, ctx:null, stars:[], w:0,h:0,dpr:1 };
+const STAR={ cv:null, ctx:null, stars:[], w:0,h:0,dpr:1,q:1 };
 function starInit(){
   const cv=$("#starfield"); STAR.cv=cv;
   STAR.dpr=Math.min(window.devicePixelRatio||1,2);
   resizeStars();
   STAR.ctx=cv.getContext("2d");
   STAR.stars=[];
-  const n=Math.round((STAR.w*STAR.h)/26000);
+  const n=clamp(Math.round((STAR.w*STAR.h)/26000), 40, 1100);
   for(let i=0;i<n;i++){
     STAR.stars.push({x:Math.random()*STAR.w,y:Math.random()*STAR.h,
       z:rnd(0.2,1), s:rnd(0.4,1.6), tw:rnd(0,Math.PI*2)});
@@ -1175,8 +1288,15 @@ function starInit(){
 }
 function resizeStars(){
   const cv=STAR.cv; const w=window.innerWidth,h=window.innerHeight;
-  STAR.w=w; STAR.h=h; cv.width=w*STAR.dpr; cv.height=h*STAR.dpr;
-  cv.getContext("2d").setTransform(STAR.dpr,0,0,STAR.dpr,0,0);
+  // A three-monitor span can be 20+ megapixels. A full-resolution backing store
+  // for 1px dots would cost both memory and a per-frame clear of the whole
+  // thing, so cap the raster and let CSS scale it back up — invisible on dots,
+  // and a no-op on anything up to a single 4K screen.
+  STAR.q=Math.min(1, Math.sqrt(9e6/Math.max(1,w*h)));
+  STAR.w=w; STAR.h=h;
+  const k=STAR.dpr*STAR.q;
+  cv.width=Math.max(2,Math.round(w*k)); cv.height=Math.max(2,Math.round(h*k));
+  cv.getContext("2d").setTransform(k,0,0,k,0,0);
 }
 function drawStars(t){
   if(!CFG.starfield){ STAR.ctx&&STAR.ctx.clearRect(0,0,STAR.w,STAR.h); return; }
@@ -1197,57 +1317,71 @@ function drawStars(t){
 /* =========================================================================
    TERRAIN  (animated perspective wireframe — the flowing cyber-grid)
    ========================================================================= */
-const TER={ cv:null, ctx:null, w:0,h:0,dpr:1, t:0,
-  cols:46, rows:30, spacing:1.0, focal:0, camY:1.55, scroll:0 };
-function terrainInit(){
-  const cv=$("#terrain"); TER.cv=cv; TER.dpr=Math.min(window.devicePixelRatio||1,2);
-  TER.ctx=cv.getContext("2d"); resizeTerrain();
+/* Shared animation state — every monitor's terrain flows in lockstep so the
+   scene reads as one world even though each screen has its own horizon. */
+const TT={ t:0, scroll:0, spacing:1.0, rows:30, camY:1.55 };
+/* One canvas per background layer (per monitor by default). Each is only as
+   tall as its own terrain band, which costs far less memory than one canvas
+   stretched across the bounding box of the whole span. */
+const TERS=[];
+function terrainInitAll(){
+  TERS.length=0;
+  $$(".terrain").forEach(cv=>{
+    const T={ cv:cv, ctx:cv.getContext("2d"),
+              dpr:Math.min(window.devicePixelRatio||1,2), w:2,h:2, cols:46, focal:0 };
+    resizeTerrain(T);
+    TERS.push(T);
+  });
 }
-function resizeTerrain(){
-  const cv=TER.cv; const r=cv.getBoundingClientRect();
-  TER.w=r.width; TER.h=r.height;
-  cv.width=Math.max(2,r.width*TER.dpr); cv.height=Math.max(2,r.height*TER.dpr);
-  TER.ctx.setTransform(TER.dpr,0,0,TER.dpr,0,0);
-  TER.focal=TER.w*0.9;
+function resizeTerrain(T){
+  const r=T.cv.getBoundingClientRect();
+  T.w=Math.max(2,r.width); T.h=Math.max(2,r.height);
+  T.cv.width =Math.max(2,Math.round(T.w*T.dpr));
+  T.cv.height=Math.max(2,Math.round(T.h*T.dpr));
+  T.ctx.setTransform(T.dpr,0,0,T.dpr,0,0);
+  T.focal=T.w*0.9;
   // density scales gently with width so ultrawide isn't sparse
-  TER.cols = clamp(Math.round(TER.w/34), 30, 80);
+  T.cols = clamp(Math.round(T.w/34), 30, 80);
 }
-function project(wx, wy, wz){
+function project(T, wx, wy, wz){
   // pinhole-ish projection; horizon near top of the terrain band
-  const horizon = TER.h*0.06;
-  const sx = TER.w/2 + (wx / wz) * TER.focal;
-  const sy = horizon + ((TER.camY - wy) / wz) * TER.focal;
+  const horizon = T.h*0.06;
+  const sx = T.w/2 + (wx / wz) * T.focal;
+  const sy = horizon + ((TT.camY - wy) / wz) * T.focal;
   return [sx, sy, wz];
 }
 function drawTerrain(dt){
-  if(!CFG.terrain){ TER.ctx&&TER.ctx.clearRect(0,0,TER.w,TER.h); return; }
-  const ctx=TER.ctx, cols=TER.cols, rows=TER.rows;
-  ctx.clearRect(0,0,TER.w,TER.h);
-  TER.t += dt*0.001;
-  TER.scroll = (TER.scroll + dt*0.0016) % TER.spacing;
-
+  if(!TERS.length) return;
+  if(!CFG.terrain){ TERS.forEach(T=>T.ctx.clearRect(0,0,T.w,T.h)); return; }
+  TT.t += dt*0.001;
+  TT.scroll = (TT.scroll + dt*0.0016) % TT.spacing;
   // audio energy lifts the waves a touch (reacts to music)
   let energy=0; for(let i=0;i<16;i++) energy+=AUD.smooth[i]; energy/=16;
   const ampBase = 0.16 + energy*0.5;
+  for(let i=0;i<TERS.length;i++) drawTerrainOne(TERS[i], ampBase);
+}
+function drawTerrainOne(T, ampBase){
+  const ctx=T.ctx, cols=T.cols, rows=TT.rows;
+  ctx.clearRect(0,0,T.w,T.h);
 
   const zNear=1.15, halfW=(cols-1)/2;
   const pts=[];
   for(let r=0;r<rows;r++){
     const row=[];
-    const wz = zNear + r*TER.spacing - TER.scroll;
+    const wz = zNear + r*TT.spacing - TT.scroll;
     for(let c=0;c<cols;c++){
-      const wx=(c-halfW)*TER.spacing;
+      const wx=(c-halfW)*TT.spacing;
       // layered sine field, flowing toward viewer
       const wy = ampBase*(
-            Math.sin(wx*0.55 + TER.t*0.9) * Math.cos(wz*0.5 - TER.t*1.1)
-          + 0.5*Math.sin((wx+wz)*0.33 - TER.t*0.7) );
-      row.push(project(wx,wy,wz));
+            Math.sin(wx*0.55 + TT.t*0.9) * Math.cos(wz*0.5 - TT.t*1.1)
+          + 0.5*Math.sin((wx+wz)*0.33 - TT.t*0.7) );
+      row.push(project(T,wx,wy,wz));
     }
     pts.push(row);
   }
 
   // distance fade is constant across a row (shared wz), so we can batch.
-  // glow comes from the CSS drop-shadow on #terrain, not canvas shadowBlur.
+  // glow comes from the CSS drop-shadow on .terrain, not canvas shadowBlur.
   const lit = clamp(PAL.l+8,0,80);
   ctx.lineWidth=1;
 
@@ -1261,7 +1395,7 @@ function drawTerrain(dt){
 
   // horizontal lines: one path per row, alpha keyed to that row's depth
   for(let r=0;r<rows;r++){
-    const fade = clamp(1 - (pts[r][0][2]-zNear)/(rows*TER.spacing), 0.05, 1);
+    const fade = clamp(1 - (pts[r][0][2]-zNear)/(rows*TT.spacing), 0.05, 1);
     ctx.strokeStyle=`hsl(${PAL.h} ${PAL.s}% ${lit}% / ${(fade*fade*0.85).toFixed(3)})`;
     ctx.beginPath();
     for(let c=0;c<cols;c++){ const p=pts[r][c]; c===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]); }
@@ -1270,7 +1404,7 @@ function drawTerrain(dt){
   // bright vertex dots on the near rows (depth is shared per row -> one style per row)
   const dotL = clamp(PAL.l+25,0,90);
   for(let r=rows-10;r<rows;r++){ if(r<0) continue;
-    const fade=clamp(1-(pts[r][0][2]-zNear)/(rows*TER.spacing),0,1);
+    const fade=clamp(1-(pts[r][0][2]-zNear)/(rows*TT.spacing),0,1);
     ctx.fillStyle=`hsl(${PAL.h} ${PAL.s}% ${dotL}% / ${(fade*0.5).toFixed(3)})`;
     for(let c=0;c<cols;c+=1){
       const p=pts[r][c];
@@ -1342,6 +1476,759 @@ function updateUI(){
 }
 
 /* =========================================================================
+   MULTI-MONITOR LAYOUT ENGINE
+
+   Wallpaper Engine gives a spanned wallpaper ONE viewport covering the bounding
+   box of every monitor it spans. That box is not a screen: it has seams down
+   the middle, dead space above a monitor that sits lower than its neighbour,
+   and an aspect ratio nothing was designed for. So instead of laying the HUD
+   out against the viewport, we lay it out against a list of SCREENS.
+
+   Finding the screens has three parts:
+     1. discover the physical monitors (manual property > companion > Window
+        Management API > a guess from window.screen),
+     2. work out which of them this wallpaper instance is actually covering, by
+        finding the subset whose bounding box matches the viewport's aspect,
+     3. map each one into viewport coordinates.
+
+   A single-monitor desktop falls through to one screen filling the viewport at
+   zoom 1, which renders identically to the pre-multi-monitor layout.
+   ========================================================================= */
+
+/* order = stacking order when several panels share one monitor + anchor, which
+   reproduces the classic four-corner layout exactly */
+const PLACE_ORDER=["terminal","diag","tl","audio","sysmon","proc","tailnet"];
+const PANEL_SEL={terminal:"#terminal",diag:"#diag",tl:"#tl",audio:"#audio",
+                 sysmon:"#sysmon",proc:"#proc",tailnet:"#tailnet"};
+const PANEL_NAME={terminal:"SYSTEM",diag:"DIAGNOSTICS",tl:"TIME / LOCATION",audio:"AUDIO",
+                  sysmon:"SYSTEM MONITOR",proc:"PROCESSES",tailnet:"TAILNET"};
+/* nine anchors per screen: row (t/m/b) + column (l/c/r) */
+const ANCHORS=["tl","tc","tr","ml","mc","mr","bl","bc","br"];
+
+const LAY={
+  mons:[],          // physical monitors, renumbered left->right: {x,y,w,h,n,primary,res}
+  monSrc:"none",
+  screens:[],       // what this instance renders: {n,x,y,w,h,zoom,primary,res,el}
+  primary:0,        // index into screens
+  spanned:false,
+  remBase:null,     // px; only set when there is more than one screen
+  ov:{},            // dragged placement overrides, keyed by panel id
+  snap:true,
+  geoSig:"", placeSig:"", _preset:{}
+};
+
+/* ---- persistence for dragged positions (per machine, not per Workshop item) ---- */
+const LS_KEY="cyberos-hud-layout-v1";
+/* Stored placements come back from disk, so treat them as untrusted: a partly
+   written entry or one left by an older build must not be able to throw the
+   layout off. Anything that doesn't validate is dropped and the panel falls back
+   to its property / preset placement. */
+function validPlacement(o){
+  if(!o || typeof o!=="object") return null;
+  const mon=+o.mon;
+  if(!(mon>=1 && mon<=8)) return null;
+  if(o.mode==="dock")
+    return ANCHORS.indexOf(o.pos)>=0 ? {mode:"dock", mon:mon, pos:o.pos} : null;
+  if(o.mode==="free"){
+    const fx=+o.fx, fy=+o.fy;
+    if(!isFinite(fx) || !isFinite(fy)) return null;
+    return {mode:"free", mon:mon, cx:(o.cx==="r"?"r":"l"), cy:(o.cy==="b"?"b":"t"),
+            fx:clamp(fx,0,0.98), fy:clamp(fy,0,0.98)};
+  }
+  return null;
+}
+function loadLayoutStore(){
+  try{
+    const o=JSON.parse(localStorage.getItem(LS_KEY)||"null");
+    if(!o || typeof o!=="object") return;
+    const ov={};
+    Object.keys(o.ov||{}).forEach(k=>{
+      if(PLACE_ORDER.indexOf(k)<0) return;              // unknown panel id
+      const p=validPlacement(o.ov[k]);
+      if(p) ov[k]=p;
+    });
+    LAY.ov=ov;
+    LAY.snap=o.snap!==false;
+  }catch(e){}
+}
+function saveLayoutStore(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify({ov:LAY.ov, snap:LAY.snap})); }catch(e){}
+}
+
+/* ---------------- 1. discover monitors ---------------- */
+
+/* Manual monitor geometry, semicolon or comma separated, one entry per monitor:
+
+     2560x1440 @-2560,419 ; 3840x2160 @0,0 * ; 1440x2560 @3840,0
+
+   `*` marks the primary. The offset is that monitor's top-left corner in Windows
+   desktop coordinates (Settings > Display, or the companion reports it), and may
+   be negative — the X11 form "3840x2160+-2560+419" works too. Drop the offsets
+   entirely ("3840x2160, 2560x1440") to lay them out left to right, or give a
+   bare count ("3") for N equal columns of this viewport. */
+function parseMonEntry(tok){
+  let t=String(tok).trim();
+  if(!t) return null;
+  const primary=/\*\s*$/.test(t);
+  if(primary) t=t.replace(/\*\s*$/,"").trim();
+  const sm=t.match(/^(\d{2,5})\s*[x×]\s*(\d{2,5})/i);
+  if(!sm) return null;
+  const rest=t.slice(sm[0].length);
+  // Pull the two signed numbers out of whatever separator style was used, so
+  // "@-2560,419", "-2560 419" and "+-2560+419" all mean the same thing.
+  const nums=rest.match(/-?\d{1,6}/g);
+  return { w:+sm[1], h:+sm[2], primary:primary,
+           x:(nums&&nums.length>=2)? +nums[0] : null,
+           y:(nums&&nums.length>=2)? +nums[1] : null };
+}
+function parseMonList(str){
+  const s=String(str||"").trim();
+  if(!s) return null;
+  if(/^[1-8]$/.test(s)){
+    const n=+s, w=window.innerWidth/n, h=window.innerHeight;
+    return Array.from({length:n},(_,i)=>({x:Math.round(i*w),y:0,w:Math.round(w),h:h,
+                                          primary:i===0,res:Math.round(w)+"x"+Math.round(h)}));
+  }
+  const out=[]; let cursor=0;
+  // Semicolons separate monitors when present, so an entry is free to use the
+  // readable "@x,y" form; otherwise commas separate them.
+  s.split(s.indexOf(";")>=0 ? /;+/ : /,+/).forEach(tok=>{
+    const e=parseMonEntry(tok);
+    if(!e) return;
+    const x=(e.x!=null)? e.x : cursor;
+    const y=(e.y!=null)? e.y : 0;
+    cursor=x+e.w;
+    out.push({x:x,y:y,w:e.w,h:e.h,primary:e.primary,res:e.w+"x"+e.h});
+  });
+  if(!out.length) return null;
+  if(!out.some(m=>m.primary)) out[0].primary=true;
+  return out;
+}
+
+/* The companion reports real desktop geometry (EnumDisplaySettings), which is
+   the only exact source available to a file:// page. Older companions send
+   {res,hz} with no coordinates — those are unusable here, so we skip them. */
+function monsFromCompanion(){
+  // Only the LOCAL companion describes this desktop. With a "Remote metrics host"
+  // set, the payload comes from a different machine, and laying this HUD out to
+  // someone else's monitors would be worse than not knowing: fall through to the
+  // local sources instead. The identity panel still lists the remote displays,
+  // which is the point of that feature.
+  if(metricsEndpoint().remote) return null;
+  const S=M.sysInfo;
+  if(!S || !Array.isArray(S.monitors)) return null;
+  const out=[];
+  S.monitors.forEach(m=>{
+    if(!m || typeof m!=="object") return;
+    if(typeof m.x!=="number" || typeof m.y!=="number") return;
+    let w=+m.w, h=+m.h;
+    if(!(w>0&&h>0) && typeof m.res==="string"){ const p=m.res.split(/[x×]/); w=+p[0]; h=+p[1]; }
+    if(!(w>0&&h>0)) return;
+    out.push({x:m.x,y:m.y,w:w,h:h,primary:!!m.primary,res:m.res||(w+"x"+h),hz:m.hz});
+  });
+  return out.length? out : null;
+}
+
+/* Chromium's Window Management API. Needs a secure context and a granted
+   permission, so it is normally unavailable to a wallpaper — but it costs one
+   try and it is exact when it does work. */
+let API_MONS=null;
+function tryScreenAPI(){
+  if(typeof window.getScreenDetails!=="function") return;
+  try{
+    window.getScreenDetails().then(d=>{
+      const out=(d.screens||[]).map(s=>({x:s.left,y:s.top,w:s.width,h:s.height,
+                                         primary:!!s.isPrimary,res:s.width+"x"+s.height}));
+      if(out.length>1){ API_MONS=out; relayout(); }
+    }).catch(()=>{});
+  }catch(e){}
+}
+
+/* Last resort with no companion: window.screen reports one monitor's mode. If
+   the viewport is a whole number of those side by side, that is a span across
+   identical monitors — the common case for people who bought three of the same
+   panel. Anything less obvious stays single-screen. */
+function monsFromHeuristic(){
+  const sw=screen.width|0, sh=screen.height|0;
+  const vw=window.innerWidth, vh=window.innerHeight;
+  if(!(sw>0&&sh>0)) return null;
+  if(Math.abs(vw-sw)<=2 && Math.abs(vh-sh)<=2) return null;
+  const n=Math.round(vw/sw);
+  if(n>=2 && n<=8 && Math.abs(vw-n*sw)<=2*n && Math.abs(vh-sh)<=2)
+    return Array.from({length:n},(_,i)=>({x:i*sw,y:0,w:sw,h:sh,primary:i===0,res:sw+"x"+sh}));
+  return null;
+}
+
+function collectMonitors(){
+  let mons=parseMonList(CFG.monitorLayout), src="manual";
+  if(!mons){ mons=monsFromCompanion(); src="companion"; }
+  if(!mons){ mons=API_MONS;             src="screen API"; }
+  if(!mons){ mons=monsFromHeuristic();  src="estimated"; }
+  if(!mons || !mons.length){ LAY.mons=[]; LAY.monSrc="none"; return; }
+  // Number them left to right (then top to bottom): "monitor 1" is the one on
+  // your left, which is how people describe a desk. Edit mode paints the
+  // numbers on the screens so there is nothing to guess.
+  mons=mons.slice().sort((a,b)=> (a.x-b.x) || (a.y-b.y));
+  mons.forEach((m,i)=>{ m.n=i+1; });
+  LAY.mons=mons; LAY.monSrc=src;
+}
+
+/* ---------------- 2. which monitors is this instance covering? ---------------- */
+function fitViewport(vw,vh){
+  const mons=LAY.mons, n=Math.min(mons.length,8);
+  if(!n) return null;
+  const target=vw/vh;
+  let best=null, bestOne=null;
+  for(let mask=1; mask<(1<<n); mask++){
+    let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity,area=0,cnt=0;
+    for(let i=0;i<n;i++){
+      if(!(mask&(1<<i))) continue;
+      const m=mons[i];
+      if(m.x<x0) x0=m.x;
+      if(m.y<y0) y0=m.y;
+      if(m.x+m.w>x1) x1=m.x+m.w;
+      if(m.y+m.h>y1) y1=m.y+m.h;
+      area+=m.w*m.h; cnt++;
+    }
+    const bw=x1-x0, bh=y1-y0;
+    if(!(bw>0&&bh>0)) continue;
+    const err=Math.abs(bw/bh-target)/target;
+    if(err>0.02) continue;                     // aspect has to match within 2%
+    const scale=vw/bw;
+    if(scale<0.3 || scale>3.2) continue;       // ...at a plausible DPI scale
+    // WE renders at native size, so the candidate needing the least scaling
+    // wins; a subset that actually tiles its own bounding box breaks ties.
+    const score=Math.abs(Math.log(scale))*4 + err*2 + (1-area/(bw*bh))*0.5 - cnt*0.0005;
+    const cand={mask,x0,y0,bw,bh,cnt,scale,score};
+    if(cnt===1 && (!bestOne || score<bestOne.score)) bestOne=cand;
+    if(!best || score<best.score) best=cand;
+  }
+  // A single monitor whose mode happens to equal a neighbouring pair's bounding
+  // box (a 32:9 panel beside two 16:9s, say) is indistinguishable from that pair
+  // by geometry alone, and the pair would win on the count tie-break. One display
+  // filling the viewport is by far the likelier reading, so prefer it.
+  if(best && bestOne && best.cnt>1 &&
+     Math.abs(bestOne.bw-best.bw)<=2 && Math.abs(bestOne.bh-best.bh)<=2) return bestOne;
+  return best;
+}
+
+/* ---------------- 3. build the screen list ---------------- */
+/* Would these layers actually put the HUD on screen? Every layer has to be a
+   real box, has to overlap the viewport, must not hang far outside it, and
+   together they have to cover most of it. Anything else means our idea of the
+   desktop does not match the surface we were given. */
+function screensFitViewport(list, vw, vh){
+  if(!list || !list.length) return false;
+  let covered=0;
+  for(const s of list){
+    if(!(isFinite(s.x)&&isFinite(s.y)&&isFinite(s.w)&&isFinite(s.h))) return false;
+    if(s.w<80 || s.h<80) return false;
+    const ix=Math.max(0, Math.min(s.x+s.w, vw)-Math.max(s.x, 0));
+    const iy=Math.max(0, Math.min(s.y+s.h, vh)-Math.max(s.y, 0));
+    if(ix*iy < s.w*s.h*0.5) return false;      // more than half of it is off-viewport
+    covered += ix*iy;
+  }
+  return covered >= vw*vh*0.6;                 // and between them they fill the surface
+}
+function computeScreens(){
+  const vw=Math.max(1,window.innerWidth), vh=Math.max(1,window.innerHeight);
+  collectMonitors();
+  const mons=LAY.mons;
+  const forceSpan = CFG.screenMode==="span" && mons.length>1;
+  const fit = (CFG.screenMode==="single") ? null : fitViewport(vw,vh);
+  // Naming a monitor is the documented way to say "this instance is not spanning",
+  // so it has to win over an ambiguous multi-monitor reading of the viewport.
+  const pinSingle = CFG.screenMode!=="span" && CFG.thisMonitor!=="auto" &&
+                    mons.some(m=>m.n===+CFG.thisMonitor);
+  let out, spanned;
+
+  if(forceSpan || (fit && fit.cnt>1 && !pinSingle)){
+    let use,x0,y0,sx,sy;
+    if(fit && fit.cnt>1 && !(forceSpan && fit.cnt<mons.length)){
+      use=mons.filter((m,i)=> fit.mask & (1<<i));
+      x0=fit.x0; y0=fit.y0; sx=vw/fit.bw; sy=vh/fit.bh;
+    }else{                                   // forced: stretch every monitor over the viewport
+      use=mons.slice();
+      x0=Math.min.apply(null,use.map(m=>m.x));
+      y0=Math.min.apply(null,use.map(m=>m.y));
+      const bw=Math.max.apply(null,use.map(m=>m.x+m.w))-x0;
+      const bh=Math.max.apply(null,use.map(m=>m.y+m.h))-y0;
+      sx=vw/bw; sy=vh/bh;
+    }
+    out=use.map(m=>({ n:m.n, x:(m.x-x0)*sx, y:(m.y-y0)*sy, w:m.w*sx, h:m.h*sy,
+                      primary:!!m.primary, res:m.res }));
+    spanned=true;
+    // The monitor geometry is measured in physical pixels by something outside
+    // this page, while the viewport is whatever Wallpaper Engine handed us. If
+    // those two ever disagree — mixed DPI scaling is the obvious way — the
+    // layers land off-viewport and, because a screen clips its own overflow,
+    // the entire HUD would be clipped away and the wallpaper would just look
+    // black. Never ship that: sanity-check the mapping and fall back instead.
+    if(!screensFitViewport(out, vw, vh)){ out=null; spanned=false; }
+  }
+  if(!out){
+    // One screen filling the viewport. Identify WHICH monitor it is so that a
+    // per-monitor (non-spanned) setup can still send panels to specific
+    // screens: each instance renders only what is assigned to it.
+    let num=0, res=Math.round(vw)+"x"+Math.round(vh), pri=true;
+    let src=null;
+    if(CFG.thisMonitor!=="auto"){
+      num=+CFG.thisMonitor;
+      src=mons.find(m=>m.n===num) || null;
+    }else if(fit && fit.cnt===1){
+      src=mons.find((m,i)=> fit.mask & (1<<i)) || null;
+      if(src) num=src.n;
+    }
+    if(src){ res=src.res; pri=!!src.primary; }
+    out=[{ n:num||1, x:0, y:0, w:vw, h:vh, primary:pri, res:res }];
+    spanned=false;
+  }
+
+  out.sort((a,b)=> (a.x-b.x) || (a.y-b.y));
+  // Each monitor should get the HUD at its own scale. rem is global, so pin the
+  // root to the smallest monitor's size and give every other screen a zoom to
+  // make up the difference: every zoom is then >= 1, and hairline borders never
+  // round away the way a zoom < 1 would.
+  const remWant = s=> clamp(1.3*Math.min(s.w,s.h)/100, 9, 30);
+  const base = Math.min.apply(null, out.map(remWant));
+  out.forEach(s=>{ s.zoom = remWant(s)/base; });
+  LAY.remBase = out.length>1 ? base : null;   // one screen -> leave the CSS clamp alone
+  LAY.screens = out;
+  LAY.spanned = spanned;
+  const p=out.findIndex(s=>s.primary);
+  LAY.primary = p<0 ? 0 : p;
+}
+
+/* ---------------- 4. layers ---------------- */
+function boxStyle(el, r){
+  const z=r.zoom||1;
+  el.style.zoom   = (z===1) ? "" : z;
+  el.style.left   = (r.x/z)+"px";
+  el.style.top    = (r.y/z)+"px";
+  el.style.width  = (r.w/z)+"px";
+  el.style.height = (r.h/z)+"px";
+}
+function screenVars(el, s){
+  // ultrawide guard, per screen: stacks anchor to a centered band capped at 2:1
+  const edge=Math.max(2.2, (1 - 2*s.h/s.w)/2*100);
+  el.style.setProperty("--edge", edge.toFixed(6)+"%");
+  el.style.setProperty("--edge-brk", Math.max(1.4, edge-0.8).toFixed(6)+"%");
+  el.style.setProperty("--col-max", (s.w/s.h < 1.3 ? 46 : 34)+"%");
+}
+function parkPanels(){
+  const pool=$("#panel-pool"); if(!pool) return;
+  PLACE_ORDER.forEach(id=>{ const el=$(PANEL_SEL[id]); if(el) pool.appendChild(el); });
+  [ "#os-label", ".bottom-hash", "#mode-tag" ].forEach(sel=>{
+    const el=$(sel); if(el) pool.appendChild(el);
+  });
+  LAY.placeSig="";
+}
+function syncLayers(){
+  const scRoot=$("#screens"), bgRoot=$("#bglayers");
+  if(!scRoot || !bgRoot) return;
+  const S=LAY.screens;
+  if(scRoot.children.length !== S.length) parkPanels();
+  while(scRoot.children.length > S.length) scRoot.lastElementChild.remove();
+  while(scRoot.children.length < S.length){
+    const d=document.createElement("div");
+    d.className="screen";
+    d.innerHTML='<div class="corner tl"></div><div class="corner tr"></div>'+
+                '<div class="corner bl"></div><div class="corner br"></div>';
+    scRoot.appendChild(d);
+  }
+  S.forEach((s,i)=>{ s.el=scRoot.children[i]; boxStyle(s.el,s); screenVars(s.el,s); });
+
+  const bg = CFG.bgPerMonitor
+    ? S.map(s=>({x:s.x,y:s.y,w:s.w,h:s.h,zoom:s.zoom}))
+    : [{x:0,y:0,w:window.innerWidth,h:window.innerHeight,
+        zoom:S.length? S[LAY.primary].zoom : 1}];
+  while(bgRoot.children.length > bg.length) bgRoot.lastElementChild.remove();
+  while(bgRoot.children.length < bg.length){
+    const d=document.createElement("div");
+    d.className="bglayer";
+    d.innerHTML='<div class="bg-fx"></div><canvas class="terrain"></canvas>';
+    bgRoot.appendChild(d);
+  }
+  bg.forEach((r,i)=> boxStyle(bgRoot.children[i], r));
+
+  const root=document.documentElement;
+  if(LAY.remBase) root.style.setProperty("--rem-base", LAY.remBase.toFixed(3)+"px");
+  else root.style.removeProperty("--rem-base");
+}
+
+/* ---------------- 5. where each panel goes ---------------- */
+/* Screens other than the primary, nearest first, left before right. */
+function otherScreens(){
+  const p=LAY.primary, out=[];
+  for(let i=0;i<LAY.screens.length;i++) if(i!==p) out.push(i);
+  out.sort((a,b)=> (Math.abs(a-p)-Math.abs(b-p)) || (a-b));
+  return out;
+}
+/* The default layout. One screen: the original four corners. Several: identity
+   and time stay on the primary (where you look), and the dense telemetry moves
+   out to the flanking monitors. */
+function presetPlacements(){
+  const S=LAY.screens, p=LAY.primary;
+  let s1=p, s2=p, s3=p, s4=p;
+  if(S.length>1 && CFG.spanPreset!=="primary"){
+    const o=otherScreens();
+    s2 = (o[0]!=null) ? o[0] : p;
+    s4 = (o[1]!=null) ? o[1] : s2;
+  }
+  const at=i=>S[i].n;
+  return {
+    terminal:{mon:at(s1),pos:"tl"}, diag:{mon:at(s1),pos:"tl"},
+    tl:      {mon:at(s3),pos:"tr"}, audio:{mon:at(s3),pos:"tr"},
+    sysmon:  {mon:at(s2),pos:"bl"},
+    proc:    {mon:at(s4),pos:"br"}, tailnet:{mon:at(s4),pos:"br"}
+  };
+}
+/* dragged override > explicit property > preset */
+function resolvePlacement(id){
+  const ov=LAY.ov[id];
+  if(ov && ov.mode) return ov;
+  const pre=LAY._preset[id] || {mon:(LAY.screens[LAY.primary]||{n:1}).n, pos:"tl"};
+  const cfg=CFG.place[id] || {};
+  const mon = (cfg.mon && cfg.mon!=="auto" && +cfg.mon>0) ? +cfg.mon : pre.mon;
+  const pos = (cfg.pos && ANCHORS.indexOf(cfg.pos)>=0) ? cfg.pos : pre.pos;
+  return {mode:"dock", mon:mon, pos:pos};
+}
+function screenForMon(n){
+  const i=LAY.screens.findIndex(s=>s.n===n);
+  if(i>=0) return i;
+  // Not on this instance. If it is a real monitor we just aren't rendering, this
+  // is a per-monitor setup and the panel genuinely belongs to another screen —
+  // leave it out. If the number matches no monitor at all it is a stale setting,
+  // and silently eating a panel over that would be unhelpful.
+  return LAY.mons.some(m=>m.n===n) ? -1 : LAY.primary;
+}
+function anchorClass(pos){
+  const y={t:"y-t",m:"y-m",b:"y-b"}[pos.charAt(0)] || "y-t";
+  const x={l:"x-l",c:"x-c",r:"x-r"}[pos.charAt(1)] || "x-l";
+  return y+" "+x;
+}
+function applyFree(col, pl){
+  col.style.left   = pl.cx==="l" ? (pl.fx*100).toFixed(3)+"%" : "auto";
+  col.style.right  = pl.cx==="r" ? (pl.fx*100).toFixed(3)+"%" : "auto";
+  col.style.top    = pl.cy==="t" ? (pl.fy*100).toFixed(3)+"%" : "auto";
+  col.style.bottom = pl.cy==="b" ? (pl.fy*100).toFixed(3)+"%" : "auto";
+}
+function placePanels(){
+  const S=LAY.screens;
+  if(!S.length) return;
+  LAY._preset=presetPlacements();
+  const plan=PLACE_ORDER.map(id=>{
+    const pl=resolvePlacement(id);
+    return {id:id, si:screenForMon(pl.mon), pl:pl};
+  });
+  // Placement can legitimately leave a panel off this instance (that is how a
+  // per-monitor setup spreads the HUD), but if it leaves EVERY panel off, the
+  // wallpaper is a blank screen and the user has no way to see what happened.
+  // Treat that as a bad configuration and put everything on the primary.
+  if(plan.every(p=>p.si<0)) plan.forEach(p=>{ p.si=LAY.primary; });
+  const sig=JSON.stringify(plan);
+  if(sig===LAY.placeSig) return;
+  LAY.placeSig=sig;
+
+  // Lift everything out of the old columns BEFORE dropping them: removing a
+  // column takes its children out of the document with it, and every panel is
+  // full of ids the rest of the runtime looks up by selector.
+  const pool=$("#panel-pool");
+  const els={};
+  PLACE_ORDER.forEach(id=>{ els[id]=$(PANEL_SEL[id]); if(els[id]) pool.appendChild(els[id]); });
+  const osl=$("#os-label"); if(osl) pool.appendChild(osl);
+  const bh=$(".bottom-hash"); if(bh) pool.appendChild(bh);
+  const mt=$("#mode-tag");   if(mt) pool.appendChild(mt);
+  S.forEach(s=>{ s.el.querySelectorAll(".col").forEach(c=>c.remove()); });
+
+  const cols=new Map();
+  plan.forEach(p=>{
+    const el=els[p.id];
+    if(!el) return;
+    if(p.si<0) return;                            // not rendered on this instance; stays parked
+    const s=S[p.si];
+    let col;
+    if(p.pl.mode==="free"){
+      col=document.createElement("div");
+      col.className="col free";
+      applyFree(col,p.pl);
+      s.el.appendChild(col);
+    }else{
+      const key=p.si+"|"+p.pl.pos;
+      col=cols.get(key);
+      if(!col){
+        col=document.createElement("div");
+        col.className="col "+anchorClass(p.pl.pos);
+        s.el.appendChild(col);
+        cols.set(key,col);
+      }
+    }
+    // the OS label is the identity panel's header — it always travels with it
+    if(p.id==="terminal"){ const o=$("#os-label"); if(o) col.appendChild(o); }
+    col.appendChild(el);
+  });
+  const ps=S[LAY.primary].el;
+  if(bh) ps.appendChild(bh);
+  if(mt) ps.appendChild(mt);
+}
+
+/* ---------------- 6. the entry point ---------------- */
+/* When the GPU runs short of memory — a game holding most of the VRAM is the
+   usual reason — Chromium can drop a canvas's backing store. Left alone the
+   wallpaper simply stays black for the rest of the session, which is exactly
+   what "the wallpaper went black" looks like. Accepting the loss and rebuilding
+   on restore turns that into a blink. Older CEF builds never fire these events,
+   in which case this is inert. */
+let ctxRestoreTimer=0;
+function guardCanvases(){
+  $$("canvas").forEach(cv=>{
+    if(cv._ctxGuarded) return;
+    cv._ctxGuarded=true;
+    cv.addEventListener("contextlost", e=>{ e.preventDefault(); }, false);
+    cv.addEventListener("contextrestored", ()=>{
+      clearTimeout(ctxRestoreTimer);
+      ctxRestoreTimer=setTimeout(()=>{
+        if(!LAY_BUILT) return;
+        starInit(); terrainInitAll(); audioSetup();
+        ["#sp-cpu","#sp-gpu","#sp-net"].forEach(s=>{ const c=$(s); if(c) c._ctx=null; });
+      }, 120);                       // one rebuild even if several canvases return at once
+    }, false);
+  });
+}
+
+/* Rebuilding the canvases means dropping their GPU-backed surfaces and asking
+   for new ones. Wallpaper Engine resizes the view several times in quick
+   succession while it sets a span up, and doing that teardown once per resize
+   left the compositor holding handles to images that no longer existed — which
+   it reports as "ProduceSkia: non-existent mailbox" and draws as black. Coalesce
+   the rebuilds so a burst of resizes costs exactly one. */
+let rebuildTimer=0;
+function scheduleCanvasRebuild(){
+  clearTimeout(rebuildTimer);
+  rebuildTimer=setTimeout(()=>{
+    rebuildTimer=0;
+    if(!LAY_BUILT) return;
+    starInit(); terrainInitAll(); audioSetup();
+    ["#sp-cpu","#sp-gpu","#sp-net"].forEach(s=>{ const c=$(s); if(c) c._ctx=null; });
+    guardCanvases();
+  }, 220);
+}
+
+let LAY_BUILT=false;
+function relayout(){
+  if(!domReady) return false;
+  // A resize or a fresh monitor list from the companion can arrive mid-drag, and
+  // re-dealing the panels would pull the dragged one out from under the cursor.
+  // Drop the drag instead of leaving it holding a detached column.
+  if(DRAG.on) cancelDrag();
+  computeScreens();
+  const geo=JSON.stringify(LAY.screens.map(s=>[s.n,Math.round(s.x),Math.round(s.y),
+              Math.round(s.w),Math.round(s.h),+s.zoom.toFixed(4)]))+
+            "|"+(CFG.bgPerMonitor?1:0);
+  const geoChanged = geo!==LAY.geoSig;
+  LAY.geoSig=geo;
+  // Drop the compositor-expensive effects once the surface gets big enough that
+  // they would cost hundreds of MB of render targets (see LARGE-SURFACE ECONOMY).
+  // The cutoff is 8, not 9: a single 4K panel is 8.29 Mpx, and that is exactly
+  // where the black rectangles showed up, tiles the compositor gave up on with
+  // the mask and the multiply blend still live.
+  const megapixels = (window.innerWidth*window.innerHeight)/1e6;
+  document.body.classList.toggle("economy",
+    CFG.heavyFx==="drop" || (CFG.heavyFx!=="keep" && megapixels>8));
+
+  syncLayers();
+  placePanels();
+  updateEditMode();
+  if(geoChanged && LAY_BUILT) scheduleCanvasRebuild();
+  return geoChanged;
+}
+
+/* =========================================================================
+   LAYOUT EDIT MODE  (drag panels between monitors and corners)
+   Opt-in from the wallpaper properties. While it is off the wallpaper takes no
+   mouse input at all, so desktop clicks are never intercepted.
+   ========================================================================= */
+/* el = the panel whose placement is being changed; mel = whatever we measure the
+   grab against, which differs only when el itself is not rendered. */
+const DRAG={on:false,id:null,el:null,mel:null,col:null,si:0,gfx:0.5,gfy:0.2,moved:false};
+const ZX={l:"7%",c:"50%",r:"93%"}, ZY={t:"8%",m:"50%",b:"92%"};
+/* Abandon a drag without committing it; the next placePanels() puts the panel
+   back wherever its saved placement says. */
+function cancelDrag(){
+  if(DRAG.el) DRAG.el.classList.remove("dragging");
+  DRAG.on=false; DRAG.col=null; DRAG.mel=null; DRAG.moved=false;
+  LAY.placeSig="";
+}
+
+function updateEditMode(){
+  const on=!!CFG.editLayout;
+  document.body.classList.toggle("edit", on);
+  $$(".le-frame,.le-id,.le-zone,.le-tag").forEach(n=>n.remove());
+  const oldBar=$("#le-bar"); if(oldBar) oldBar.remove();
+  if(!on) return;
+  LAY.screens.forEach(s=>{
+    const f=document.createElement("div"); f.className="le-frame"; s.el.appendChild(f);
+    const id=document.createElement("div"); id.className="le-id";
+    id.innerHTML=s.n+"<small>"+s.res+(s.primary?" · PRIMARY":"")+"</small>";
+    s.el.appendChild(id);
+    if(LAY.snap) ANCHORS.forEach(a=>{
+      const z=document.createElement("div"); z.className="le-zone"; z.dataset.a=a;
+      z.style.left=ZX[a.charAt(1)]; z.style.top=ZY[a.charAt(0)];
+      z.style.transform="translate(-50%,-50%)";
+      s.el.appendChild(z);
+    });
+  });
+  PLACE_ORDER.forEach(id=>{
+    const el=$(PANEL_SEL[id]);
+    if(!el || el.classList.contains("hidden") || !el.parentElement) return;
+    if(el.parentElement.id==="panel-pool") return;
+    const t=document.createElement("div"); t.className="le-tag";
+    t.textContent=PANEL_NAME[id]+(LAY.ov[id]?" ✎":"");
+    el.appendChild(t);
+  });
+  const s=LAY.screens[LAY.primary]; if(!s) return;
+  const bar=document.createElement("div"); bar.id="le-bar";
+  bar.innerHTML=
+    '<span class="t">LAYOUT EDIT</span>'+
+    '<span class="le-btn'+(LAY.snap?" on":"")+'" data-act="snap">SNAP '+(LAY.snap?"ON":"OFF")+'</span>'+
+    '<span class="le-btn" data-act="dock">DOCK ALL</span>'+
+    '<span class="le-btn" data-act="reset">RESET</span>'+
+    '<span class="hint">drag any panel · monitors: '+LAY.mons.length+' ('+LAY.monSrc+') · '+
+    (LAY.spanned?"spanned":"single screen")+'</span>';
+  s.el.appendChild(bar);
+}
+
+function screenAtPoint(x,y){
+  const S=LAY.screens;
+  for(let i=0;i<S.length;i++){
+    const s=S[i];
+    if(x>=s.x && x<s.x+s.w && y>=s.y && y<s.y+s.h) return i;
+  }
+  let bi=0,bd=Infinity;
+  S.forEach((s,i)=>{
+    const dx=x-(s.x+s.w/2), dy=y-(s.y+s.h/2), d=dx*dx+dy*dy;
+    if(d<bd){ bd=d; bi=i; }
+  });
+  return bi;
+}
+function nearestAnchor(s, r){
+  const cx=(r.left+r.width/2 - s.x)/Math.max(1,s.w);
+  const cy=(r.top +r.height/2- s.y)/Math.max(1,s.h);
+  return (cy<1/3?"t": cy>2/3?"b":"m") + (cx<1/3?"l": cx>2/3?"r":"c");
+}
+function highlightZone(){
+  $$(".le-zone").forEach(z=>z.classList.remove("hot"));
+  if(!LAY.snap || !DRAG.col) return;
+  const s=LAY.screens[DRAG.si]; if(!s) return;
+  const z=s.el.querySelector('.le-zone[data-a="'+nearestAnchor(s,DRAG.col.getBoundingClientRect())+'"]');
+  if(z) z.classList.add("hot");
+}
+function editAction(act){
+  if(act==="snap") LAY.snap=!LAY.snap;
+  else if(act==="reset") LAY.ov={};
+  else if(act==="dock"){
+    Object.keys(LAY.ov).forEach(k=>{
+      const o=LAY.ov[k];
+      if(o && o.mode==="free"){
+        LAY.ov[k]={mode:"dock", mon:o.mon, pos:(o.cy||"t")+(o.cx||"l")};
+      }
+    });
+  }
+  saveLayoutStore();
+  LAY.placeSig="";
+  placePanels();
+  updateEditMode();
+}
+function onDragDown(e){
+  if(!CFG.editLayout || e.button!==0 || !e.target || !e.target.closest) return;
+  const btn=e.target.closest(".le-btn");
+  if(btn){ editAction(btn.dataset.act); e.preventDefault(); return; }
+  const host=e.target.closest(".win, #os-label");
+  if(!host) return;
+  const id = (host.id==="os-label") ? "terminal" : host.id;
+  if(PLACE_ORDER.indexOf(id)<0) return;
+  const el=$(PANEL_SEL[id]); if(!el) return;
+  // Measure the grab against something that is actually rendered. Grabbing the OS
+  // label while the System panel is toggled off would otherwise measure a
+  // display:none box, and a zero rect makes the move maths feed the column's own
+  // position back into itself — the panel accelerates away from the cursor.
+  let mel=el, r=el.getBoundingClientRect();
+  if(!r.width && !r.height){ mel=host; r=host.getBoundingClientRect(); }
+  DRAG.on=true; DRAG.id=id; DRAG.el=el; DRAG.mel=mel; DRAG.col=null; DRAG.moved=false;
+  DRAG.gfx = r.width  ? (e.clientX-r.left)/r.width  : 0.5;
+  DRAG.gfy = r.height ? (e.clientY-r.top )/r.height : 0.2;
+  DRAG.si  = screenAtPoint(e.clientX, e.clientY);
+  el.classList.add("dragging");
+  e.preventDefault();
+}
+function onDragMove(e){
+  if(!DRAG.on) return;
+  // If the button was released somewhere we never saw the mouseup — off the edge
+  // of the desktop, or over a window that swallowed it — the next move arrives
+  // with no buttons held. Treat that as the drop rather than sticking the panel
+  // to the cursor for ever.
+  if(e.buttons===0){ onDragUp(); return; }
+  if(!DRAG.moved){
+    DRAG.moved=true;
+    DRAG.col=document.createElement("div");
+    DRAG.col.className="col free";
+    DRAG.col.style.zIndex="90";
+    LAY.screens[DRAG.si].el.appendChild(DRAG.col);
+    if(DRAG.id==="terminal"){ const o=$("#os-label"); if(o) DRAG.col.appendChild(o); }
+    DRAG.col.appendChild(DRAG.el);
+  }
+  const si=screenAtPoint(e.clientX, e.clientY);
+  if(si!==DRAG.si){ DRAG.si=si; LAY.screens[si].el.appendChild(DRAG.col); }
+  const s=LAY.screens[DRAG.si], z=s.zoom||1;
+  const cr=DRAG.col.getBoundingClientRect();
+  let er=(DRAG.mel||DRAG.el).getBoundingClientRect();
+  if(!er.width && !er.height) er=cr;          // nothing measurable: use the column
+  let x=e.clientX - DRAG.gfx*er.width  - (er.left-cr.left);
+  let y=e.clientY - DRAG.gfy*er.height - (er.top -cr.top);
+  x=clamp(x, s.x, s.x+Math.max(0, s.w-cr.width));
+  y=clamp(y, s.y, s.y+Math.max(0, s.h-cr.height));
+  DRAG.col.style.left=((x-s.x)/z)+"px";
+  DRAG.col.style.top =((y-s.y)/z)+"px";
+  DRAG.col.style.right="auto"; DRAG.col.style.bottom="auto";
+  highlightZone();
+  e.preventDefault();
+}
+function onDragUp(){
+  if(!DRAG.on) return;
+  DRAG.on=false; DRAG.mel=null;
+  if(DRAG.el) DRAG.el.classList.remove("dragging");
+  if(!DRAG.moved){ DRAG.col=null; return; }        // a click, not a drag
+  const s=LAY.screens[DRAG.si], id=DRAG.id;
+  const cr=DRAG.col.getBoundingClientRect();
+  if(LAY.snap){
+    LAY.ov[id]={mode:"dock", mon:s.n, pos:nearestAnchor(s,cr)};
+  }else{
+    const cx=(cr.left+cr.width/2 - s.x)/Math.max(1,s.w);
+    const cy=(cr.top +cr.height/2- s.y)/Math.max(1,s.h);
+    const kx = cx<0.5?"l":"r", ky = cy<0.5?"t":"b";
+    LAY.ov[id]={ mode:"free", mon:s.n, cx:kx, cy:ky,
+      fx: clamp((kx==="l" ? cr.left-s.x : s.x+s.w-cr.right )/Math.max(1,s.w), 0, 0.98),
+      fy: clamp((ky==="t" ? cr.top -s.y : s.y+s.h-cr.bottom)/Math.max(1,s.h), 0, 0.98) };
+  }
+  saveLayoutStore();
+  DRAG.col=null;
+  LAY.placeSig="";
+  placePanels();
+  updateEditMode();
+}
+document.addEventListener("mousedown", onDragDown, true);
+document.addEventListener("mousemove", onDragMove, true);
+document.addEventListener("mouseup",   onDragUp,   true);
+/* Retire the intro animation per panel as soon as it has played, so the
+   re-parenting the layout engine does can never replay it. A panel that was
+   parked (display:none) never animated, so it still gets its intro the first
+   time it lands on a screen. */
+document.addEventListener("animationend", (e)=>{
+  if(e.animationName==="panelIn" && e.target && e.target.classList &&
+     e.target.classList.contains("win")) e.target.classList.add("settled");
+}, true);
+
+/* =========================================================================
    APPLY CONFIG -> DOM
    ========================================================================= */
 function applyConfig(){
@@ -1362,6 +2249,9 @@ function applyConfig(){
   // panel visibility
   const map={terminal:"#terminal",sysmon:"#sysmon",diag:"#diag",proc:"#proc",tailnet:"#tailnet",audio:"#audio",tl:"#tl"};
   Object.entries(map).forEach(([k,sel])=>{ const el=$(sel); if(el) el.classList.toggle("hidden", !CFG.panels[k]); });
+
+  // monitors / placement / edit mode
+  relayout();
 }
 
 /* =========================================================================
@@ -1405,6 +2295,29 @@ window.wallpaperPropertyListener = {
       // individual panel toggles
       const pk={p_terminal:"terminal",p_sysmon:"sysmon",p_diag:"diag",p_proc:"proc",p_tailnet:"tailnet",p_audio:"audio",p_tl:"tl"};
       Object.entries(pk).forEach(([k,v])=>{ if(p[k]!==undefined) CFG.panels[v]=asBool(p[k]); });
+
+      // ---- multi-monitor ----
+      if(p.screen_mode)     CFG.screenMode    = p.screen_mode.value;
+      if(p.monitor_layout!==undefined) CFG.monitorLayout = String(p.monitor_layout.value||"").trim();
+      if(p.this_monitor)    CFG.thisMonitor   = String(p.this_monitor.value);
+      if(p.span_preset)     CFG.spanPreset    = p.span_preset.value;
+      if(p.bg_per_monitor!==undefined) CFG.bgPerMonitor = asBool(p.bg_per_monitor);
+      if(p.heavy_fx)        CFG.heavyFx      = p.heavy_fx.value;
+      if(p.edit_layout!==undefined)    CFG.editLayout   = asBool(p.edit_layout);
+      // "Forget dragged positions" is a toggle rather than a button, so act on
+      // the moment it goes true and let the user switch it back off.
+      if(p.layout_reset!==undefined){
+        const want=asBool(p.layout_reset);
+        if(want && !CFG.layoutReset){ LAY.ov={}; saveLayoutStore(); LAY.placeSig=""; }
+        CFG.layoutReset=want;
+      }
+      // per-panel placement combos
+      PLACE_ORDER.forEach(id=>{
+        const pm=p["pl_"+id+"_mon"], pp=p["pl_"+id+"_pos"];
+        if(!CFG.place[id]) CFG.place[id]={};
+        if(pm!==undefined) CFG.place[id].mon = String(pm.value);
+        if(pp!==undefined) CFG.place[id].pos = String(pp.value);
+      });
 
       // WE can deliver properties before DOMContentLoaded; CFG is stored
       // above either way and applied once the DOM exists.
@@ -1531,7 +2444,9 @@ function buildAll(){
   buildSeg("#bar-temp",18); buildSeg("#bar-mem",18); buildSeg("#bar-swap",18);
   buildSeg("#bar-gtemp",18); buildSeg("#bar-vram",18);
   buildTerminal();
-  starInit(); terrainInit(); audioSetup();
+  starInit(); terrainInitAll(); audioSetup();
+  LAY_BUILT=true;                 // from here on, relayout() re-inits the canvases
+  guardCanvases();
   renderProcs(); renderDrives(); renderTailnet();
 }
 
@@ -1560,15 +2475,24 @@ function loop(now){
   requestAnimationFrame(loop);
 }
 
+/* Setting up a span walks the view through several sizes in a fraction of a
+   second, so the whole response is debounced: the layout is cheap and runs
+   immediately, the expensive canvas reallocation is coalesced. */
+let resizeTimer=0;
 window.addEventListener("resize", ()=>{
-  starInit(); resizeTerrain(); audioSetup();   // full re-init so star density tracks the new area
-  // sparkline canvases recompute lazily on next draw
-  ["#sp-cpu","#sp-gpu","#sp-net"].forEach(s=>{ const c=$(s); if(c){ c._ctx=null; } });
+  // A resize can mean a monitor was plugged in, unplugged, or rearranged, so
+  // re-derive the screens; relayout() schedules the canvas rebuild if the
+  // geometry actually changed.
+  if(!relayout()) scheduleCanvasRebuild();
+  clearTimeout(resizeTimer);
+  resizeTimer=setTimeout(()=>{ resizeTimer=0; relayout(); }, 260);  // settle on the final size
 });
 
 document.addEventListener("DOMContentLoaded", ()=>{
   domReady=true;
-  applyConfig();
+  loadLayoutStore();
+  tryScreenAPI();
+  applyConfig();          // also builds the screen layers and deals the panels
   buildAll();
   // clock
   tickClock(); setInterval(tickClock, 1000);
