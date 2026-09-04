@@ -41,6 +41,15 @@
   --scanline-alpha: 0.05;
   --ui-scale: 1;
 
+  /* User background image. Set from the "Your own image" property; `none` keeps
+     the procedural starfield + terrain scene. Blur and dim are applied to the
+     image only, so the HUD on top stays at full contrast. */
+  --bg-img: none;
+  --bg-img-blur: 0px;
+  --bg-img-dim: 0;
+  --bg-img-ds: 1;      /* downscale divisor for the blur pass, see .bg-img-wrap */
+  --bg-img-bleed: 0px; /* overdraw so a blurred edge does not show as a frame */
+
   /* Master UI scale: scales the whole interface with the display while staying
      readable on tiny or huge screens. vmin tracks the short edge, which is what
      we want for desktops of any aspect ratio. The user's "Interface scale"
@@ -80,6 +89,39 @@ html,body{
 #bglayers{ position:fixed; inset:0; z-index:1; pointer-events:none; }
 .bglayer{ position:absolute; overflow:hidden; }
 .terrain{ position:absolute; left:0; bottom:0; width:100%; height:42%; }
+
+/* ---- user background image ----
+   Lives inside .bglayer, so it follows the same span / per-monitor choice the
+   terrain does: one image across the whole span by default, or one per monitor
+   when "give each monitor its own terrain" is on. */
+.bg-img-wrap{
+  position:absolute; pointer-events:none; display:none;
+  /* The blur runs on a downscaled copy that CSS then scales back up. A blur
+     throws away exactly the detail those extra pixels were carrying, so the
+     result is indistinguishable, and the render surface the compositor has to
+     hold is 1/ds^2 the size. That matters for the reason the LARGE-SURFACE
+     ECONOMY block below exists: on a big span, full-surface render targets are
+     what evict the wallpaper's GPU context and turn tiles black. A static image
+     with a static filter is rasterized once, not per frame, which is why this
+     one is affordable where backdrop-filter was not. */
+  left:  calc(-1 * var(--bg-img-bleed));
+  top:   calc(-1 * var(--bg-img-bleed));
+  width:  calc((100% + 2 * var(--bg-img-bleed)) / var(--bg-img-ds));
+  height: calc((100% + 2 * var(--bg-img-bleed)) / var(--bg-img-ds));
+  transform: scale(var(--bg-img-ds));
+  transform-origin: 0 0;
+  filter: blur(calc(var(--bg-img-blur) / var(--bg-img-ds)));
+}
+body.has-bgimg .bg-img-wrap{ display:block; }
+.bg-img{ width:100%; height:100%; object-fit:cover; object-position:50% 50%;
+         display:block; }
+body.bgfit-contain .bg-img{ object-fit:contain; }
+body.bgfit-stretch .bg-img{ object-fit:fill; }
+body.bgfit-actual  .bg-img{ object-fit:none; }
+/* dim veil: over the image, under the vignette and the HUD */
+.bg-dim{ position:absolute; inset:0; pointer-events:none; display:none;
+         background:#000; opacity:var(--bg-img-dim); }
+body.has-bgimg .bg-dim{ display:block; }
 /* glow lives here as one composited filter per layer instead of canvas
    shadowBlur per stroke — same look, a fraction of the raster cost */
 .terrain, #audio-cv{
@@ -99,6 +141,17 @@ body.no-glow .terrain, body.no-glow #audio-cv{ filter:none; }
   mask-image: radial-gradient(120% 100% at 50% 30%, black 30%, transparent 85%);
   -webkit-mask-image: radial-gradient(120% 100% at 50% 30%, black 30%, transparent 85%);
 }
+/* Over a photo the grid lines read as dirt on the glass, so only the vignette
+   survives. The vignette itself earns its place: darkened corners are what keep
+   the corner panels legible against a bright image. */
+body.has-bgimg .bg-fx{
+  background: radial-gradient(120% 90% at 50% 12%, transparent 40%, rgba(0,0,0,0.55) 100%);
+  opacity:0.5;
+}
+/* The image sits in #bglayers (z-index 1) and the starfield is a single fixed
+   canvas below it at 0. When the scene is deliberately kept over an image, lift
+   the stars above it; the canvas clears to transparent, so nothing is hidden. */
+body.has-bgimg.bg-keep-scene #starfield{ z-index:2; }
 
 /* CRT scanline overlay */
 #scanlines{
@@ -348,6 +401,12 @@ body.economy .win{ backdrop-filter:none; -webkit-backdrop-filter:none; }
 body.economy .terrain{ filter:none; }
 body.economy .bg-fx{ mask-image:none; -webkit-mask-image:none; opacity:0.16; }
 body.economy #scanlines{ mix-blend-mode:normal; }
+/* An image needs its vignette even in economy mode: without it the corner
+   panels lose the only thing separating them from a bright photo. Keep the
+   plain gradient (no mask) rather than fading it to 0.16. */
+/* The image blur needs no rule here: bgBlurVars() raises its downscale divisor
+   on an economy surface, so the render target stays small however wide the span. */
+body.economy.has-bgimg .bg-fx{ opacity:0.5; }
 
 /* hide whole panels when toggled off */
 .hidden{ display:none !important; }
@@ -614,18 +673,21 @@ function applyAccent(rgb){
 }
 function applyBg(rgb){
   const {h,s,l}=rgbToHsl(rgb);
+  // Panel fill opacity is a property now, because a HUD that reads perfectly
+  // over near-black can wash out over a photo. Default 0.55 = the old constant.
+  const pa=clamp(+CFG.panelOpacity, 0.15, 1);
   if(CFG.oledMode){
     // OLED true-black: force pure #000 so background pixels switch fully off.
     // Panels keep a faint hue-tinted tint so the HUD stays legible over black.
     document.documentElement.style.setProperty("--bg",  "#000");
     document.documentElement.style.setProperty("--bg-2","#000");
-    document.documentElement.style.setProperty("--panel", hslStr(h, clamp(s,0,100), clamp(l+2,0,100), 0.5));
+    document.documentElement.style.setProperty("--panel", hslStr(h, clamp(s,0,100), clamp(l+2,0,100), pa));
     PAL.bg = "#000";
     return;
   }
   document.documentElement.style.setProperty("--bg",  hslStr(h, clamp(s,0,100), clamp(l,0,100)));
   document.documentElement.style.setProperty("--bg-2",hslStr(h, clamp(s,0,100), clamp(l+3,0,100)));
-  document.documentElement.style.setProperty("--panel",hslStr(h, clamp(s,0,100), clamp(l+2,0,100), 0.55));
+  document.documentElement.style.setProperty("--panel",hslStr(h, clamp(s,0,100), clamp(l+2,0,100), pa));
   PAL.bg = hslStr(h, clamp(s,0,100), clamp(l,0,100));
 }
 function applyAlert(rgb){
@@ -633,6 +695,96 @@ function applyAlert(rgb){
   document.documentElement.style.setProperty("--alert", hslStr(h,s,l));
   PAL.alert = hslStr(h,s,l);
 }
+
+/* =========================================================================
+   USER BACKGROUND IMAGE
+   Wallpaper Engine's "file" property hands back a path to whatever the user
+   picked. The image goes into every .bglayer, so it inherits the span /
+   per-monitor choice already made for the terrain.
+
+   A path that does not load must never win: a black desktop looks like the
+   wallpaper crashed. On error we drop straight back to the procedural scene.
+   ========================================================================= */
+const BGIMG={ live:false, url:"" };
+const BG_FITS=["cover","contain","stretch","actual"];
+
+/* WE has three shapes it can hand back for a "file" property, so accept all of
+   them: an absolute Windows path, a path relative to the wallpaper folder (when
+   it copies the file in), or something already URL-shaped. The drive-letter test
+   has to come first, because "C:/pics/x.jpg" also looks like a URI scheme. */
+function bgImageUrl(raw){
+  const s=String(raw||"").trim().replace(/\\/g,"/").replace(/"/g,"%22");
+  if(!s) return "";
+  if(/^[A-Za-z]:\//.test(s)) return "file:///"+encodeURI(s);
+  if(/^[a-z][a-z0-9+.\-]*:/i.test(s)) return s;   // file:, http:, data:, blob:, ...
+  return encodeURI(s);
+}
+
+// The blur pass: pick a downscale divisor and an overdraw margin. Both are
+// plain CSS variables so a layer rebuilt later picks them up for free.
+function bgBlurVars(){
+  const root=document.documentElement.style;
+  const blur=clamp(+CFG.bgBlur||0, 0, 60);
+  // Bigger radius -> more detail thrown away -> a coarser copy is enough. The
+  // economy surface (see LARGE-SURFACE ECONOMY) goes one step coarser again.
+  let ds = blur<6 ? 1 : clamp(Math.floor(blur/5), 1, 4);
+  if(document.body.classList.contains("economy")) ds=clamp(ds*2, 1, 8);
+  // Blurring an element fades its edges to transparent, which on a screen-
+  // filling image shows up as a soft frame. Overdraw past the edge instead.
+  const bleed = (blur>0 && (CFG.bgFit==="cover" || CFG.bgFit==="stretch"))
+                ? Math.ceil(blur*2) : 0;
+  root.setProperty("--bg-img-blur",  blur+"px");
+  root.setProperty("--bg-img-ds",    String(blur>0? ds : 1));
+  root.setProperty("--bg-img-bleed", bleed+"px");
+}
+
+// Push the resolved src onto every layer, including ones syncLayers just made.
+function paintBgLayers(){
+  const url=BGIMG.url;
+  document.querySelectorAll(".bg-img").forEach(img=>{
+    const want = url || "";
+    if(img.getAttribute("src")===want) return;
+    if(want) img.setAttribute("src", want); else img.removeAttribute("src");
+  });
+}
+
+function clearBgImage(){
+  BGIMG.live=false; BGIMG.url="";
+  document.body.classList.remove("has-bgimg");
+  paintBgLayers();
+}
+
+function applyBgImage(){
+  const root=document.documentElement.style;
+  root.setProperty("--bg-img-dim", String(clamp(+CFG.bgDim||0, 0, 1)));
+  const fit = BG_FITS.indexOf(CFG.bgFit)>=0 ? CFG.bgFit : "cover";
+  BG_FITS.forEach(f=> document.body.classList.toggle("bgfit-"+f, f===fit));
+  document.body.classList.toggle("bg-keep-scene", !!CFG.bgKeepScene);
+  bgBlurVars();
+
+  const url=bgImageUrl(CFG.bgImage);
+  if(!url){ clearBgImage(); return; }
+  if(url===BGIMG.url && BGIMG.live){ paintBgLayers(); return; }
+
+  // Decode once before showing it, so a bad path never blanks the scene.
+  const probe=new Image();
+  probe.onload=()=>{
+    if(bgImageUrl(CFG.bgImage)!==url) return;   // user moved on while decoding
+    BGIMG.url=url; BGIMG.live=true;
+    document.body.classList.add("has-bgimg");
+    paintBgLayers();
+  };
+  probe.onerror=()=>{
+    if(bgImageUrl(CFG.bgImage)!==url) return;
+    console.warn("CyberOS HUD: background image would not load, keeping the scene:", url);
+    clearBgImage();
+  };
+  probe.src=url;
+}
+
+/* The starfield and the terrain are the procedural scene. An image replaces it
+   unless the user asks to keep both. Their own on/off properties still win. */
+function sceneOn(){ return !(BGIMG.live && !CFG.bgKeepScene); }
 const PAL={ accent:"#00d9e8", bright:"#8cf7ff", dim:"#0096a5", line:"rgba(0,217,232,.32)",
             bg:"#02080c", alert:"#ff5c5c", h:186, s:100, l:45 };
 
@@ -650,6 +802,15 @@ const CFG={
   oledMode:false,            // OLED true-black mode: forces a pure #000000 background
   glow:1.0,
   uiScale:1.0,
+  panelOpacity:0.55,         // panel fill opacity; raise it to read over a photo
+
+  /* ---- user background image ---- */
+  bgImage:"",                // path from the WE "file" property; empty = procedural scene
+  bgFit:"cover",             // cover | contain | stretch | actual
+  bgBlur:0,                  // screen pixels of blur on the image (0 = off)
+  bgDim:0.35,                // black veil over the image, 0..1
+  bgKeepScene:false,         // draw the starfield + terrain over the image too
+
   metricSpeed:1.0,
   realMetrics:true,          // try companion if present
   metricsUrl:"",             // companion address; empty = this PC (127.0.0.1:8377).
@@ -1127,7 +1288,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.6";
+const VERSION = "2.7";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -1299,7 +1460,7 @@ function resizeStars(){
   cv.getContext("2d").setTransform(k,0,0,k,0,0);
 }
 function drawStars(t){
-  if(!CFG.starfield){ STAR.ctx&&STAR.ctx.clearRect(0,0,STAR.w,STAR.h); return; }
+  if(!CFG.starfield || !sceneOn()){ STAR.ctx&&STAR.ctx.clearRect(0,0,STAR.w,STAR.h); return; }
   const ctx=STAR.ctx; ctx.clearRect(0,0,STAR.w,STAR.h);
   // alpha quantized to 1/20 steps so fillStyle strings come from a small cache
   if(!STAR.colors){
@@ -1352,7 +1513,7 @@ function project(T, wx, wy, wz){
 }
 function drawTerrain(dt){
   if(!TERS.length) return;
-  if(!CFG.terrain){ TERS.forEach(T=>T.ctx.clearRect(0,0,T.w,T.h)); return; }
+  if(!CFG.terrain || !sceneOn()){ TERS.forEach(T=>T.ctx.clearRect(0,0,T.w,T.h)); return; }
   TT.t += dt*0.001;
   TT.scroll = (TT.scroll + dt*0.0016) % TT.spacing;
   // audio energy lifts the waves a touch (reacts to music)
@@ -1846,10 +2007,13 @@ function syncLayers(){
   while(bgRoot.children.length < bg.length){
     const d=document.createElement("div");
     d.className="bglayer";
-    d.innerHTML='<div class="bg-fx"></div><canvas class="terrain"></canvas>';
+    d.innerHTML='<div class="bg-img-wrap"><img class="bg-img" alt=""></div>'+
+                '<div class="bg-dim"></div>'+
+                '<div class="bg-fx"></div><canvas class="terrain"></canvas>';
     bgRoot.appendChild(d);
   }
   bg.forEach((r,i)=> boxStyle(bgRoot.children[i], r));
+  paintBgLayers();   // a layer built just now has no src yet
 
   const root=document.documentElement;
   if(LAY.remBase) root.style.setProperty("--rem-base", LAY.remBase.toFixed(3)+"px");
@@ -2035,6 +2199,7 @@ function relayout(){
   const megapixels = (window.innerWidth*window.innerHeight)/1e6;
   document.body.classList.toggle("economy",
     CFG.heavyFx==="drop" || (CFG.heavyFx!=="keep" && megapixels>8));
+  bgBlurVars();   // economy just changed, and it feeds the blur downscale
 
   syncLayers();
   placePanels();
@@ -2240,6 +2405,7 @@ function applyConfig(){
   document.documentElement.style.setProperty("--ui-scale", CFG.uiScale);
   document.documentElement.style.setProperty("--scanline-alpha", CFG.scanlines? 0.05 : 0);
   $("#scanlines").classList.toggle("hidden", !CFG.scanlines);
+  applyBgImage();
 
   // coords (auto or manual) + elevation
   updateCoordsDisplay();
@@ -2272,6 +2438,15 @@ window.wallpaperPropertyListener = {
       if(p.oled_mode)     CFG.oledMode = asBool(p.oled_mode);
       if(p.glow_strength) CFG.glow   = +p.glow_strength.value;
       if(p.ui_scale)      CFG.uiScale= +p.ui_scale.value || 1;
+      if(p.panel_opacity) CFG.panelOpacity = +p.panel_opacity.value;
+
+      // ---- user background image ----
+      // A cleared file property comes back as "", so test for presence, not truth.
+      if(p.bg_image!==undefined) CFG.bgImage = String(p.bg_image.value||"").trim();
+      if(p.bg_fit)               CFG.bgFit   = p.bg_fit.value;
+      if(p.bg_blur!==undefined)  CFG.bgBlur  = +p.bg_blur.value || 0;
+      if(p.bg_dim!==undefined)   CFG.bgDim   = +p.bg_dim.value  || 0;
+      if(p.bg_keep_scene!==undefined) CFG.bgKeepScene = asBool(p.bg_keep_scene);
       if(p.metric_speed)  CFG.metricSpeed = +p.metric_speed.value;
       if(p.real_metrics)  CFG.realMetrics = asBool(p.real_metrics);
       if(p.metrics_url!==undefined) CFG.metricsUrl = String(p.metrics_url.value||"").trim();
