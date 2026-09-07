@@ -1,6 +1,6 @@
 {
 	"contentrating" : "Everyone",
-	"description" : "A retro-futuristic terminal HUD wallpaper with live, audio-reactive metrics: glowing diagnostic gauges, a sparkline system monitor, process list, animated wireframe terrain, clock and weather.\n\nScales cleanly to any resolution and aspect ratio. On ultrawide (21:9) and super-ultrawide (32:9) the HUD stays a centered, cohesive unit while the starfield and terrain fill the full screen behind it.\n\nUse your own picture as the background: point the wallpaper at any image, GIF or video and the HUD sits on top of it. Blur and dim sliders keep the panels readable over busy footage, and you can leave the starfield and terrain running over it if you want both.\n\nRecolor the entire scheme from a single accent swatch. OLED true-black mode included, plus toggles for every panel, scanlines, glow, and more.\n\nMetrics: by default they are physically realistic simulations, so it looks alive on any PC with zero setup. A few values are always real: clock, date, audio spectrum, screen resolution, CPU core count, and RAM. Want your actual CPU, RAM, GPU, disk, network, and process stats? Run the optional companion app (link below). The wallpaper auto-detects it within a second and falls back to simulation if it is not running.\n\nCompanion download and setup: https://github.com/kups14502/cyberos-hud-wallpaper",
+	"description" : "A retro-futuristic terminal HUD wallpaper with live, audio-reactive metrics: glowing diagnostic gauges, a sparkline system monitor, process list, animated wireframe terrain, clock and weather.\n\nScales cleanly to any resolution and aspect ratio. On ultrawide (21:9) and super-ultrawide (32:9) the HUD stays a centered, cohesive unit while the starfield and terrain fill the full screen behind it.\n\nUse your own picture as the background: point the wallpaper at any image, GIF or WebM video and the HUD sits on top of it. Blur and dim sliders keep the panels readable over busy footage, and you can leave the starfield and terrain running over it if you want both.\n\nRecolor the entire scheme from a single accent swatch. OLED true-black mode included, plus toggles for every panel, scanlines, glow, and more.\n\nMetrics: by default they are physically realistic simulations, so it looks alive on any PC with zero setup. A few values are always real: clock, date, audio spectrum, screen resolution, CPU core count, and RAM. Want your actual CPU, RAM, GPU, disk, network, and process stats? Run the optional companion app (link below). The wallpaper auto-detects it within a second and falls back to simulation if it is not running.\n\nCompanion download and setup: https://github.com/kups14502/cyberos-hud-wallpaper",
 	"file" : "index.html",
 	"general" : 
 	{
@@ -109,7 +109,7 @@
 				"fileType" : "video",
 				"index" : 10,
 				"order" : 110,
-				"text" : "Background video (mp4 / webm, overrides the image)",
+				"text" : "Background video: .webm only (overrides the image)",
 				"type" : "file",
 				"value" : ""
 			},
@@ -1313,7 +1313,7 @@
 	"ratingsex" : "none",
 	"ratingviolence" : "none",
 	"tags" : [ "Abstract" ],
-	"title" : "CyberOS  HUD v0.2.8",
+	"title" : "CyberOS  HUD v0.2.9",
 	"type" : "web",
 	"version" : 19,
 	"visibility" : "public",

@@ -396,6 +396,12 @@ body.has-bgmedia.bg-keep-scene #starfield{ z-index:2; }
 #mode-tag{ position:absolute; left:calc(var(--edge) - 0.6%); bottom:1.1%; z-index:46; font-size:0.66rem;
   letter-spacing:0.16em; color:var(--text-dim); opacity:0.55; pointer-events:none; }
 #mode-tag b{ color:var(--accent); }
+/* Second line of the mode tag, used only when the chosen background will not
+   load. A silent fall back to the starfield looks like the wallpaper broke, and
+   both ways to get here (an mp4, or a file outside the wallpaper folder) are
+   things only a message can explain. */
+#bg-warn{ display:none; color:var(--alert); opacity:0.85; }
+#bg-warn.on{ display:block; }
 
 /* ===================== LARGE-SURFACE ECONOMY =====================
    backdrop-filter, mix-blend-mode and mask-image each cost the compositor a
@@ -601,7 +607,8 @@ body.edit .win:hover, body.edit #os-label:hover{ outline:1px dashed var(--accent
   <!-- ============ HUD CHROME ============ -->
   <!-- these two ride along on whichever screen is primary -->
   <div class="bottom-hash"><i></i><i></i><i></i><i></i><i></i></div>
-  <div id="mode-tag">METRICS: <b id="mode-val">INIT</b></div>
+  <div id="mode-tag">METRICS: <b id="mode-val">INIT</b>
+    <span id="bg-warn"></span></div>
 </div><!-- /panel-pool -->
 
 <script>
@@ -713,7 +720,17 @@ function applyAlert(rgb){
    terrain.
 
    A path that does not load must never win: a black desktop looks like the
-   wallpaper crashed. On error we drop straight back to the procedural scene.
+   wallpaper crashed. On error we drop straight back to the procedural scene and
+   say so in the mode tag, because there are two ways to get there that no
+   amount of care in here can prevent, both measured inside Wallpaper Engine:
+
+     * Its browser is built without h264, so an .mp4 will not decode however
+       well formed it is. WebM (vp8/vp9) plays. canPlayType agrees in advance,
+       which is what lets us name the problem instead of just failing.
+     * A web wallpaper may only read files under its own folder. The page is on
+       file://, and an absolute file:/// URL inside the wallpaper directory
+       loads, but the same URL pointing anywhere else on disk does not. Picking
+       a file through the property panel is what puts it somewhere readable.
    ========================================================================= */
 const BGMED={ kind:"", url:"" };       // kind: "" | "img" | "vid"
 const BG_FITS=["cover","contain","stretch","actual"];
@@ -790,6 +807,29 @@ function clearBgMedia(){
   paintBgLayers();
 }
 
+function bgWarn(msg){
+  const el=$("#bg-warn"); if(!el) return;
+  el.textContent = msg ? "  \u00b7  BG: "+msg : "";
+  el.classList.toggle("on", !!msg);
+}
+
+/* Name the failure before trying, where the browser can tell us. An .mp4 is the
+   common case and canPlayType reports it up front, so the user gets "convert it
+   to .webm" rather than a wallpaper that quietly ignored their clip. */
+const VID_EXT=/\.(mp4|m4v|mov|avi|mkv|wmv|flv|webm|ogv)(\?|#|$)/i;
+function videoUnplayable(url){
+  const m=VID_EXT.exec(url);
+  const ext=m? m[1].toLowerCase() : "";
+  const probe=document.createElement("video");
+  const type={ webm:'video/webm; codecs="vp9"', ogv:"video/ogg",
+               mp4:'video/mp4; codecs="avc1.42E01E"', m4v:'video/mp4; codecs="avc1.42E01E"',
+               mov:"video/quicktime", avi:"video/x-msvideo",
+               mkv:"video/x-matroska", wmv:"video/x-ms-wmv", flv:"video/x-flv" }[ext];
+  if(!type) return "";                                  // unknown, let it try
+  if(probe.canPlayType(type)) return "";                // playable
+  return ext.toUpperCase()+" video is not supported here, convert it to .webm";
+}
+
 function applyBgMedia(){
   const root=document.documentElement.style;
   root.setProperty("--bg-img-dim", String(clamp(+CFG.bgDim||0, 0, 1)));
@@ -799,19 +839,32 @@ function applyBgMedia(){
   bgBlurVars();
 
   const want=bgWanted();
-  if(!want.url){ clearBgMedia(); return; }
+  if(!want.url){ bgWarn(""); clearBgMedia(); return; }
   if(want.url===BGMED.url && want.kind===BGMED.kind){ paintBgLayers(); return; }
+
+  if(want.kind==="vid"){
+    const why=videoUnplayable(want.url);
+    if(why){ bgWarn(why); clearBgMedia(); return; }     // no point loading it
+  }
 
   // Load into a throwaway element first, so a bad path never blanks the scene.
   const settle=(ok)=>{
     const now=bgWanted();
     if(now.url!==want.url || now.kind!==want.kind) return;  // moved on already
     if(!ok){
-      console.warn("CyberOS HUD: background "+(want.kind==="vid"?"video":"image")+
+      const what = want.kind==="vid" ? "video" : "image";
+      console.warn("CyberOS HUD: background "+what+
                    " would not load, keeping the scene:", want.url);
+      // The overwhelmingly likely cause is a file outside the wallpaper folder,
+      // which Wallpaper Engine will not let the page read. Say that, rather
+      // than leaving the starfield back with no explanation.
+      bgWarn(/^file:/i.test(want.url) || /^[a-z]+:/i.test(want.url)===false
+             ? what+" could not be read, pick it from the properties panel"
+             : what+" could not be loaded");
       clearBgMedia();
       return;
     }
+    bgWarn("");
     BGMED.kind=want.kind; BGMED.url=want.url;
     document.body.classList.add("has-bgmedia");
     document.body.classList.toggle("has-bgimg", want.kind==="img");
@@ -1343,7 +1396,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.8";
+const VERSION = "2.9";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";

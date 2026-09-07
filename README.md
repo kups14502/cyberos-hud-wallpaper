@@ -50,9 +50,9 @@ process list, system monitor, audio visualizer, time/location.
 metric animation speed.
 
 **Your own background** — point **Background image or GIF** at any picture on
-your PC, or **Background video** at an mp4 or webm, and the HUD draws on top of
-it. Leave both empty for the built-in starfield and terrain. Animated GIFs go in
-the image slot and play on their own. If you set both, the video wins.
+your PC, or **Background video** at a `.webm`, and the HUD draws on top of it.
+Leave both empty for the built-in starfield and terrain. Animated GIFs go in the
+image slot and play on their own. If you set both, the video wins.
 
 - **How it fills the screen** — fill and crop (the default), fit it all in with
   letterboxing, stretch, or actual size centered.
@@ -68,6 +68,27 @@ the image slot and play on their own. If you set both, the video wins.
 Video is always muted. A wallpaper that makes noise is a bad wallpaper, and the
 audio visualizer reads your system output, so a clip with sound would end up
 driving the bars.
+
+Two limits are worth knowing before you pick a file. Both come from Wallpaper
+Engine's browser, not from this wallpaper, and both are measured rather than
+guessed. When either one bites, the starfield stays and a short note appears next
+to the metrics tag in the bottom-left corner, so you are never left wondering.
+
+**Video has to be WebM.** The browser Wallpaper Engine embeds is built without
+h264, so an `.mp4` will not decode no matter how well formed it is. VP8 and VP9
+in a `.webm` container play fine. Converting is quick:
+
+```
+ffmpeg -i clip.mp4 -c:v libvpx-vp9 -crf 32 -b:v 0 -an clip.webm
+```
+
+`-an` drops the audio track, which the wallpaper would mute anyway. Raise `-crf`
+for a smaller file, lower it for better quality.
+
+**Pick the file through the properties panel.** A web wallpaper is only allowed to
+read files inside its own folder, so a path typed by hand that points elsewhere on
+your disk will not load. Using the file picker is what puts the file somewhere the
+wallpaper can reach.
 
 On a multi-monitor span the background follows the same rule as the terrain: one
 copy stretched across the whole span, or one per monitor if **Give each monitor
