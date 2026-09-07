@@ -90,10 +90,11 @@ html,body{
 .bglayer{ position:absolute; overflow:hidden; }
 .terrain{ position:absolute; left:0; bottom:0; width:100%; height:42%; }
 
-/* ---- user background image ----
-   Lives inside .bglayer, so it follows the same span / per-monitor choice the
-   terrain does: one image across the whole span by default, or one per monitor
-   when "give each monitor its own terrain" is on. */
+/* ---- user background media ----
+   A still, an animated GIF, or a video. Lives inside .bglayer, so it follows
+   the same span / per-monitor choice the terrain does: one copy across the
+   whole span by default, or one per monitor when "give each monitor its own
+   terrain" is on. */
 .bg-img-wrap{
   position:absolute; pointer-events:none; display:none;
   /* The blur runs on a downscaled copy that CSS then scales back up. A blur
@@ -101,9 +102,11 @@ html,body{
      result is indistinguishable, and the render surface the compositor has to
      hold is 1/ds^2 the size. That matters for the reason the LARGE-SURFACE
      ECONOMY block below exists: on a big span, full-surface render targets are
-     what evict the wallpaper's GPU context and turn tiles black. A static image
-     with a static filter is rasterized once, not per frame, which is why this
-     one is affordable where backdrop-filter was not. */
+     what evict the wallpaper's GPU context and turn tiles black.
+     A still image with a static filter is rasterized once, so it is cheap. A
+     GIF or a video re-blurs every frame it paints, which is exactly the cost
+     the economy block was written to avoid, so bgBlurVars() never lets a
+     moving source blur at full resolution. */
   left:  calc(-1 * var(--bg-img-bleed));
   top:   calc(-1 * var(--bg-img-bleed));
   width:  calc((100% + 2 * var(--bg-img-bleed)) / var(--bg-img-ds));
@@ -112,16 +115,21 @@ html,body{
   transform-origin: 0 0;
   filter: blur(calc(var(--bg-img-blur) / var(--bg-img-ds)));
 }
-body.has-bgimg .bg-img-wrap{ display:block; }
-.bg-img{ width:100%; height:100%; object-fit:cover; object-position:50% 50%;
-         display:block; }
-body.bgfit-contain .bg-img{ object-fit:contain; }
-body.bgfit-stretch .bg-img{ object-fit:fill; }
-body.bgfit-actual  .bg-img{ object-fit:none; }
-/* dim veil: over the image, under the vignette and the HUD */
+body.has-bgmedia .bg-img-wrap{ display:block; }
+/* One slot, two elements: whichever kind is in use is the one shown. */
+.bg-img, .bg-vid{
+  width:100%; height:100%; object-fit:cover; object-position:50% 50%;
+  display:none;
+}
+body.has-bgimg .bg-img{ display:block; }
+body.has-bgvid .bg-vid{ display:block; }
+body.bgfit-contain .bg-img, body.bgfit-contain .bg-vid{ object-fit:contain; }
+body.bgfit-stretch .bg-img, body.bgfit-stretch .bg-vid{ object-fit:fill; }
+body.bgfit-actual  .bg-img, body.bgfit-actual  .bg-vid{ object-fit:none; }
+/* dim veil: over the media, under the vignette and the HUD */
 .bg-dim{ position:absolute; inset:0; pointer-events:none; display:none;
          background:#000; opacity:var(--bg-img-dim); }
-body.has-bgimg .bg-dim{ display:block; }
+body.has-bgmedia .bg-dim{ display:block; }
 /* glow lives here as one composited filter per layer instead of canvas
    shadowBlur per stroke — same look, a fraction of the raster cost */
 .terrain, #audio-cv{
@@ -144,14 +152,14 @@ body.no-glow .terrain, body.no-glow #audio-cv{ filter:none; }
 /* Over a photo the grid lines read as dirt on the glass, so only the vignette
    survives. The vignette itself earns its place: darkened corners are what keep
    the corner panels legible against a bright image. */
-body.has-bgimg .bg-fx{
+body.has-bgmedia .bg-fx{
   background: radial-gradient(120% 90% at 50% 12%, transparent 40%, rgba(0,0,0,0.55) 100%);
   opacity:0.5;
 }
 /* The image sits in #bglayers (z-index 1) and the starfield is a single fixed
    canvas below it at 0. When the scene is deliberately kept over an image, lift
    the stars above it; the canvas clears to transparent, so nothing is hidden. */
-body.has-bgimg.bg-keep-scene #starfield{ z-index:2; }
+body.has-bgmedia.bg-keep-scene #starfield{ z-index:2; }
 
 /* CRT scanline overlay */
 #scanlines{
@@ -406,7 +414,7 @@ body.economy #scanlines{ mix-blend-mode:normal; }
    plain gradient (no mask) rather than fading it to 0.16. */
 /* The image blur needs no rule here: bgBlurVars() raises its downscale divisor
    on an economy surface, so the render target stays small however wide the span. */
-body.economy.has-bgimg .bg-fx{ opacity:0.5; }
+body.economy.has-bgmedia .bg-fx{ opacity:0.5; }
 
 /* hide whole panels when toggled off */
 .hidden{ display:none !important; }
@@ -697,22 +705,34 @@ function applyAlert(rgb){
 }
 
 /* =========================================================================
-   USER BACKGROUND IMAGE
+   USER BACKGROUND MEDIA
    Wallpaper Engine's "file" property hands back a path to whatever the user
-   picked. The image goes into every .bglayer, so it inherits the span /
-   per-monitor choice already made for the terrain.
+   picked. Two of them: a still (any format the browser decodes, so an animated
+   GIF or APNG plays on its own) and a video. The media goes into every
+   .bglayer, so it inherits the span / per-monitor choice already made for the
+   terrain.
 
    A path that does not load must never win: a black desktop looks like the
    wallpaper crashed. On error we drop straight back to the procedural scene.
    ========================================================================= */
-const BGIMG={ live:false, url:"" };
+const BGMED={ kind:"", url:"" };       // kind: "" | "img" | "vid"
 const BG_FITS=["cover","contain","stretch","actual"];
+// Video wins when both are set, because it is the more deliberate choice: you
+// do not pick a clip by accident, and leaving a still behind would look like
+// the video failed.
+function bgWanted(){
+  const v=bgMediaUrl(CFG.bgVideo);
+  if(v) return {kind:"vid", url:v};
+  const i=bgMediaUrl(CFG.bgImage);
+  if(i) return {kind:"img", url:i};
+  return {kind:"", url:""};
+}
 
 /* WE has three shapes it can hand back for a "file" property, so accept all of
    them: an absolute Windows path, a path relative to the wallpaper folder (when
    it copies the file in), or something already URL-shaped. The drive-letter test
    has to come first, because "C:/pics/x.jpg" also looks like a URI scheme. */
-function bgImageUrl(raw){
+function bgMediaUrl(raw){
   const s=String(raw||"").trim().replace(/\\/g,"/").replace(/"/g,"%22");
   if(!s) return "";
   if(/^[A-Za-z]:\//.test(s)) return "file:///"+encodeURI(s);
@@ -728,6 +748,10 @@ function bgBlurVars(){
   // Bigger radius -> more detail thrown away -> a coarser copy is enough. The
   // economy surface (see LARGE-SURFACE ECONOMY) goes one step coarser again.
   let ds = blur<6 ? 1 : clamp(Math.floor(blur/5), 1, 4);
+  // A still blurs once. A video (or a GIF) repaints, so the compositor redoes
+  // the blur on every frame at the wrapper's size: never give a moving source
+  // a full-resolution blur surface, however small the radius.
+  if(blur>0 && BGMED.kind==="vid") ds=Math.max(ds, 3);
   if(document.body.classList.contains("economy")) ds=clamp(ds*2, 1, 8);
   // Blurring an element fades its edges to transparent, which on a screen-
   // filling image shows up as a soft frame. Overdraw past the edge instead.
@@ -740,21 +764,33 @@ function bgBlurVars(){
 
 // Push the resolved src onto every layer, including ones syncLayers just made.
 function paintBgLayers(){
-  const url=BGIMG.url;
-  document.querySelectorAll(".bg-img").forEach(img=>{
-    const want = url || "";
-    if(img.getAttribute("src")===want) return;
-    if(want) img.setAttribute("src", want); else img.removeAttribute("src");
+  const wantImg = BGMED.kind==="img" ? BGMED.url : "";
+  const wantVid = BGMED.kind==="vid" ? BGMED.url : "";
+  document.querySelectorAll(".bg-img").forEach(el=>{
+    if(el.getAttribute("src")===wantImg) return;
+    if(wantImg) el.setAttribute("src", wantImg); else el.removeAttribute("src");
+  });
+  document.querySelectorAll(".bg-vid").forEach(el=>{
+    if(el.getAttribute("src")!==wantVid){
+      if(wantVid){ el.setAttribute("src", wantVid); }
+      // Dropping the src is not enough to free the decoder; load() is.
+      else { el.removeAttribute("src"); try{ el.load(); }catch(e){} }
+    }
+    if(!wantVid) return;
+    // Autoplay only survives on a muted element, and WE suspends the page when
+    // a game takes over, which pauses playback and leaves it paused on return.
+    el.muted=true;
+    if(el.paused) el.play().catch(()=>{});
   });
 }
 
-function clearBgImage(){
-  BGIMG.live=false; BGIMG.url="";
-  document.body.classList.remove("has-bgimg");
+function clearBgMedia(){
+  BGMED.kind=""; BGMED.url="";
+  document.body.classList.remove("has-bgmedia","has-bgimg","has-bgvid");
   paintBgLayers();
 }
 
-function applyBgImage(){
+function applyBgMedia(){
   const root=document.documentElement.style;
   root.setProperty("--bg-img-dim", String(clamp(+CFG.bgDim||0, 0, 1)));
   const fit = BG_FITS.indexOf(CFG.bgFit)>=0 ? CFG.bgFit : "cover";
@@ -762,29 +798,47 @@ function applyBgImage(){
   document.body.classList.toggle("bg-keep-scene", !!CFG.bgKeepScene);
   bgBlurVars();
 
-  const url=bgImageUrl(CFG.bgImage);
-  if(!url){ clearBgImage(); return; }
-  if(url===BGIMG.url && BGIMG.live){ paintBgLayers(); return; }
+  const want=bgWanted();
+  if(!want.url){ clearBgMedia(); return; }
+  if(want.url===BGMED.url && want.kind===BGMED.kind){ paintBgLayers(); return; }
 
-  // Decode once before showing it, so a bad path never blanks the scene.
-  const probe=new Image();
-  probe.onload=()=>{
-    if(bgImageUrl(CFG.bgImage)!==url) return;   // user moved on while decoding
-    BGIMG.url=url; BGIMG.live=true;
-    document.body.classList.add("has-bgimg");
+  // Load into a throwaway element first, so a bad path never blanks the scene.
+  const settle=(ok)=>{
+    const now=bgWanted();
+    if(now.url!==want.url || now.kind!==want.kind) return;  // moved on already
+    if(!ok){
+      console.warn("CyberOS HUD: background "+(want.kind==="vid"?"video":"image")+
+                   " would not load, keeping the scene:", want.url);
+      clearBgMedia();
+      return;
+    }
+    BGMED.kind=want.kind; BGMED.url=want.url;
+    document.body.classList.add("has-bgmedia");
+    document.body.classList.toggle("has-bgimg", want.kind==="img");
+    document.body.classList.toggle("has-bgvid", want.kind==="vid");
+    bgBlurVars();          // a video floors the blur downscale, so redo it
     paintBgLayers();
   };
-  probe.onerror=()=>{
-    if(bgImageUrl(CFG.bgImage)!==url) return;
-    console.warn("CyberOS HUD: background image would not load, keeping the scene:", url);
-    clearBgImage();
-  };
-  probe.src=url;
+
+  if(want.kind==="vid"){
+    const probe=document.createElement("video");
+    probe.muted=true; probe.preload="metadata";
+    // loadedmetadata is as far as we need: it proves the container decodes.
+    probe.onloadedmetadata=()=>settle(true);
+    probe.onerror=()=>settle(false);
+    probe.src=want.url;
+  }else{
+    const probe=new Image();
+    probe.onload=()=>settle(true);
+    probe.onerror=()=>settle(false);
+    probe.src=want.url;
+  }
 }
 
-/* The starfield and the terrain are the procedural scene. An image replaces it
-   unless the user asks to keep both. Their own on/off properties still win. */
-function sceneOn(){ return !(BGIMG.live && !CFG.bgKeepScene); }
+/* The starfield and the terrain are the procedural scene. A background image or
+   video replaces it unless the user asks to keep both. Their own on/off
+   properties still win. */
+function sceneOn(){ return !(BGMED.kind && !CFG.bgKeepScene); }
 const PAL={ accent:"#00d9e8", bright:"#8cf7ff", dim:"#0096a5", line:"rgba(0,217,232,.32)",
             bg:"#02080c", alert:"#ff5c5c", h:186, s:100, l:45 };
 
@@ -805,7 +859,8 @@ const CFG={
   panelOpacity:0.55,         // panel fill opacity; raise it to read over a photo
 
   /* ---- user background image ---- */
-  bgImage:"",                // path from the WE "file" property; empty = procedural scene
+  bgImage:"",                // still from the WE "file" property; empty = procedural scene
+  bgVideo:"",                // video from the WE "file" property; wins over bgImage
   bgFit:"cover",             // cover | contain | stretch | actual
   bgBlur:0,                  // screen pixels of blur on the image (0 = off)
   bgDim:0.35,                // black veil over the image, 0..1
@@ -1288,7 +1343,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.7";
+const VERSION = "2.8";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -2007,7 +2062,8 @@ function syncLayers(){
   while(bgRoot.children.length < bg.length){
     const d=document.createElement("div");
     d.className="bglayer";
-    d.innerHTML='<div class="bg-img-wrap"><img class="bg-img" alt=""></div>'+
+    d.innerHTML='<div class="bg-img-wrap"><img class="bg-img" alt="">'+
+                '<video class="bg-vid" muted loop playsinline autoplay></video></div>'+
                 '<div class="bg-dim"></div>'+
                 '<div class="bg-fx"></div><canvas class="terrain"></canvas>';
     bgRoot.appendChild(d);
@@ -2405,7 +2461,7 @@ function applyConfig(){
   document.documentElement.style.setProperty("--ui-scale", CFG.uiScale);
   document.documentElement.style.setProperty("--scanline-alpha", CFG.scanlines? 0.05 : 0);
   $("#scanlines").classList.toggle("hidden", !CFG.scanlines);
-  applyBgImage();
+  applyBgMedia();
 
   // coords (auto or manual) + elevation
   updateCoordsDisplay();
@@ -2440,9 +2496,10 @@ window.wallpaperPropertyListener = {
       if(p.ui_scale)      CFG.uiScale= +p.ui_scale.value || 1;
       if(p.panel_opacity) CFG.panelOpacity = +p.panel_opacity.value;
 
-      // ---- user background image ----
+      // ---- user background media ----
       // A cleared file property comes back as "", so test for presence, not truth.
       if(p.bg_image!==undefined) CFG.bgImage = String(p.bg_image.value||"").trim();
+      if(p.bg_video!==undefined) CFG.bgVideo = String(p.bg_video.value||"").trim();
       if(p.bg_fit)               CFG.bgFit   = p.bg_fit.value;
       if(p.bg_blur!==undefined)  CFG.bgBlur  = +p.bg_blur.value || 0;
       if(p.bg_dim!==undefined)   CFG.bgDim   = +p.bg_dim.value  || 0;

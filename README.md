@@ -49,26 +49,33 @@ process list, system monitor, audio visualizer, time/location.
 **Scene** — starfield on/off, wireframe terrain on/off, audio reactivity on/off,
 metric animation speed.
 
-**Your own background** — point **Background image** at any picture on your PC
-and the HUD draws on top of it. Leave it empty for the built-in starfield and
-terrain.
+**Your own background** — point **Background image or GIF** at any picture on
+your PC, or **Background video** at an mp4 or webm, and the HUD draws on top of
+it. Leave both empty for the built-in starfield and terrain. Animated GIFs go in
+the image slot and play on their own. If you set both, the video wins.
 
-- **How the image fills the screen** — fill and crop (the default), fit the whole
-  image with letterboxing, stretch, or actual size centered.
-- **Blur the image** — 0 to 60 px. Anything past about 15 px turns a busy photo
-  into a soft wash the panels sit on cleanly.
-- **Dim the image** — a black veil from 0 to 95%. Defaults to 35%, which is
+- **How it fills the screen** — fill and crop (the default), fit it all in with
+  letterboxing, stretch, or actual size centered.
+- **Blur the background** — 0 to 60 px. Anything past about 15 px turns busy
+  footage into a soft wash the panels sit on cleanly.
+- **Dim the background** — a black veil from 0 to 95%. Defaults to 35%, which is
   enough for most photos.
 - **Panel opacity** — how solid the panel backgrounds are. Raise it toward 1.0
   if the HUD still competes with a bright image.
-- **Keep starfield / terrain over the image** — off by default, since the image
-  is normally there *instead* of the scene. Turn it on to get both.
+- **Keep starfield / terrain on top** — off by default, since your background is
+  normally there *instead* of the scene. Turn it on to get both.
 
-On a multi-monitor span the image follows the same rule as the terrain: one copy
-stretched across the whole span, or one per monitor if
-**Give each monitor its own terrain** is on. A path that will not load is
-ignored and the procedural scene stays, so a moved or deleted file never leaves
-you with a black desktop.
+Video is always muted. A wallpaper that makes noise is a bad wallpaper, and the
+audio visualizer reads your system output, so a clip with sound would end up
+driving the bars.
+
+On a multi-monitor span the background follows the same rule as the terrain: one
+copy stretched across the whole span, or one per monitor if **Give each monitor
+its own terrain** is on. Note that per-monitor plus a video means one decoder per
+monitor, so leave it off unless you want each screen framed separately.
+
+A path that will not load is ignored and the procedural scene stays, so a moved
+or deleted file never leaves you with a black desktop.
 
 **Identity / readout text** — username & host (`root@unit`), OS name, host name,
 uptime base (days), 24h vs 12h clock, show/hide seconds, and the
@@ -245,10 +252,11 @@ a JSON blob. (Simpler alternative: a shortcut to the same `pythonw` + script in
   remain as automatic fallbacks if NVML / WMI aren't available.)
 - **Resolution** scales automatically. The root font-size tracks the viewport so the
   HUD stays proportional from 720p up through 4K and ultrawide.
-- **Background image blur** runs on a downscaled copy of the image that CSS then
-  scales back up, so the render surface it costs stays small no matter how wide
-  your span is. The blur is baked once by the compositor rather than redone per
-  frame, so the radius you pick has no effect on frame rate.
+- **Background blur** runs on a downscaled copy that CSS then scales back up, so
+  the render surface it costs stays small no matter how wide your span is. For a
+  still image the blur is rasterized once, so the radius you pick has no effect
+  on frame rate. Video repaints, so its blur is redone per frame; the downscale
+  is floored higher for video to keep that cost bounded.
 
 ---
 
