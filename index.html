@@ -727,10 +727,11 @@ function applyAlert(rgb){
      * Its browser is built without h264, so an .mp4 will not decode however
        well formed it is. WebM (vp8/vp9) plays. canPlayType agrees in advance,
        which is what lets us name the problem instead of just failing.
-     * A web wallpaper may only read files under its own folder. The page is on
-       file://, and an absolute file:/// URL inside the wallpaper directory
-       loads, but the same URL pointing anywhere else on disk does not. Picking
-       a file through the property panel is what puts it somewhere readable.
+     * A web wallpaper may only read files under its own folder, plus the exact
+       file picked for each "file" property. A path typed by hand that points
+       anywhere else is denied (weblog.txt says "not inside project
+       directory"), and so is a picked file after it is moved or deleted.
+       bgMediaUrl() explains what the URL of a picked file must look like.
    ========================================================================= */
 const BGMED={ kind:"", url:"" };       // kind: "" | "img" | "vid"
 const BG_FITS=["cover","contain","stretch","actual"];
@@ -745,16 +746,23 @@ function bgWanted(){
   return {kind:"", url:""};
 }
 
-/* WE has three shapes it can hand back for a "file" property, so accept all of
-   them: an absolute Windows path, a path relative to the wallpaper folder (when
-   it copies the file in), or something already URL-shaped. The drive-letter test
-   has to come first, because "C:/pics/x.jpg" also looks like a URI scheme. */
+/* WE does not hand a "file" property back as a plain path. webwallpaper64.exe
+   runs the value through cef_uriencode and then cef_uridecode with only the path
+   separators restored, so a pick of C:\Users\Me\My Pics\a.jpg reaches the page
+   as "C%3A/Users/Me/My%20Pics/a.jpg". Its request filter then allows exactly
+   that one file, by comparing the decoded request path with what was picked.
+   So the URL must be the documented 'file:///' + value with nothing re-encoded:
+   encoding it again turns %3A into %253A, the drive letter stops looking like
+   one, and the request lands inside the wallpaper folder as a file that does
+   not exist. A plain path (typed by hand, or a relative one inside the
+   wallpaper folder) works the same way, because the URL parser escapes spaces
+   on its own. The drive test comes first, since "C:/x.jpg" also looks like a
+   URI scheme. */
 function bgMediaUrl(raw){
-  const s=String(raw||"").trim().replace(/\\/g,"/").replace(/"/g,"%22");
+  const s=String(raw||"").trim().replace(/\\/g,"/");
   if(!s) return "";
-  if(/^[A-Za-z]:\//.test(s)) return "file:///"+encodeURI(s);
-  if(/^[a-z][a-z0-9+.\-]*:/i.test(s)) return s;   // file:, http:, data:, blob:, ...
-  return encodeURI(s);
+  if(/^[A-Za-z](:|%3A)\//i.test(s)) return "file:///"+s;
+  return s;          // file:, http:, data:, blob:, or relative to the wallpaper folder
 }
 
 // The blur pass: pick a downscale divisor and an overdraw margin. Both are
@@ -855,11 +863,12 @@ function applyBgMedia(){
       const what = want.kind==="vid" ? "video" : "image";
       console.warn("CyberOS HUD: background "+what+
                    " would not load, keeping the scene:", want.url);
-      // The overwhelmingly likely cause is a file outside the wallpaper folder,
-      // which Wallpaper Engine will not let the page read. Say that, rather
-      // than leaving the starfield back with no explanation.
+      // A local file that will not load has usually been moved or deleted
+      // since it was picked, or was typed in by hand, and Wallpaper Engine only
+      // lets the page read the file it picked. Say that, rather than leaving
+      // the starfield back with no explanation.
       bgWarn(/^file:/i.test(want.url) || /^[a-z]+:/i.test(want.url)===false
-             ? what+" could not be read, pick it from the properties panel"
+             ? what+" could not be read, pick it again from the properties panel"
              : what+" could not be loaded");
       clearBgMedia();
       return;
@@ -1396,7 +1405,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.9";
+const VERSION = "2.10";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -2323,14 +2332,24 @@ function relayout(){
    mouse input at all, so desktop clicks are never intercepted.
    ========================================================================= */
 /* el = the panel whose placement is being changed; mel = whatever we measure the
-   grab against, which differs only when el itself is not rendered. */
-const DRAG={on:false,id:null,el:null,mel:null,col:null,si:0,gfx:0.5,gfy:0.2,moved:false};
+   grab against, which differs only when el itself is not rendered.
+
+   Wallpaper Engine forwards the mouse from its own input hook, not the way a
+   browser does, so nothing here relies on MouseEvent.buttons: a forwarded move
+   is not guaranteed to report the held button, and a buttons===0 check then
+   ends every drag on its first move. Press state comes from our own
+   mousedown/mouseup instead, and a press that ends without moving picks the
+   panel up (carry) until the next click puts it down. That second path also
+   covers an input that delivers mousedown and mouseup together on release. */
+const DRAG={on:false,id:null,el:null,mel:null,col:null,si:0,gfx:0.5,gfy:0.2,moved:false,
+            carry:false,x0:0,y0:0};
+const DRAG_SLOP=4;   // px of travel before a press counts as a drag, not a click
 const ZX={l:"7%",c:"50%",r:"93%"}, ZY={t:"8%",m:"50%",b:"92%"};
 /* Abandon a drag without committing it; the next placePanels() puts the panel
    back wherever its saved placement says. */
 function cancelDrag(){
   if(DRAG.el) DRAG.el.classList.remove("dragging");
-  DRAG.on=false; DRAG.col=null; DRAG.mel=null; DRAG.moved=false;
+  DRAG.on=false; DRAG.carry=false; DRAG.col=null; DRAG.mel=null; DRAG.moved=false;
   LAY.placeSig="";
 }
 
@@ -2367,7 +2386,7 @@ function updateEditMode(){
     '<span class="le-btn'+(LAY.snap?" on":"")+'" data-act="snap">SNAP '+(LAY.snap?"ON":"OFF")+'</span>'+
     '<span class="le-btn" data-act="dock">DOCK ALL</span>'+
     '<span class="le-btn" data-act="reset">RESET</span>'+
-    '<span class="hint">drag any panel · monitors: '+LAY.mons.length+' ('+LAY.monSrc+') · '+
+    '<span class="hint">drag a panel, or click it and click again to drop · monitors: '+LAY.mons.length+' ('+LAY.monSrc+') · '+
     (LAY.spanned?"spanned":"single screen")+'</span>';
   s.el.appendChild(bar);
 }
@@ -2415,6 +2434,11 @@ function editAction(act){
 }
 function onDragDown(e){
   if(!CFG.editLayout || e.button!==0 || !e.target || !e.target.closest) return;
+  // A carried panel goes down wherever this click lands, whatever is under it.
+  // So does one whose mouseup we never saw (released off the edge of the
+  // desktop, or over a window that swallowed it): until this click it simply
+  // kept following the cursor.
+  if(DRAG.on){ e.preventDefault(); dropDrag(); return; }
   const btn=e.target.closest(".le-btn");
   if(btn){ editAction(btn.dataset.act); e.preventDefault(); return; }
   const host=e.target.closest(".win, #os-label");
@@ -2428,7 +2452,8 @@ function onDragDown(e){
   // position back into itself — the panel accelerates away from the cursor.
   let mel=el, r=el.getBoundingClientRect();
   if(!r.width && !r.height){ mel=host; r=host.getBoundingClientRect(); }
-  DRAG.on=true; DRAG.id=id; DRAG.el=el; DRAG.mel=mel; DRAG.col=null; DRAG.moved=false;
+  DRAG.on=true; DRAG.carry=false; DRAG.id=id; DRAG.el=el; DRAG.mel=mel; DRAG.col=null;
+  DRAG.moved=false; DRAG.x0=e.clientX; DRAG.y0=e.clientY;
   DRAG.gfx = r.width  ? (e.clientX-r.left)/r.width  : 0.5;
   DRAG.gfy = r.height ? (e.clientY-r.top )/r.height : 0.2;
   DRAG.si  = screenAtPoint(e.clientX, e.clientY);
@@ -2437,12 +2462,8 @@ function onDragDown(e){
 }
 function onDragMove(e){
   if(!DRAG.on) return;
-  // If the button was released somewhere we never saw the mouseup — off the edge
-  // of the desktop, or over a window that swallowed it — the next move arrives
-  // with no buttons held. Treat that as the drop rather than sticking the panel
-  // to the cursor for ever.
-  if(e.buttons===0){ onDragUp(); return; }
   if(!DRAG.moved){
+    if(Math.abs(e.clientX-DRAG.x0)+Math.abs(e.clientY-DRAG.y0) < DRAG_SLOP) return;
     DRAG.moved=true;
     DRAG.col=document.createElement("div");
     DRAG.col.className="col free";
@@ -2468,10 +2489,15 @@ function onDragMove(e){
   e.preventDefault();
 }
 function onDragUp(){
-  if(!DRAG.on) return;
-  DRAG.on=false; DRAG.mel=null;
+  if(!DRAG.on || DRAG.carry) return;
+  // A click, not a drag: keep hold of the panel and let the next click drop it.
+  if(!DRAG.moved){ DRAG.carry=true; return; }
+  dropDrag();
+}
+function dropDrag(){
+  DRAG.on=false; DRAG.carry=false; DRAG.mel=null;
   if(DRAG.el) DRAG.el.classList.remove("dragging");
-  if(!DRAG.moved){ DRAG.col=null; return; }        // a click, not a drag
+  if(!DRAG.moved){ DRAG.col=null; return; }        // picked up, put back untouched
   const s=LAY.screens[DRAG.si], id=DRAG.id;
   const cr=DRAG.col.getBoundingClientRect();
   if(LAY.snap){

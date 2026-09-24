@@ -85,10 +85,10 @@ ffmpeg -i clip.mp4 -c:v libvpx-vp9 -crf 32 -b:v 0 -an clip.webm
 `-an` drops the audio track, which the wallpaper would mute anyway. Raise `-crf`
 for a smaller file, lower it for better quality.
 
-**Pick the file through the properties panel.** A web wallpaper is only allowed to
-read files inside its own folder, so a path typed by hand that points elsewhere on
-your disk will not load. Using the file picker is what puts the file somewhere the
-wallpaper can reach.
+**Pick the file through the properties panel.** Wallpaper Engine lets a web
+wallpaper read files inside its own folder plus the exact file you picked, and
+nothing else. A path typed by hand that points elsewhere on your disk will not
+load, and neither will a picked file you later move or rename: just pick it again.
 
 On a multi-monitor span the background follows the same rule as the terrain: one
 copy stretched across the whole span, or one per monitor if **Give each monitor
