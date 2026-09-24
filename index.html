@@ -424,6 +424,13 @@ body.economy.has-bgmedia .bg-fx{ opacity:0.5; }
 
 /* hide whole panels when toggled off */
 .hidden{ display:none !important; }
+
+/* GAME MODE: the scene holds still and the visualizer goes, the stats stay.
+   Transitions go too: a gauge easing to each 1 Hz reading would keep the
+   compositor producing frames for half of every second. */
+body.game #audio{ display:none !important; }
+body.game *{ transition:none !important; }
+.bg-img.frozen{ display:none !important; }
 /* panels wait in here until the layout engine deals them onto a screen */
 #panel-pool{ display:none; }
 
@@ -794,10 +801,11 @@ function bgBlurVars(){
 function paintBgLayers(){
   const wantImg = BGMED.kind==="img" ? BGMED.url : "";
   const wantVid = BGMED.kind==="vid" ? BGMED.url : "";
-  document.querySelectorAll(".bg-img").forEach(el=>{
+  document.querySelectorAll(".bg-img:not(.bg-still)").forEach(el=>{
     if(el.getAttribute("src")===wantImg) return;
     if(wantImg) el.setAttribute("src", wantImg); else el.removeAttribute("src");
   });
+  freezeBgStills();
   document.querySelectorAll(".bg-vid").forEach(el=>{
     if(el.getAttribute("src")!==wantVid){
       if(wantVid){ el.setAttribute("src", wantVid); }
@@ -808,7 +816,8 @@ function paintBgLayers(){
     // Autoplay only survives on a muted element, and WE suspends the page when
     // a game takes over, which pauses playback and leaves it paused on return.
     el.muted=true;
-    if(el.paused) el.play().catch(()=>{});
+    if(GAME.on) el.pause();
+    else if(el.paused) el.play().catch(()=>{});
   });
 }
 
@@ -963,6 +972,7 @@ const CFG={
      v0.2.5 did) and let per-monitor horizons be opt-in. */
   bgPerMonitor:false,        // terrain + vignette per monitor, or one across the span
   heavyFx:"auto",            // panel blur / blend / mask on big surfaces: auto | keep | drop
+  gameMode:"auto",           // still scene, live stats: auto (fullscreen app, via companion) | on | off
   editLayout:false,          // drag-to-place mode
   layoutReset:false,         // toggle on to forget dragged positions
   // per-panel placement: {mon:"auto"|"1".."8", pos:"auto"|"tl".."br"}
@@ -1034,6 +1044,70 @@ function simulate(dt){
   M.source="SIM";
 }
 
+/* ----- GAME MODE: a still scene with live stats while a fullscreen app runs -----
+   Wallpaper Engine's own answer to a fullscreen game is to pause the wallpaper,
+   and a paused wallpaper freezes the stats along with everything else. With WE
+   set to keep running instead, the local companion reports whether the
+   foreground window fills its monitor, and the wallpaper calms itself down: the
+   animation loop stops, so the starfield and terrain hold their last frame, the
+   visualizer is hidden, a video or animated background pauses, and the stats
+   move to a once-a-second timer. A timer, not requestAnimationFrame, because a
+   page that stops asking for frames stops costing the GPU anything between
+   readings.
+   Entering waits for two readings in a row and leaving for three, so a loading
+   screen or an Alt+Tab does not flip the whole HUD back and forth. */
+const GAME={ on:false, fs:false, hit:0, miss:0, timer:0 };
+function gameSeen(fullscreen){
+  if(fullscreen){ GAME.miss=0; if(++GAME.hit>=2) GAME.fs=true; }
+  else          { GAME.hit=0;  if(++GAME.miss>=3) GAME.fs=false; }
+  syncGameMode();
+}
+function syncGameMode(){
+  setGameMode(CFG.gameMode==="on" || (CFG.gameMode==="auto" && GAME.fs));
+}
+function setGameMode(on){
+  if(on===GAME.on || !domReady) return;
+  GAME.on=on;
+  document.body.classList.toggle("game", on);
+  if(on){
+    GAME.timer=setInterval(gameTick, 1000);   // loop() sees GAME.on and stops itself
+  }else{
+    clearInterval(GAME.timer); GAME.timer=0;
+    startLoop();
+  }
+  paintBgLayers();     // pauses or resumes a video background, freezes a GIF
+  relayout();          // game mode implies the large-surface economy
+  setModeTag(realOK ? "REAL · "+metricsEndpoint().host : simTag());
+}
+/* Stars and terrain are only ever drawn by the loop, so after a canvas rebuild
+   in game mode (a resize, a lost GPU context) they need one frame by hand, or
+   they would stay blank until the game closes. */
+function gameStill(){
+  drawStars(performance.now());
+  drawTerrain(0);
+}
+/* An <img> cannot be paused. Draw its current frame onto a canvas in the same
+   slot and hide the image; the canvas takes the same .bg-img sizing rules,
+   object-fit included. Reading pixels back from a file:// image would throw,
+   drawing it does not. */
+const ANIM_IMG=/\.(gif|webp|apng)(\?|#|$)/i;
+function freezeBgStills(){
+  document.querySelectorAll(".bg-still").forEach(c=>c.remove());
+  document.querySelectorAll(".bg-img.frozen").forEach(i=>i.classList.remove("frozen"));
+  if(!GAME.on || BGMED.kind!=="img" || !ANIM_IMG.test(BGMED.url)) return;
+  document.querySelectorAll(".bg-img:not(.bg-still)").forEach(img=>{
+    const still=()=>{
+      if(!GAME.on || !img.naturalWidth || img.classList.contains("frozen")) return;
+      const cv=document.createElement("canvas");
+      cv.className="bg-img bg-still";
+      cv.width=img.naturalWidth; cv.height=img.naturalHeight;
+      cv.getContext("2d").drawImage(img,0,0);
+      img.after(cv); img.classList.add("frozen");
+    };
+    if(img.complete) still(); else img.addEventListener("load", still, {once:true});
+  });
+}
+
 /* ----- optional REAL metrics via the companion (local or a remote machine) ----- */
 let realOK=false, realPending=false;
 /* Resolve the companion endpoint from the "Remote metrics host" property.
@@ -1067,7 +1141,10 @@ function metricsUrlWithAudio(ep){
   if(ep.remote) return ep.url;
   try{
     const u=new URL(ep.url);
-    u.searchParams.set("aud", CFG.audio ? (AUD.live?"1":"0") : "x");
+    // Game mode hides the visualizer, so there is nothing to diagnose either,
+    // and a watchdog restart of WE in the middle of a game is the last thing
+    // anyone wants.
+    u.searchParams.set("aud", (CFG.audio && !GAME.on) ? (AUD.live?"1":"0") : "x");
     u.searchParams.set("audsum", (AUD.lastSum||0).toFixed(5));
     // Piggyback the resolved layout too. On a spanned desktop this is the only
     // way to see which layout the wallpaper actually settled on without
@@ -1093,7 +1170,11 @@ function dropReal(){
   setModeTag(simTag());
 }
 async function pollReal(){
-  if(!CFG.realMetrics){ if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag()); return; }
+  if(!CFG.realMetrics){
+    gameSeen(false);
+    if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag());
+    return;
+  }
   if(realPending) return;                    // never stack requests if one hangs
   realPending=true;
   const ep=metricsEndpoint();
@@ -1170,9 +1251,12 @@ async function pollReal(){
       }
       if(domReady){ renderDrives(); renderTailnet(); }
       M.source="REAL"; realOK=true;
+      // a remote companion's foreground window is on another machine
+      gameSeen(!ep.remote && d.fullscreen===true);
       setModeTag("REAL · "+ep.host);
     }
   }catch(e){
+    gameSeen(false);
     if(realOK || M.source==="REAL") dropReal(); else setModeTag(simTag());
   }finally{ clearTimeout(tmr); realPending=false; }
 }
@@ -1185,7 +1269,7 @@ function layoutTag(){
 }
 function setModeTag(t){
   const b=$("#mode-val"); if(!b) return;
-  b.textContent = t + layoutTag();
+  b.textContent = t + layoutTag() + (GAME.on ? " · GAME MODE" : "");
 }
 
 /* tick: choose real (if available) else simulate */
@@ -1408,7 +1492,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "2.10";
+const VERSION = "2.11";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -2296,6 +2380,7 @@ function guardCanvases(){
         if(!LAY_BUILT) return;
         starInit(); terrainInitAll(); audioSetup();
         ["#sp-cpu","#sp-gpu","#sp-net"].forEach(s=>{ const c=$(s); if(c) c._ctx=null; });
+        if(GAME.on) gameStill();
       }, 120);                       // one rebuild even if several canvases return at once
     }, false);
   });
@@ -2316,6 +2401,7 @@ function scheduleCanvasRebuild(){
     starInit(); terrainInitAll(); audioSetup();
     ["#sp-cpu","#sp-gpu","#sp-net"].forEach(s=>{ const c=$(s); if(c) c._ctx=null; });
     guardCanvases();
+    if(GAME.on) gameStill();
   }, 220);
 }
 
@@ -2339,7 +2425,7 @@ function relayout(){
   // the mask and the multiply blend still live.
   const megapixels = (window.innerWidth*window.innerHeight)/1e6;
   document.body.classList.toggle("economy",
-    CFG.heavyFx==="drop" || (CFG.heavyFx!=="keep" && megapixels>8));
+    CFG.heavyFx==="drop" || GAME.on || (CFG.heavyFx!=="keep" && megapixels>8));
   bgBlurVars();   // economy just changed, and it feeds the blur downscale
 
   syncLayers();
@@ -2661,6 +2747,7 @@ function applyConfig(){
 
   // monitors / placement / edit mode
   relayout();
+  syncGameMode();
 }
 
 /* =========================================================================
@@ -2722,6 +2809,7 @@ window.wallpaperPropertyListener = {
       if(p.span_preset)     CFG.spanPreset    = p.span_preset.value;
       if(p.bg_per_monitor!==undefined) CFG.bgPerMonitor = asBool(p.bg_per_monitor);
       if(p.heavy_fx)        CFG.heavyFx      = p.heavy_fx.value;
+      if(p.game_mode)       CFG.gameMode     = p.game_mode.value;
       if(p.edit_layout!==undefined)    CFG.editLayout   = asBool(p.edit_layout);
       // "Forget dragged positions" is a toggle rather than a button, so act on
       // the moment it goes true and let the user switch it back off.
@@ -2869,18 +2957,33 @@ function buildAll(){
   renderProcs(); renderDrives(); renderTailnet();
 }
 
-let last=performance.now(), uiAcc=0, metricAcc=0, realAcc=0, cvAcc=0;
+function drawSparks(){
+  if(!CFG.panels.sysmon) return;
+  drawSpark($("#sp-cpu"),M.cpuHist);
+  drawSpark($("#sp-gpu"),M.gpuHist);
+  drawSpark($("#sp-net"),M.netHist);
+}
+
+/* Game mode's stand-in for loop(). The history still gets one sample per
+   120 ms of wall time, so the sparklines keep the same time scale. */
+function gameTick(){
+  for(let i=0;i<8;i++) metricsTick(125);
+  updateUI(); drawSparks();
+  pollReal();
+}
+
+let last=performance.now(), uiAcc=0, metricAcc=0, realAcc=0, cvAcc=0, looping=false;
+function startLoop(){
+  if(looping || GAME.on) return;
+  looping=true; last=performance.now();
+  requestAnimationFrame(loop);
+}
 function loop(now){
+  if(GAME.on){ looping=false; return; }
   const dt=Math.min(now-last, 64); last=now;
   // physics-ish
   metricAcc+=dt; if(metricAcc>=120){ metricsTick(metricAcc); metricAcc=0; }
-  uiAcc+=dt; if(uiAcc>=320){ updateUI();
-      if(CFG.panels.sysmon){
-        drawSpark($("#sp-cpu"),M.cpuHist);
-        drawSpark($("#sp-gpu"),M.gpuHist);
-        drawSpark($("#sp-net"),M.netHist);
-      }
-      uiAcc=0; }
+  uiAcc+=dt; if(uiAcc>=320){ updateUI(); drawSparks(); uiAcc=0; }
   realAcc+=dt; if(realAcc>=1000){ pollReal(); realAcc=0; } // poll companion once/sec
 
   // smooth canvases, capped at ~60fps so high-refresh displays don't multiply the work
@@ -2922,7 +3025,8 @@ document.addEventListener("DOMContentLoaded", ()=>{
   // if the first location attempt missed (provider down/blocked), retry soon
   // rather than waiting a full weather cycle showing the wrong city's weather
   setTimeout(()=>{ if(CFG.autoLocation && !M.geo) refreshLocation(); }, 90*1000);
-  requestAnimationFrame(loop);
+  startLoop();
+  if(GAME.on) gameStill();   // game mode set to Always: the loop never draws a frame
 });
 </script>
 </body>
