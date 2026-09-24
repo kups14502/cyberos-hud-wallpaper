@@ -36,6 +36,7 @@ import ctypes
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -126,17 +127,25 @@ while ($true) {
   $dm.dmSize = [uint16][Runtime.InteropServices.Marshal]::SizeOf($dm)
   if ([DM]::EnumDisplaySettings($d.DeviceName, -1, [ref]$dm)) {
     # prefix 0 = primary display (StateFlags bit 0x4), 1 = secondary, so the
-    # caller can sort the primary monitor to the front. Trailing = refresh Hz.
+    # caller can sort the primary monitor to the front. Then resolution, refresh
+    # Hz, and the monitor's top-left corner in virtual-desktop coordinates —
+    # the wallpaper needs those to lay a spanned HUD out per monitor.
     $p = if (($d.StateFlags -band 4) -ne 0) { "0" } else { "1" }
-    "$p $($dm.dmPelsWidth)x$($dm.dmPelsHeight) $($dm.dmDisplayFrequency)"
+    "$p $($dm.dmPelsWidth)x$($dm.dmPelsHeight) $($dm.dmDisplayFrequency) $($dm.dmPositionX) $($dm.dmPositionY)"
   }
 }
 '''
 
 
 def _monitors():
-    """Each attached monitor as {'res','hz'}, primary first,
-    e.g. [{'res':'3840x2160','hz':120}, {'res':'2560x1440','hz':165}]."""
+    """Each attached monitor, primary first, as
+    {'res','hz','w','h','x','y','primary'} — e.g.
+    [{'res':'3840x2160','hz':120,'w':3840,'h':2160,'x':0,'y':0,'primary':True}, ...].
+
+    x/y are the monitor's top-left corner in Windows virtual-desktop coordinates
+    and may be negative for a display to the left of the primary. A wallpaper
+    spanned across several monitors gets one viewport covering the bounding box
+    of all of them, so this is what lets it work out where the seams are."""
     if sys.platform != "win32":
         return []
     try:
@@ -148,8 +157,21 @@ def _monitors():
             parts = ln.strip().split()
             if len(parts) >= 2 and "x" in parts[1] and parts[1][0].isdigit():
                 pri = parts[0]
-                hz = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
-                rows.append((pri, {"res": parts[1], "hz": hz}))
+                mon = {"res": parts[1], "hz": None}
+                if len(parts) >= 3 and parts[2].isdigit():
+                    mon["hz"] = int(parts[2])
+                try:
+                    w, h = parts[1].split("x")
+                    mon["w"], mon["h"] = int(w), int(h)
+                except Exception:
+                    pass
+                if len(parts) >= 5:
+                    try:
+                        mon["x"], mon["y"] = int(parts[3]), int(parts[4])
+                    except ValueError:
+                        pass
+                mon["primary"] = (pri == "0")
+                rows.append((pri, mon))
         rows.sort(key=lambda r: r[0])      # "0" (primary) sorts ahead of "1"
         return [m for _, m in rows] or []
     except Exception:
@@ -862,12 +884,17 @@ WE_DIR_DEFAULT = r"C:\Program Files (x86)\Steam\steamapps\common\wallpaper_engin
 
 # what the wallpaper last told us about its audio feed
 _AUDIO_LOCK = threading.Lock()
-_AUDIO_REPORT = {"state": None, "sum": 0.0, "ts": 0.0}
+_AUDIO_REPORT = {"state": None, "sum": 0.0, "ts": 0.0, "screens": None, "viewport": None}
 
 
 def _note_audio_report(path):
     """Record ?aud=/&audsum= from a /metrics request. Absent on old wallpapers
-    and on remote setups, in which case the watchdog simply stays idle."""
+    and on remote setups, in which case the watchdog simply stays idle.
+
+    The same request carries &scr= and &vp=, the wallpaper's screen count and
+    viewport. On a spanned setup those are the only way to see what layout the
+    wallpaper actually resolved without screenshotting somebody's desktop or
+    opening a CEF debug port, and both of those are miserable to do live."""
     if "?" not in path:
         return
     try:
@@ -881,10 +908,19 @@ def _note_audio_report(path):
         total = float((q.get("audsum") or ["0"])[0])
     except ValueError:
         total = 0.0
+    try:
+        screens = int((q.get("scr") or ["0"])[0]) or None
+    except ValueError:
+        screens = None
+    viewport = (q.get("vp") or [None])[0]
+    if viewport and not re.match(r"^\d{2,5}x\d{2,5}$", viewport):
+        viewport = None
     with _AUDIO_LOCK:
         _AUDIO_REPORT["state"] = state
         _AUDIO_REPORT["sum"] = total
         _AUDIO_REPORT["ts"] = time.time()
+        _AUDIO_REPORT["screens"] = screens
+        _AUDIO_REPORT["viewport"] = viewport
 
 
 _CLSCTX_ALL = 23
@@ -1067,6 +1103,13 @@ class WeAudioWatchdog(threading.Thread):
     COOLDOWN = 180.0         # never remediate more often than this
     REPORT_MAX_AGE = 6.0     # older wallpaper reports are stale, ignore them
     POLL = 2.0
+    # Restarting WE is disruptive, so a remedy that plainly is not working must
+    # not keep repeating. If starvation comes straight back after a restart the
+    # cooldown backs off, and after this many failed attempts we stop and say so
+    # rather than bouncing Wallpaper Engine every few minutes all day.
+    MAX_FAILED_FIXES = 3
+    BACKOFF = 4.0            # cooldown multiplier per attempt that did not stick
+    RECOVERED_AFTER = 900.0  # quiet for this long = the last fix worked
 
     def __init__(self, we_dir=WE_DIR_DEFAULT, wallpaper_path="", verbose=False,
                  log_path=None):
@@ -1078,6 +1121,8 @@ class WeAudioWatchdog(threading.Thread):
         self._starved_since = None
         self._last_fix = 0.0
         self._last_device = None
+        self._failed_fixes = 0
+        self._gave_up = False
 
     def _log(self, msg):
         print("[we-watchdog] " + msg)
@@ -1091,14 +1136,81 @@ class WeAudioWatchdog(threading.Thread):
         except Exception:
             pass
 
+    @staticmethod
+    def _we_running():
+        try:
+            out = subprocess.check_output(
+                ["tasklist", "/FI", "IMAGENAME eq wallpaper64.exe", "/NH"],
+                text=True, timeout=10, creationflags=NO_WINDOW)
+            return "wallpaper64.exe" in out
+        except Exception:
+            return False
+
+    def _wait_gone(self, seconds):
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            if not self._we_running():
+                return True
+            time.sleep(0.5)
+        return not self._we_running()
+
+    def _clear_safe_start(self):
+        """Wallpaper Engine records that it did not exit cleanly and greets the
+        next launch with the "Safe Start" dialog, leaving the desktop bare until
+        someone clicks OK. After a forced kill that flag is ours to clean up.
+        Only safe with WE closed, which is exactly where this is called from."""
+        cfg = os.path.join(self.we_dir, "config.json")
+        try:
+            with open(cfg, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception as exc:
+            self._log("could not read config.json to clear Safe Start: %s" % exc)
+            return
+
+        hits = [0]
+
+        def walk(node):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key == "safemode" and value is True:
+                        node[key] = False
+                        hits[0] += 1
+                    else:
+                        walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(data)
+        if not hits[0]:
+            return
+        try:
+            with open(cfg, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=1)
+            self._log("cleared the Safe Start flag WE was left holding")
+        except Exception as exc:
+            self._log("could not write config.json: %s" % exc)
+
     def _restart_we(self):
         exe = os.path.join(self.we_dir, "wallpaper64.exe")
         if not os.path.isfile(exe):
             self._log("wallpaper64.exe not found under " + self.we_dir)
             return False
-        subprocess.run(["taskkill", "/F", "/IM", "wallpaper64.exe"],
+        # Ask it to close before reaching for the hammer. A forced kill leaves
+        # Wallpaper Engine convinced it crashed, so every remediation used to
+        # cost the user a "Safe Start" dialog and a bare desktop until they
+        # clicked through it.
+        subprocess.run(["taskkill", "/IM", "wallpaper64.exe"],
                        capture_output=True, creationflags=NO_WINDOW)
-        time.sleep(3)
+        if self._wait_gone(12):
+            self._log("closed WE cleanly")
+        else:
+            self._log("WE would not close, forcing it")
+            subprocess.run(["taskkill", "/F", "/IM", "wallpaper64.exe"],
+                           capture_output=True, creationflags=NO_WINDOW)
+            self._wait_gone(6)
+            self._clear_safe_start()
+        time.sleep(2)
         subprocess.Popen([exe], creationflags=NO_WINDOW)
         time.sleep(14)
         return True
@@ -1165,13 +1277,32 @@ class WeAudioWatchdog(threading.Thread):
                 now = time.time()
                 if not starved:
                     self._starved_since = None
+                    # A long quiet spell means the last restart actually stuck,
+                    # so forgive the earlier failures.
+                    if (self._failed_fixes and self._last_fix
+                            and now - self._last_fix >= self.RECOVERED_AFTER):
+                        self._failed_fixes = 0
+                        self._gave_up = False
+                    continue
+                if self._gave_up:
                     continue
                 if self._starved_since is None:
                     self._starved_since = now
                     if self.verbose:
                         self._log("starvation suspected (peak %.3f)" % peak)
+                # Each restart that fails to stick pushes the next attempt further
+                # out, so a remedy that is not working costs the user less and less.
+                cooldown = self.COOLDOWN * (self.BACKOFF ** self._failed_fixes)
                 if (now - self._starved_since >= self.STARVE_SECONDS
-                        and now - self._last_fix >= self.COOLDOWN):
+                        and now - self._last_fix >= cooldown):
+                    if self._last_fix:
+                        self._failed_fixes += 1
+                    if self._failed_fixes > self.MAX_FAILED_FIXES:
+                        self._gave_up = True
+                        self._log("restarting WE %d times did not restore audio capture; "
+                                  "giving up until it recovers on its own"
+                                  % self.MAX_FAILED_FIXES)
+                        continue
                     self._remediate()
             except Exception as exc:
                 self._log("error: %s" % exc)
@@ -1210,6 +1341,8 @@ class Handler(BaseHTTPRequestHandler):
                 state = _AUDIO_REPORT["state"]
                 total = _AUDIO_REPORT["sum"]
                 ts = _AUDIO_REPORT["ts"]
+                screens = _AUDIO_REPORT["screens"]
+                viewport = _AUDIO_REPORT["viewport"]
             device, peak = (None, 0.0)
             if sys.platform == "win32":
                 try:
@@ -1222,6 +1355,9 @@ class Handler(BaseHTTPRequestHandler):
                 "report_age_s": round(time.time() - ts, 2) if ts else None,
                 "output_peak": round(peak, 5),
                 "output_device": device,
+                # layout the wallpaper resolved: >1 screens means it is spanning
+                "wallpaper_screens": screens,
+                "wallpaper_viewport": viewport,
             }
             payload = json.dumps(body).encode("utf-8")
             self.send_response(200)

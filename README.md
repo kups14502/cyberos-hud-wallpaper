@@ -4,7 +4,8 @@ A self-contained cyberpunk terminal HUD wallpaper: glowing cyan-on-black termina
 live diagnostics gauges, process list, system monitor with sparklines,
 audio-reactive waveform, animated wireframe terrain, and a live clock.
 
-Resolution-scalable (any aspect ratio), fully recolorable, and runs on any machine.
+Resolution-scalable (any aspect ratio), spans multi-monitor setups with a proper
+per-monitor layout, fully recolorable, and runs on any machine.
 
 ---
 
@@ -103,6 +104,76 @@ uptime base (days), 24h vs 12h clock, show/hide seconds, and the
 latitude / longitude / elevation shown in the location panel.
 
 **Real metrics** — toggle to read live system stats (see below).
+
+**Multi-monitor**: span the HUD across every monitor and choose what goes where
+(see below).
+
+---
+
+## Multi-monitor setups
+
+Wallpaper Engine gives a **spanned** wallpaper one viewport covering the bounding
+box of every monitor at once. That rectangle is not a screen: it has seams down
+the middle, dead space above any monitor mounted lower than its neighbor, and an
+aspect ratio no layout was designed for. So instead of treating it as one giant
+screen, the HUD works out where each physical monitor sits inside that rectangle
+and lays itself out **per monitor**:
+
+- every monitor gets its own corner anchors, corner brackets, terrain horizon and
+  vignette;
+- each monitor is scaled by **its own** short edge, so a 1440p panel beside a 4K
+  one shows the HUD at the same apparent size instead of the same pixel size;
+- portrait monitors, mismatched resolutions, and vertical offsets all work.
+
+**Setting it up**
+
+1. In Wallpaper Engine, select all the monitors you want covered and choose the
+   span/stretch option, so one wallpaper covers them.
+2. Nothing else is needed if the **companion app** is running: it reports your
+   real desktop geometry and the HUD picks it up within a second.
+3. Without the companion, fill in **Monitors** in the properties panel. One entry
+   per monitor, `WIDTHxHEIGHT@X,Y`, separated by semicolons, with `*` on the
+   primary. X,Y is that monitor's top-left corner from Windows
+   **Settings → System → Display** (it can be negative):
+
+   ```
+   2560x1440@-2560,419; 3840x2160@0,0*; 1440x2560@3840,0
+   ```
+
+   Shortcuts: `3` means three equal columns, and `1920x1080, 1920x1080, 1920x1080`
+   lays identical monitors out left to right.
+
+**Choosing what appears where**
+
+Monitors are numbered left to right, so **monitor 1 is the one on your left**.
+Under **PANEL PLACEMENT** each panel gets a monitor and a position (nine anchors:
+the four corners, the four edge centers, and the middle). Left on *Auto* they use
+the default spread: identity and clock on the primary, the system monitor on the
+monitor to its left, processes and tailnet on the monitor to its right. Panels
+sharing a monitor and anchor stack neatly, so nothing ever overlaps.
+
+**Dragging panels instead**
+
+Switch on **Layout edit mode** and the wallpaper starts accepting the mouse. Each
+monitor gets a dashed frame and a big number, every panel gets a label, and you
+can drag panels anywhere, including from one monitor to another. Drop a panel on
+an existing stack to join it: a line across the stack shows whether it lands
+above or below each panel, which is also how you reorder a stack. With **SNAP ON**
+a panel dropped on empty space docks to the nearest of the nine anchors; switch
+snapping off to place panels freely. A click without a drag picks a panel up and
+the next click puts it down. **RESET** returns everything to the defaults.
+Positions are saved on that PC, so switch edit mode back off when you are done
+and they stay put. (Only edit mode makes the wallpaper accept clicks; the rest of
+the time every click goes straight to your desktop as usual.)
+
+**Not spanning?** If you assign the wallpaper per monitor instead, each copy
+detects which monitor it is on and shows only the panels assigned to that
+monitor, so you can still spread the HUD across screens without spanning. Set
+**"When not spanning, this wallpaper is on monitor"** if it cannot tell your
+monitors apart (identical models).
+
+A single-monitor desktop is unaffected by all of this and renders exactly as
+before.
 
 ---
 
@@ -271,8 +342,21 @@ a JSON blob. (Simpler alternative: a shortcut to the same `pythonw` + script in
   thread. It sits around half a percent of total CPU and ~40 MB RAM and spawns
   no subprocesses while running. (`nvidia-smi` and a one-time PowerShell query
   remain as automatic fallbacks if NVML / WMI aren't available.)
-- **Resolution** scales automatically. The root font-size tracks the viewport so the
-  HUD stays proportional from 720p up through 4K and ultrawide.
+- **Resolution** scales automatically, from 720p up through 4K, ultrawide and
+  portrait. On a single monitor the whole interface tracks the short edge; across a
+  span, each monitor is scaled by its own short edge instead.
+- **Ultrawide** monitors keep the HUD in a centered band capped at 2:1 rather than
+  flinging the corner stacks to the far physical corners of a 32:9 panel.
+- **Monitor geometry** can only be measured exactly by the companion app. Without
+  it the wallpaper falls back to a guess for identical side-by-side monitors, and
+  otherwise treats the span as one wide screen until you fill in the **Monitors**
+  property by hand.
+- **Dragged panel positions** are stored in the browser storage of that PC's
+  Wallpaper Engine, not in the wallpaper, so they do not travel with the Workshop
+  item and are not shared between machines.
+- **Mouse input** is only accepted while **Layout edit mode** is on. At all other
+  times the wallpaper is transparent to the mouse and cannot swallow a click meant
+  for your desktop.
 - **Background blur** runs on a downscaled copy that CSS then scales back up, so
   the render surface it costs stays small no matter how wide your span is. For a
   still image the blur is rasterized once, so the radius you pick has no effect
