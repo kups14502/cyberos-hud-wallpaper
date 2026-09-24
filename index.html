@@ -452,6 +452,9 @@ body.edit .win:hover, body.edit #os-label:hover{ outline:1px dashed var(--accent
   border:1px solid var(--accent-line); background:var(--accent-faint);
   width:5.5rem; height:3.2rem; opacity:0.35; transition:opacity .15s, background .15s; }
 .le-zone.hot{ opacity:1; background:var(--accent-glow); }
+/* where a dropped panel will land in a stack */
+.le-ins{ position:absolute; z-index:95; pointer-events:none; height:3px; margin-top:-1.5px;
+  background:var(--accent-bright); box-shadow:0 0 0.5rem var(--accent); }
 #le-bar{ position:absolute; z-index:80; left:50%; top:1.2%; transform:translateX(-50%);
   display:flex; align-items:center; gap:0.7rem; white-space:nowrap;
   background:rgba(0,0,0,0.72); border:1px solid var(--accent); padding:0.5rem 0.8rem;
@@ -1791,6 +1794,7 @@ const LAY={
   spanned:false,
   remBase:null,     // px; only set when there is more than one screen
   ov:{},            // dragged placement overrides, keyed by panel id
+  ord:{},           // stacking order the user dropped panels in, keyed "<monitor>|<anchor>"
   snap:true,
   geoSig:"", placeSig:"", _preset:{}
 };
@@ -1826,11 +1830,19 @@ function loadLayoutStore(){
       if(p) ov[k]=p;
     });
     LAY.ov=ov;
+    const ord={};
+    Object.keys(o.ord||{}).forEach(k=>{
+      const m=/^([1-8])\|([tmb][lcr])$/.exec(k), list=o.ord[k];
+      if(!m || ANCHORS.indexOf(m[2])<0 || !Array.isArray(list)) return;
+      const ids=list.filter((id,i)=> PLACE_ORDER.indexOf(id)>=0 && list.indexOf(id)===i);
+      if(ids.length) ord[k]=ids;
+    });
+    LAY.ord=ord;
     LAY.snap=o.snap!==false;
   }catch(e){}
 }
 function saveLayoutStore(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify({ov:LAY.ov, snap:LAY.snap})); }catch(e){}
+  try{ localStorage.setItem(LS_KEY, JSON.stringify({ov:LAY.ov, ord:LAY.ord, snap:LAY.snap})); }catch(e){}
 }
 
 /* ---------------- 1. discover monitors ---------------- */
@@ -2195,6 +2207,16 @@ function applyFree(col, pl){
   col.style.top    = pl.cy==="t" ? (pl.fy*100).toFixed(3)+"%" : "auto";
   col.style.bottom = pl.cy==="b" ? (pl.fy*100).toFixed(3)+"%" : "auto";
 }
+/* Where a panel sits in its column. Panels the user has dropped into a column
+   stack in the order they were dropped; the rest follow in PLACE_ORDER, which is
+   what gives the classic four-corner layout when nothing has been dragged. */
+function stackRank(id, si, pl){
+  const o=PLACE_ORDER.indexOf(id);
+  if(si<0 || !pl || pl.mode!=="dock" || !LAY.screens[si]) return 1000+o;
+  const list=LAY.ord[LAY.screens[si].n+"|"+pl.pos];
+  const r=list ? list.indexOf(id) : -1;
+  return r>=0 ? r : 1000+o;
+}
 function placePanels(){
   const S=LAY.screens;
   if(!S.length) return;
@@ -2208,6 +2230,7 @@ function placePanels(){
   // wallpaper is a blank screen and the user has no way to see what happened.
   // Treat that as a bad configuration and put everything on the primary.
   if(plan.every(p=>p.si<0)) plan.forEach(p=>{ p.si=LAY.primary; });
+  plan.sort((a,b)=> stackRank(a.id,a.si,a.pl) - stackRank(b.id,b.si,b.pl));
   const sig=JSON.stringify(plan);
   if(sig===LAY.placeSig) return;
   LAY.placeSig=sig;
@@ -2342,13 +2365,14 @@ function relayout(){
    panel up (carry) until the next click puts it down. That second path also
    covers an input that delivers mousedown and mouseup together on release. */
 const DRAG={on:false,id:null,el:null,mel:null,col:null,si:0,gfx:0.5,gfy:0.2,moved:false,
-            carry:false,x0:0,y0:0};
+            carry:false,x0:0,y0:0,lx:0,ly:0};   // lx/ly = last cursor position: it picks the stack and the slot
 const DRAG_SLOP=4;   // px of travel before a press counts as a drag, not a click
 const ZX={l:"7%",c:"50%",r:"93%"}, ZY={t:"8%",m:"50%",b:"92%"};
 /* Abandon a drag without committing it; the next placePanels() puts the panel
    back wherever its saved placement says. */
 function cancelDrag(){
   if(DRAG.el) DRAG.el.classList.remove("dragging");
+  $$(".le-ins").forEach(n=>n.remove());
   DRAG.on=false; DRAG.carry=false; DRAG.col=null; DRAG.mel=null; DRAG.moved=false;
   LAY.placeSig="";
 }
@@ -2356,7 +2380,7 @@ function cancelDrag(){
 function updateEditMode(){
   const on=!!CFG.editLayout;
   document.body.classList.toggle("edit", on);
-  $$(".le-frame,.le-id,.le-zone,.le-tag").forEach(n=>n.remove());
+  $$(".le-frame,.le-id,.le-zone,.le-tag,.le-ins").forEach(n=>n.remove());
   const oldBar=$("#le-bar"); if(oldBar) oldBar.remove();
   if(!on) return;
   LAY.screens.forEach(s=>{
@@ -2386,7 +2410,7 @@ function updateEditMode(){
     '<span class="le-btn'+(LAY.snap?" on":"")+'" data-act="snap">SNAP '+(LAY.snap?"ON":"OFF")+'</span>'+
     '<span class="le-btn" data-act="dock">DOCK ALL</span>'+
     '<span class="le-btn" data-act="reset">RESET</span>'+
-    '<span class="hint">drag a panel, or click it and click again to drop · monitors: '+LAY.mons.length+' ('+LAY.monSrc+') · '+
+    '<span class="hint">drag a panel, or click it and click again to drop · drop into a stack to reorder it · monitors: '+LAY.mons.length+' ('+LAY.monSrc+') · '+
     (LAY.spanned?"spanned":"single screen")+'</span>';
   s.el.appendChild(bar);
 }
@@ -2409,16 +2433,89 @@ function nearestAnchor(s, r){
   const cy=(r.top +r.height/2- s.y)/Math.max(1,s.h);
   return (cy<1/3?"t": cy>2/3?"b":"m") + (cx<1/3?"l": cx>2/3?"r":"c");
 }
+/* The box a panel shows on screen. The identity panel wears the OS label as its
+   header, so the two count as one. */
+function panelBox(id){
+  const el=$(PANEL_SEL[id]); if(!el) return null;
+  const r=el.getBoundingClientRect();
+  if(!r.height) return null;                     // toggled off, takes no room
+  let top=r.top;
+  if(id==="terminal"){
+    const o=$("#os-label"), ro=o && o.getBoundingClientRect();
+    if(ro && ro.height && o.parentElement===el.parentElement) top=Math.min(top, ro.top);
+  }
+  return {left:r.left, right:r.right, top:top, bottom:r.bottom};
+}
+/* Where the panel being dragged lands in the stack at screen si + anchor pos,
+   given the cursor's client y: the panels already there, top to bottom (the
+   dragged one is out of its column while it moves, so never among them), the
+   first visible one it goes above (null = the bottom), and the order to save. */
+function stackIds(si, pos){
+  const ids=PLACE_ORDER.filter(id=>{
+    if(id===DRAG.id) return false;
+    const pl=resolvePlacement(id);
+    return pl.mode==="dock" && pl.pos===pos && screenForMon(pl.mon)===si;
+  });
+  return ids.sort((a,b)=> stackRank(a,si,resolvePlacement(a)) - stackRank(b,si,resolvePlacement(b)));
+}
+/* Which anchor a drop goes to. With the cursor over an existing stack (or in the
+   gap just above or below it), that stack: dropping a panel onto another one
+   means "put it here". Only over empty space does the dragged panel's own
+   center pick the nearest of the nine anchors. */
+function dropAnchor(si){
+  const s=LAY.screens[si], pad=16*(s.zoom||1);
+  for(const pos of ANCHORS){
+    const B=stackIds(si,pos).map(panelBox).filter(Boolean);
+    if(!B.length) continue;
+    const L=Math.min.apply(null,B.map(b=>b.left)),  R=Math.max.apply(null,B.map(b=>b.right));
+    const T=Math.min.apply(null,B.map(b=>b.top)),   D=Math.max.apply(null,B.map(b=>b.bottom));
+    if(DRAG.lx>=L && DRAG.lx<=R && DRAG.ly>=T-pad && DRAG.ly<=D+pad) return pos;
+  }
+  return nearestAnchor(s, DRAG.col.getBoundingClientRect());
+}
+function dropSlot(si, pos, y){
+  const ids=stackIds(si,pos);
+  const vis=ids.filter(id=>panelBox(id));
+  let before=null;
+  for(const id of vis){
+    const b=panelBox(id);
+    if(y < (b.top+b.bottom)/2){ before=id; break; }
+  }
+  const order=ids.slice();
+  order.splice(before ? order.indexOf(before) : order.length, 0, DRAG.id);
+  return {vis:vis, before:before, order:order};
+}
+/* A line across the target stack showing where the panel will go. */
+function drawInsertLine(s, slot){
+  $$(".le-ins").forEach(n=>n.remove());
+  if(!slot.vis.length) return;                   // empty anchor: the zone highlight says it
+  const B=slot.vis.map(panelBox), z=s.zoom||1;
+  const col=$(PANEL_SEL[slot.vis[0]]).parentElement;
+  const gap=((col && parseFloat(getComputedStyle(col).rowGap)) || 16)*z;
+  const i=slot.before ? slot.vis.indexOf(slot.before) : B.length;
+  const y = i===0 ? B[0].top-gap/2
+          : i===B.length ? B[B.length-1].bottom+gap/2
+          : (B[i-1].bottom+B[i].top)/2;
+  const L=Math.min.apply(null, B.map(b=>b.left)), R=Math.max.apply(null, B.map(b=>b.right));
+  const ln=document.createElement("div"); ln.className="le-ins";
+  ln.style.left =((L-s.x)/z)+"px";
+  ln.style.top  =((y-s.y)/z)+"px";
+  ln.style.width=((R-L)/z)+"px";
+  s.el.appendChild(ln);
+}
 function highlightZone(){
   $$(".le-zone").forEach(z=>z.classList.remove("hot"));
+  $$(".le-ins").forEach(n=>n.remove());
   if(!LAY.snap || !DRAG.col) return;
   const s=LAY.screens[DRAG.si]; if(!s) return;
-  const z=s.el.querySelector('.le-zone[data-a="'+nearestAnchor(s,DRAG.col.getBoundingClientRect())+'"]');
+  const pos=dropAnchor(DRAG.si);
+  const z=s.el.querySelector('.le-zone[data-a="'+pos+'"]');
   if(z) z.classList.add("hot");
+  drawInsertLine(s, dropSlot(DRAG.si, pos, DRAG.ly));
 }
 function editAction(act){
   if(act==="snap") LAY.snap=!LAY.snap;
-  else if(act==="reset") LAY.ov={};
+  else if(act==="reset"){ LAY.ov={}; LAY.ord={}; }
   else if(act==="dock"){
     Object.keys(LAY.ov).forEach(k=>{
       const o=LAY.ov[k];
@@ -2438,7 +2535,7 @@ function onDragDown(e){
   // So does one whose mouseup we never saw (released off the edge of the
   // desktop, or over a window that swallowed it): until this click it simply
   // kept following the cursor.
-  if(DRAG.on){ e.preventDefault(); dropDrag(); return; }
+  if(DRAG.on){ e.preventDefault(); DRAG.lx=e.clientX; DRAG.ly=e.clientY; dropDrag(); return; }
   const btn=e.target.closest(".le-btn");
   if(btn){ editAction(btn.dataset.act); e.preventDefault(); return; }
   const host=e.target.closest(".win, #os-label");
@@ -2453,7 +2550,7 @@ function onDragDown(e){
   let mel=el, r=el.getBoundingClientRect();
   if(!r.width && !r.height){ mel=host; r=host.getBoundingClientRect(); }
   DRAG.on=true; DRAG.carry=false; DRAG.id=id; DRAG.el=el; DRAG.mel=mel; DRAG.col=null;
-  DRAG.moved=false; DRAG.x0=e.clientX; DRAG.y0=e.clientY;
+  DRAG.moved=false; DRAG.x0=DRAG.lx=e.clientX; DRAG.y0=DRAG.ly=e.clientY;
   DRAG.gfx = r.width  ? (e.clientX-r.left)/r.width  : 0.5;
   DRAG.gfy = r.height ? (e.clientY-r.top )/r.height : 0.2;
   DRAG.si  = screenAtPoint(e.clientX, e.clientY);
@@ -2462,6 +2559,7 @@ function onDragDown(e){
 }
 function onDragMove(e){
   if(!DRAG.on) return;
+  DRAG.lx=e.clientX; DRAG.ly=e.clientY;
   if(!DRAG.moved){
     if(Math.abs(e.clientX-DRAG.x0)+Math.abs(e.clientY-DRAG.y0) < DRAG_SLOP) return;
     DRAG.moved=true;
@@ -2500,8 +2598,18 @@ function dropDrag(){
   if(!DRAG.moved){ DRAG.col=null; return; }        // picked up, put back untouched
   const s=LAY.screens[DRAG.si], id=DRAG.id;
   const cr=DRAG.col.getBoundingClientRect();
+  $$(".le-ins").forEach(n=>n.remove());
+  // A panel belongs to one stack at a time, so forget where it sat in any other.
+  Object.keys(LAY.ord).forEach(k=>{
+    LAY.ord[k]=LAY.ord[k].filter(x=>x!==id);
+    if(!LAY.ord[k].length) delete LAY.ord[k];
+  });
   if(LAY.snap){
-    LAY.ov[id]={mode:"dock", mon:s.n, pos:nearestAnchor(s,cr)};
+    const pos=dropAnchor(DRAG.si);
+    // Measured before the override exists, so the stack is read as it is on screen.
+    const slot=dropSlot(DRAG.si, pos, DRAG.ly);
+    LAY.ov[id]={mode:"dock", mon:s.n, pos:pos};
+    LAY.ord[s.n+"|"+pos]=slot.order;
   }else{
     const cx=(cr.left+cr.width/2 - s.x)/Math.max(1,s.w);
     const cy=(cr.top +cr.height/2- s.y)/Math.max(1,s.h);
@@ -2619,7 +2727,7 @@ window.wallpaperPropertyListener = {
       // the moment it goes true and let the user switch it back off.
       if(p.layout_reset!==undefined){
         const want=asBool(p.layout_reset);
-        if(want && !CFG.layoutReset){ LAY.ov={}; saveLayoutStore(); LAY.placeSig=""; }
+        if(want && !CFG.layoutReset){ LAY.ov={}; LAY.ord={}; saveLayoutStore(); LAY.placeSig=""; }
         CFG.layoutReset=want;
       }
       // per-panel placement combos
