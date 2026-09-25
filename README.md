@@ -108,8 +108,8 @@ latitude / longitude / elevation shown in the location panel.
 **Multi-monitor**: span the HUD across every monitor and choose what goes where
 (see below).
 
-**Game mode**: while a game runs fullscreen, the background holds still and the
-visualizer goes away, but the stats stay live (see below).
+**Game mode**: while a game runs fullscreen, the scene turns still and the
+visualizer pauses, but the stats stay live (see below).
 
 ---
 
@@ -184,10 +184,10 @@ before.
 
 Wallpaper Engine normally pauses the wallpaper when a game goes fullscreen, and
 that freezes the stats along with everything else. Game mode keeps the stats and
-stops the rest. The background holds still (starfield, terrain, and any video or
-GIF you picked) and the audio visualizer is hidden, while the stat panels keep
-updating once a second, so a second monitor can still show your CPU and GPU load
-mid-game.
+stops the rest. The flowing terrain turns into a still wireframe mountain range
+and the audio visualizer parks on a flat line marked paused. Any video or GIF
+background stops too. The stat panels keep updating once a second, so a second
+monitor can still show your CPU and GPU load mid-game.
 
 1. Run the **companion app**. It tells the wallpaper when the window in front
    fills its monitor.

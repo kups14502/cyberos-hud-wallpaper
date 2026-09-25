@@ -425,10 +425,9 @@ body.economy.has-bgmedia .bg-fx{ opacity:0.5; }
 /* hide whole panels when toggled off */
 .hidden{ display:none !important; }
 
-/* GAME MODE: the scene holds still and the visualizer goes, the stats stay.
+/* GAME MODE: the scene holds still and the visualizer pauses, the stats stay.
    Transitions go too: a gauge easing to each 1 Hz reading would keep the
    compositor producing frames for half of every second. */
-body.game #audio{ display:none !important; }
 body.game *{ transition:none !important; }
 .bg-img.frozen{ display:none !important; }
 /* panels wait in here until the layout engine deals them onto a screen */
@@ -1049,11 +1048,11 @@ function simulate(dt){
    and a paused wallpaper freezes the stats along with everything else. With WE
    set to keep running instead, the local companion reports whether the
    foreground window fills its monitor, and the wallpaper calms itself down: the
-   animation loop stops, so the starfield and terrain hold their last frame, the
-   visualizer is hidden, a video or animated background pauses, and the stats
-   move to a once-a-second timer. A timer, not requestAnimationFrame, because a
-   page that stops asking for frames stops costing the GPU anything between
-   readings.
+   animation loop stops, the waves give way to a still mountain range, the
+   starfield holds its last frame, the visualizer box shows a paused line, a
+   video or animated background pauses, and the stats move to a once-a-second
+   timer. A timer, not requestAnimationFrame, because a page that stops asking
+   for frames stops costing the GPU anything between readings.
    Entering waits for two readings in a row and leaving for three, so a loading
    screen or an Alt+Tab does not flip the whole HUD back and forth. */
 const GAME={ on:false, fs:false, hit:0, miss:0, timer:0 };
@@ -1077,14 +1076,16 @@ function setGameMode(on){
   }
   paintBgLayers();     // pauses or resumes a video background, freezes a GIF
   relayout();          // game mode implies the large-surface economy
+  if(on && LAY_BUILT) gameStill();
   setModeTag(realOK ? "REAL · "+metricsEndpoint().host : simTag());
 }
-/* Stars and terrain are only ever drawn by the loop, so after a canvas rebuild
-   in game mode (a resize, a lost GPU context) they need one frame by hand, or
-   they would stay blank until the game closes. */
+/* Everything game mode shows is drawn once, here: on the way in, at boot when
+   game mode is set to Always, and after any canvas rebuild (a resize, a lost
+   GPU context), since the loop that would normally repaint is stopped. */
 function gameStill(){
   drawStars(performance.now());
-  drawTerrain(0);
+  drawMountains();
+  drawAudioStill();
 }
 /* An <img> cannot be paused. Draw its current frame onto a canvas in the same
    slot and hide the image; the canvas takes the same .bg-img sizing rules,
@@ -1634,6 +1635,36 @@ function drawAudio(t){
   ctx.strokeStyle=PAL.line; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(0,mid); ctx.lineTo(w,mid); ctx.stroke();
 }
+/* Game mode keeps the visualizer's box and parks it: a flat line with the
+   state written into a gap in the middle, so it reads as paused, not broken. */
+function drawAudioStill(){
+  const cv=AUD.cv||(AUD.cv=$("#audio-cv")); if(!cv || !CFG.panels.audio) return;
+  if(!cv._ctx || Math.abs(cv._w-cv.getBoundingClientRect().width)>1) audioSetup();
+  const ctx=cv._ctx, w=cv._w, h=cv._h, mid=Math.round(h/2)+0.5;
+  ctx.clearRect(0,0,w,h);
+  const cs=getComputedStyle(cv.parentElement);
+  const px=clamp(parseFloat(cs.fontSize)*0.8||11, 8, 18);
+  ctx.font=`${px}px ${cs.fontFamily}`;
+  try{ ctx.letterSpacing=(px*0.18).toFixed(1)+"px"; }catch(e){}
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  const label="AUDIO PAUSED · GAME MODE";
+  const gap=ctx.measureText(label).width/2 + px;
+  ctx.strokeStyle=PAL.line; ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(0,mid); ctx.lineTo(Math.max(0,w/2-gap),mid);
+  ctx.moveTo(Math.min(w,w/2+gap),mid); ctx.lineTo(w,mid);
+  ctx.stroke();
+  // a row of zero-height bar stubs on the line, where the spectrum would be
+  const N=64, bw=w/N;
+  ctx.fillStyle=PAL.dim;
+  for(let i=0;i<N;i++){
+    const x=i*bw+bw*0.5;
+    if(Math.abs(x-w/2)<gap) continue;
+    ctx.fillRect(Math.round(x)-0.5, mid-1.5, 1, 3);
+  }
+  ctx.fillStyle=PAL.accent;
+  ctx.fillText(label, w/2, mid);
+}
 
 /* =========================================================================
    STARFIELD  (subtle drifting particles)
@@ -1775,6 +1806,74 @@ function drawTerrainOne(T, ampBase){
       const p=pts[r][c];
       ctx.fillRect(p[0]-0.7,p[1]-0.7,1.4,1.4);
     }
+  }
+}
+
+/* Game mode's terrain: a still wireframe mountain range in place of the waves.
+   It has its own camera, lower and with the horizon further down the band, so
+   the peaks have room to rise above it. Rows are painted far to near and each
+   fills the ground under itself with the background color first, so a nearer
+   ridge hides the lines behind it the way solid rock would. Nothing depends on
+   time or audio: it is drawn once per entry into game mode. */
+const MTN={ rows:40, spacing:0.75, camY:0.9, horizon:0.40, zNear:1.15 };
+function ridge(t){ const s=1-Math.abs(Math.sin(t)); return s*s; }
+function drawMountains(){
+  if(!TERS.length) return;
+  if(!CFG.terrain || !sceneOn()){ TERS.forEach(T=>T.ctx.clearRect(0,0,T.w,T.h)); return; }
+  const bg=getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()||"#000";
+  for(let i=0;i<TERS.length;i++) drawMountainsOne(TERS[i], bg);
+}
+function drawMountainsOne(T, bg){
+  const ctx=T.ctx, rows=MTN.rows, sp=MTN.spacing;
+  // wide enough that the far rows still reach both edges of the screen
+  const cols=clamp(Math.round(T.w/28), 60, 110), halfW=(cols-1)/2;
+  const horizon=T.h*MTN.horizon;
+  // Heights project against the band's height, not its width: across a wide
+  // span the width-based focal length would push every peak off the top.
+  const focalY=Math.min(T.focal, T.h*3.8);
+  ctx.clearRect(0,0,T.w,T.h);
+
+  const pts=[];
+  for(let r=0;r<rows;r++){
+    const wz=MTN.zNear + r*sp, f=r/(rows-1);   // f: 0 near edge, 1 horizon
+    // foothills up front, the tall peaks toward the horizon
+    const amp=0.25 + 4.2*Math.pow(f,1.5);
+    const row=[];
+    for(let c=0;c<cols;c++){
+      const wx=(c-halfW)*sp;
+      const n=0.55*ridge(wx*0.21+1.3)
+             +0.30*ridge(wx*0.47+f*2.1+0.4)
+             +0.15*ridge(wx*1.05-f*3.3+2.2);
+      const wy=n*amp;
+      row.push([T.w/2 + (wx/wz)*T.focal, horizon + ((MTN.camY-wy)/wz)*focalY]);
+    }
+    pts.push(row);
+  }
+
+  const lit=clamp(PAL.l+8,0,80);
+  ctx.lineWidth=1;
+  for(let r=rows-1;r>=0;r--){
+    const row=pts[r], near=1-r/(rows-1);
+    // ground under this ridge, hiding whatever lies behind it
+    ctx.beginPath();
+    ctx.moveTo(row[0][0], row[0][1]);
+    for(let c=1;c<cols;c++) ctx.lineTo(row[c][0], row[c][1]);
+    ctx.lineTo(row[cols-1][0], T.h+4); ctx.lineTo(row[0][0], T.h+4); ctx.closePath();
+    ctx.fillStyle=bg; ctx.fill();
+    // the slope lines running back to the ridge behind
+    if(r<rows-1){
+      const back=pts[r+1];
+      ctx.strokeStyle=`hsl(${PAL.h} ${PAL.s}% ${lit}% / ${(0.10+0.22*near).toFixed(3)})`;
+      ctx.beginPath();
+      for(let c=0;c<cols;c++){ ctx.moveTo(back[c][0],back[c][1]); ctx.lineTo(row[c][0],row[c][1]); }
+      ctx.stroke();
+    }
+    // the ridge line itself: far ones faint, like air between you and them
+    ctx.strokeStyle=`hsl(${PAL.h} ${PAL.s}% ${lit}% / ${(0.30+0.55*near).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.moveTo(row[0][0], row[0][1]);
+    for(let c=1;c<cols;c++) ctx.lineTo(row[c][0], row[c][1]);
+    ctx.stroke();
   }
 }
 
