@@ -179,6 +179,97 @@ def _monitors():
 
 
 # ---------------------------------------------------------------------------
+# Fullscreen app in front: the wallpaper's cue for game mode (a still scene with
+# live stats). Wallpaper Engine can only pause or keep running when a game goes
+# fullscreen, and paused freezes the stats too, so with WE left running the
+# wallpaper asks us instead. Answered per request: it is a handful of user32
+# calls, and a cached answer would add up to a second of lag on top of the
+# wallpaper's own debounce.
+# ---------------------------------------------------------------------------
+if sys.platform == "win32":
+    from ctypes import wintypes
+
+    class _MonInfo(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+    # Our own handle to user32, so these prototypes never leak into the shared
+    # ctypes.windll one the rest of the file uses.
+    _u32 = ctypes.WinDLL("user32")
+    _u32.GetForegroundWindow.restype = wintypes.HWND
+    _u32.IsIconic.argtypes = [wintypes.HWND]
+    _u32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _u32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    _u32.GetWindowLongW.restype = ctypes.c_long
+    _u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    _u32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    _u32.MonitorFromWindow.restype = wintypes.HMONITOR
+    _u32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MonInfo)]
+    _HAS_DPI_CTX = hasattr(_u32, "SetThreadDpiAwarenessContext")   # Windows 10 1607+
+    if _HAS_DPI_CTX:
+        _u32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        _u32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+
+# Shell surfaces that cover a whole monitor without being an app: the desktop
+# itself, the taskbars, Start / search, and Alt+Tab / Task View.
+_SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
+                  "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow",
+                  "MultitaskingViewFrame", "TaskSwitcherWnd", "ForegroundStaging"}
+_WS_CAPTION = 0x00C00000
+_DPI_PER_MONITOR_V2 = -4
+_MONITOR_DEFAULTTONEAREST = 2
+
+
+def _fills_monitor(hwnd):
+    """True when hwnd covers every pixel of the monitor it is on and has no
+    title bar: a game in exclusive or borderless fullscreen, or a video or
+    browser gone fullscreen. A maximized window keeps its caption, and on an
+    auto-hidden taskbar it does cover the monitor, so the caption is the test
+    that tells the two apart."""
+    prev = None
+    if _HAS_DPI_CTX:
+        # Physical pixels, whatever this process's DPI mode, so a game on a
+        # scaled 4K panel is measured against the panel's real size.
+        prev = _u32.SetThreadDpiAwarenessContext(ctypes.c_void_p(_DPI_PER_MONITOR_V2))
+    try:
+        if not hwnd or _u32.IsIconic(hwnd):
+            return False
+        cls = ctypes.create_unicode_buffer(128)
+        _u32.GetClassNameW(hwnd, cls, 128)
+        if cls.value in _SHELL_CLASSES:
+            return False
+        if (_u32.GetWindowLongW(hwnd, -16) & _WS_CAPTION) == _WS_CAPTION:
+            return False
+        r = wintypes.RECT()
+        if not _u32.GetWindowRect(hwnd, ctypes.byref(r)):
+            return False
+        mon = _u32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
+        mi = _MonInfo()
+        mi.cbSize = ctypes.sizeof(_MonInfo)
+        if not mon or not _u32.GetMonitorInfoW(mon, ctypes.byref(mi)):
+            return False
+        m = mi.rcMonitor
+        return (r.left <= m.left and r.top <= m.top
+                and r.right >= m.right and r.bottom >= m.bottom)
+    except Exception:
+        return False
+    finally:
+        if prev:
+            _u32.SetThreadDpiAwarenessContext(ctypes.c_void_p(prev))
+
+
+def _fullscreen_app():
+    """Whether the foreground window is a fullscreen app. None off Windows,
+    where the field is left out of the payload entirely."""
+    if sys.platform != "win32":
+        return None
+    try:
+        return _fills_monitor(_u32.GetForegroundWindow())
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Drives: usage comes from psutil every second (no subprocess). Volume labels
 # and the logical→physical-disk mapping (needed to attribute live read/write
 # throughput to a drive letter) almost never change, so we resolve them ONCE
@@ -1273,6 +1364,12 @@ class WeAudioWatchdog(threading.Thread):
                 # remote setup, or an older build): nothing to diagnose.
                 fresh = state is not None and age < self.REPORT_MAX_AGE
                 starved = fresh and state == "0" and peak > self.PEAK_MIN
+                # Never restart WE under a fullscreen game: a deaf visualizer
+                # nobody can see beats a desktop flash in the middle of a match.
+                # Wallpapers from v2.11 already report "x" in game mode; this
+                # covers older ones.
+                if starved and _fullscreen_app():
+                    starved = False
 
                 now = time.time()
                 if not starved:
@@ -1326,7 +1423,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/metrics"):
             # the wallpaper piggybacks its audio-feed state on this request
             _note_audio_report(self.path)
-            payload = json.dumps(SAMPLER.get()).encode("utf-8")
+            body = SAMPLER.get()
+            fullscreen = _fullscreen_app()
+            if fullscreen is not None:
+                body = dict(body, fullscreen=fullscreen)
+            payload = json.dumps(body).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._cors()
