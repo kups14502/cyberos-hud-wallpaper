@@ -1092,8 +1092,12 @@ function gameStill(){
 }
 /* The visualizer is the one thing game mode can keep moving, on request. It
    gets its own frame loop that draws that one small canvas and nothing else,
-   so the rest of the page still produces no new frames. */
-let audLooping=false;
+   capped at 15 fps: however small the canvas, every frame it draws makes WE
+   produce a new frame of the whole desktop, and that is where the cost is.
+   No carry-over between frames, so pacing stays even; at WE's 25 fps that
+   means every other frame, 12.5 fps. */
+const GAME_VIS_MS=1000/15;
+let audLooping=false, audLast=0;
 function gameAudioSync(){
   if(!GAME.on || !LAY_BUILT) return;
   if(CFG.gameVisualizer && CFG.panels.audio){
@@ -1106,7 +1110,7 @@ function gameAudioLoop(now){
     if(GAME.on) drawAudioStill();
     return;
   }
-  drawAudio(now);
+  if(now-audLast >= GAME_VIS_MS-2){ audLast=now; drawAudio(now); }
   requestAnimationFrame(gameAudioLoop);
 }
 /* An <img> cannot be paused. Draw its current frame onto a canvas in the same
