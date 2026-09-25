@@ -972,6 +972,7 @@ const CFG={
   bgPerMonitor:false,        // terrain + vignette per monitor, or one across the span
   heavyFx:"auto",            // panel blur / blend / mask on big surfaces: auto | keep | drop
   gameMode:"auto",           // still scene, live stats: auto (fullscreen app, via companion) | on | off
+  gameVisualizer:false,      // keep the audio visualizer animating in game mode
   editLayout:false,          // drag-to-place mode
   layoutReset:false,         // toggle on to forget dragged positions
   // per-panel placement: {mon:"auto"|"1".."8", pos:"auto"|"tl".."br"}
@@ -1049,7 +1050,8 @@ function simulate(dt){
    set to keep running instead, the local companion reports whether the
    foreground window fills its monitor, and the wallpaper calms itself down: the
    animation loop stops, the waves give way to a still mountain range, the
-   starfield holds its last frame, the visualizer box shows a paused line, a
+   starfield holds its last frame, the visualizer box shows a still line (or
+   keeps animating, if the user asked for that), a
    video or animated background pauses, and the stats move to a once-a-second
    timer. A timer, not requestAnimationFrame, because a page that stops asking
    for frames stops costing the GPU anything between readings.
@@ -1063,6 +1065,7 @@ function gameSeen(fullscreen){
 }
 function syncGameMode(){
   setGameMode(CFG.gameMode==="on" || (CFG.gameMode==="auto" && GAME.fs));
+  gameAudioSync();      // the visualizer toggle can change while game mode stays on
 }
 function setGameMode(on){
   if(on===GAME.on || !domReady) return;
@@ -1085,7 +1088,26 @@ function setGameMode(on){
 function gameStill(){
   drawStars(performance.now());
   drawMountains();
-  drawAudioStill();
+  gameAudioSync();
+}
+/* The visualizer is the one thing game mode can keep moving, on request. It
+   gets its own frame loop that draws that one small canvas and nothing else,
+   so the rest of the page still produces no new frames. */
+let audLooping=false;
+function gameAudioSync(){
+  if(!GAME.on || !LAY_BUILT) return;
+  if(CFG.gameVisualizer && CFG.panels.audio){
+    if(!audLooping){ audLooping=true; requestAnimationFrame(gameAudioLoop); }
+  }else drawAudioStill();
+}
+function gameAudioLoop(now){
+  if(!GAME.on || !CFG.gameVisualizer || !CFG.panels.audio){
+    audLooping=false;
+    if(GAME.on) drawAudioStill();
+    return;
+  }
+  drawAudio(now);
+  requestAnimationFrame(gameAudioLoop);
 }
 /* An <img> cannot be paused. Draw its current frame onto a canvas in the same
    slot and hide the image; the canvas takes the same .bg-img sizing rules,
@@ -1142,10 +1164,11 @@ function metricsUrlWithAudio(ep){
   if(ep.remote) return ep.url;
   try{
     const u=new URL(ep.url);
-    // Game mode hides the visualizer, so there is nothing to diagnose either,
-    // and a watchdog restart of WE in the middle of a game is the last thing
-    // anyone wants.
-    u.searchParams.set("aud", (CFG.audio && !GAME.on) ? (AUD.live?"1":"0") : "x");
+    // Game mode parks the visualizer unless asked to keep it, and a parked one
+    // has nothing to diagnose. (The companion also refuses to restart WE under
+    // a fullscreen app, whatever this says.)
+    const vis = CFG.audio && (!GAME.on || CFG.gameVisualizer);
+    u.searchParams.set("aud", vis ? (AUD.live?"1":"0") : "x");
     u.searchParams.set("audsum", (AUD.lastSum||0).toFixed(5));
     // Piggyback the resolved layout too. On a spanned desktop this is the only
     // way to see which layout the wallpaper actually settled on without
@@ -1636,7 +1659,7 @@ function drawAudio(t){
   ctx.beginPath(); ctx.moveTo(0,mid); ctx.lineTo(w,mid); ctx.stroke();
 }
 /* Game mode keeps the visualizer's box and parks it: a flat line with the
-   state written into a gap in the middle, so it reads as paused, not broken. */
+   mode written into a gap in the middle, so it reads as intended, not broken. */
 function drawAudioStill(){
   const cv=AUD.cv||(AUD.cv=$("#audio-cv")); if(!cv || !CFG.panels.audio) return;
   if(!cv._ctx || Math.abs(cv._w-cv.getBoundingClientRect().width)>1) audioSetup();
@@ -1647,7 +1670,7 @@ function drawAudioStill(){
   ctx.font=`${px}px ${cs.fontFamily}`;
   try{ ctx.letterSpacing=(px*0.18).toFixed(1)+"px"; }catch(e){}
   ctx.textAlign="center"; ctx.textBaseline="middle";
-  const label="AUDIO PAUSED · GAME MODE";
+  const label="GAME MODE";
   const gap=ctx.measureText(label).width/2 + px;
   ctx.strokeStyle=PAL.line; ctx.lineWidth=1;
   ctx.beginPath();
@@ -2909,6 +2932,7 @@ window.wallpaperPropertyListener = {
       if(p.bg_per_monitor!==undefined) CFG.bgPerMonitor = asBool(p.bg_per_monitor);
       if(p.heavy_fx)        CFG.heavyFx      = p.heavy_fx.value;
       if(p.game_mode)       CFG.gameMode     = p.game_mode.value;
+      if(p.game_visualizer!==undefined) CFG.gameVisualizer = asBool(p.game_visualizer);
       if(p.edit_layout!==undefined)    CFG.editLayout   = asBool(p.edit_layout);
       // "Forget dragged positions" is a toggle rather than a button, so act on
       // the moment it goes true and let the user switch it back off.

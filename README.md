@@ -185,8 +185,10 @@ before.
 Wallpaper Engine normally pauses the wallpaper when a game goes fullscreen, and
 that freezes the stats along with everything else. Game mode keeps the stats and
 stops the rest. The flowing terrain turns into a still wireframe mountain range
-and the audio visualizer parks on a flat line marked paused. Any video or GIF
-background stops too. The stat panels keep updating once a second, so a second
+and the audio visualizer parks on a flat line marked `GAME MODE`. Any video or
+GIF background stops too. Switch on **Keep the audio visualizer running in game
+mode** if you want it moving; it costs more than the parked box, because the
+wallpaper has to keep producing frames for it. The stat panels keep updating once a second, so a second
 monitor can still show your CPU and GPU load mid-game.
 
 1. Run the **companion app**. It tells the wallpaper when the window in front
