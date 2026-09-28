@@ -1390,9 +1390,9 @@
 	"ratingsex" : "none",
 	"ratingviolence" : "none",
 	"tags" : [ "Abstract" ],
-	"title" : "CyberOS  HUD v0.3.0",
+	"title" : "CyberOS HUD v0.3.0",
 	"type" : "web",
-	"version" : 24,
+	"version" : 25,
 	"visibility" : "public",
 	"workshopid" : "3742359990",
 	"workshopurl" : "steam://url/CommunityFilePage/3742359990"
