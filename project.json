@@ -1,6 +1,6 @@
 {
 	"contentrating" : "Everyone",
-	"description" : "A retro-futuristic terminal HUD wallpaper with live, audio-reactive metrics: glowing diagnostic gauges, a sparkline system monitor, process list, animated wireframe terrain, clock and weather.\n\nScales cleanly to any resolution and aspect ratio. On ultrawide (21:9) and super-ultrawide (32:9) the HUD stays a centered, cohesive unit while the starfield and terrain fill the full screen behind it.\n\nUse your own picture as the background: point the wallpaper at any image, GIF or WebM video and the HUD sits on top of it. Blur and dim sliders keep the panels readable over busy footage, and you can leave the starfield and terrain running over it if you want both.\n\nRecolor the entire scheme from a single accent swatch. OLED true-black mode included, plus toggles for every panel, scanlines, glow, and more.\n\nGame mode: while a game runs fullscreen, the terrain turns into a still mountain range and the visualizer parks, but the stats stay live, so a side monitor still shows your CPU and GPU load. It needs the companion app, and Wallpaper Engine's \"Other application fullscreen\" setting on \"Keep running\".\n\nMetrics: by default they are physically realistic simulations, so it looks alive on any PC with zero setup. A few values are always real: clock, date, audio spectrum, screen resolution, CPU core count, and RAM. Want your actual CPU, RAM, GPU, disk, network, and process stats? Run the optional companion app (link below). The wallpaper auto-detects it within a second and falls back to simulation if it is not running.\n\nCompanion download and setup: https://github.com/kups14502/cyberos-hud-wallpaper",
+	"description" : "A retro-futuristic terminal HUD wallpaper with live, audio-reactive metrics: glowing diagnostic gauges, a sparkline system monitor, process list, animated wireframe terrain, clock and weather.\n\nScales cleanly to any resolution and aspect ratio. On ultrawide (21:9) and super-ultrawide (32:9) the HUD stays a centered, cohesive unit while the starfield and terrain fill the full screen behind it.\n\nUse your own picture as the background: point the wallpaper at any image, GIF or WebM video and the HUD sits on top of it. Blur and dim sliders keep the panels readable over busy footage, and you can leave the starfield and terrain running over it if you want both.\n\nRecolor the entire scheme from a single accent swatch. OLED true-black mode included, plus toggles for every panel, scanlines, glow, and more.\n\nNew in v0.2.12: pick a scene and a panel style. The scenes are Waves (the original), Data Stream, Solar System and Galaxy. Solar System is a live orrery: the planets and moons sit at their real positions for today's date, and the Moon is labeled with its current phase. The new Blade panel style has cut corners, tick-ring gauges and an LED spectrum visualizer.\n\nGame mode: while a game runs fullscreen, the scene holds still and the visualizer parks, but the stats stay live, so a side monitor still shows your CPU and GPU load. It needs the companion app, and Wallpaper Engine's \"Other application fullscreen\" setting on \"Keep running\".\n\nMetrics: by default they are physically realistic simulations, so it looks alive on any PC with zero setup. A few values are always real: clock, date, audio spectrum, screen resolution, CPU core count, and RAM. Want your actual CPU, RAM, GPU, disk, network, and process stats? Run the optional companion app (link below). The wallpaper auto-detects it within a second and falls back to simulation if it is not running.\n\nCompanion download and setup: https://github.com/kups14502/cyberos-hud-wallpaper",
 	"file" : "index.html",
 	"general" : 
 	{
@@ -8,34 +8,34 @@
 		{
 			"alertcolor" : 
 			{
-				"index" : 3,
-				"order" : 103,
+				"index" : 5,
+				"order" : 105,
 				"text" : "Alert color (high values)",
 				"type" : "color",
 				"value" : "1 0.36 0.36"
 			},
 			"audio_react" : 
 			{
-				"index" : 20,
-				"order" : 120,
+				"index" : 22,
+				"order" : 122,
 				"text" : "Audio-reactive visualizer",
 				"type" : "bool",
 				"value" : true
 			},
 			"auto_location" : 
 			{
-				"index" : 47,
-				"order" : 147,
+				"index" : 49,
+				"order" : 149,
 				"text" : "Auto-detect location (IP)",
 				"type" : "bool",
 				"value" : true
 			},
 			"bg_blur" : 
 			{
-				"index" : 12,
+				"index" : 14,
 				"max" : 60,
 				"min" : 0,
-				"order" : 112,
+				"order" : 114,
 				"step" : 1,
 				"text" : "Blur the background",
 				"type" : "slider",
@@ -43,10 +43,10 @@
 			},
 			"bg_dim" : 
 			{
-				"index" : 13,
+				"index" : 15,
 				"max" : 0.95,
 				"min" : 0,
-				"order" : 113,
+				"order" : 115,
 				"step" : 0.05,
 				"text" : "Dim the background",
 				"type" : "slider",
@@ -54,7 +54,7 @@
 			},
 			"bg_fit" : 
 			{
-				"index" : 11,
+				"index" : 13,
 				"options" : 
 				[
 					{
@@ -74,7 +74,7 @@
 						"value" : "actual"
 					}
 				],
-				"order" : 111,
+				"order" : 113,
 				"text" : "How it fills the screen",
 				"type" : "combo",
 				"value" : "cover"
@@ -82,24 +82,24 @@
 			"bg_image" : 
 			{
 				"fileType" : "image",
-				"index" : 9,
-				"order" : 109,
+				"index" : 11,
+				"order" : 111,
 				"text" : "Background image or GIF (empty = starfield + terrain)",
 				"type" : "file",
 				"value" : ""
 			},
 			"bg_keep_scene" : 
 			{
-				"index" : 14,
-				"order" : 114,
+				"index" : 16,
+				"order" : 116,
 				"text" : "Keep starfield / terrain on top",
 				"type" : "bool",
 				"value" : false
 			},
 			"bg_per_monitor" : 
 			{
-				"index" : 52,
-				"order" : 152,
+				"index" : 54,
+				"order" : 154,
 				"text" : "Give each monitor its own terrain (costs more GPU)",
 				"type" : "bool",
 				"value" : false
@@ -107,31 +107,31 @@
 			"bg_video" : 
 			{
 				"fileType" : "video",
-				"index" : 10,
-				"order" : 110,
+				"index" : 12,
+				"order" : 112,
 				"text" : "Background video: .webm only (overrides the image)",
 				"type" : "file",
 				"value" : ""
 			},
 			"bgcolor" : 
 			{
-				"index" : 1,
-				"order" : 101,
+				"index" : 3,
+				"order" : 103,
 				"text" : "Background color",
 				"type" : "color",
 				"value" : "0.0078 0.031 0.047"
 			},
 			"clock_24h" : 
 			{
-				"index" : 25,
-				"order" : 125,
+				"index" : 27,
+				"order" : 127,
 				"text" : "24-hour clock",
 				"type" : "bool",
 				"value" : true
 			},
 			"clock_units" : 
 			{
-				"index" : 19,
+				"index" : 21,
 				"options" : 
 				[
 					{
@@ -143,30 +143,30 @@
 						"value" : "MHz"
 					}
 				],
-				"order" : 119,
+				"order" : 121,
 				"text" : "CPU clock units",
 				"type" : "combo",
 				"value" : "GHz"
 			},
 			"edit_layout" : 
 			{
-				"index" : 55,
-				"order" : 155,
+				"index" : 57,
+				"order" : 157,
 				"text" : "Layout edit mode (drag panels with the mouse)",
 				"type" : "bool",
 				"value" : false
 			},
 			"elevation" : 
 			{
-				"index" : 36,
-				"order" : 136,
+				"index" : 38,
+				"order" : 138,
 				"text" : "Elevation (m)",
 				"type" : "textinput",
 				"value" : "16"
 			},
 			"game_mode" : 
 			{
-				"index" : 22,
+				"index" : 24,
 				"options" : 
 				[
 					{
@@ -182,25 +182,25 @@
 						"value" : "off"
 					}
 				],
-				"order" : 122,
+				"order" : 124,
 				"text" : "Game mode: still background, live stats",
 				"type" : "combo",
 				"value" : "auto"
 			},
 			"game_visualizer" : 
 			{
-				"index" : 23,
-				"order" : 123,
+				"index" : 25,
+				"order" : 125,
 				"text" : "Keep the audio visualizer running in game mode",
 				"type" : "bool",
 				"value" : false
 			},
 			"glow_strength" : 
 			{
-				"index" : 4,
+				"index" : 6,
 				"max" : 2,
 				"min" : 0,
-				"order" : 104,
+				"order" : 106,
 				"step" : 0.05,
 				"text" : "Glow intensity",
 				"type" : "slider",
@@ -215,56 +215,56 @@
 			},
 			"header_bgimage" : 
 			{
-				"index" : 8,
-				"order" : 108,
+				"index" : 10,
+				"order" : 110,
 				"text" : "── YOUR OWN BACKGROUND ──",
 				"type" : "text"
 			},
 			"header_clock" : 
 			{
-				"index" : 24,
-				"order" : 124,
+				"index" : 26,
+				"order" : 126,
 				"text" : "── CLOCK & IDENTITY ──",
 				"type" : "text"
 			},
 			"header_layout" : 
 			{
-				"index" : 48,
-				"order" : 148,
+				"index" : 50,
+				"order" : 150,
 				"text" : "── MULTI-MONITOR ──",
 				"type" : "text"
 			},
 			"header_location" : 
 			{
-				"index" : 31,
-				"order" : 131,
+				"index" : 33,
+				"order" : 133,
 				"text" : "── LOCATION ──",
 				"type" : "text"
 			},
 			"header_metrics" : 
 			{
-				"index" : 16,
-				"order" : 116,
+				"index" : 18,
+				"order" : 118,
 				"text" : "── METRICS ──",
 				"type" : "text"
 			},
 			"header_panels" : 
 			{
-				"index" : 37,
-				"order" : 137,
+				"index" : 39,
+				"order" : 139,
 				"text" : "── PANELS (toggle on/off) ──",
 				"type" : "text"
 			},
 			"header_place" : 
 			{
-				"index" : 57,
-				"order" : 157,
+				"index" : 59,
+				"order" : 159,
 				"text" : "── PANEL PLACEMENT (monitor 1 = leftmost) ──",
 				"type" : "text"
 			},
 			"heavy_fx" : 
 			{
-				"index" : 53,
+				"index" : 55,
 				"options" : 
 				[
 					{
@@ -280,30 +280,49 @@
 						"value" : "drop"
 					}
 				],
-				"order" : 153,
+				"order" : 155,
 				"text" : "Panel blur / scanline blending on big screens",
 				"type" : "combo",
 				"value" : "auto"
 			},
 			"host_name" : 
 			{
-				"index" : 30,
-				"order" : 130,
+				"index" : 32,
+				"order" : 132,
 				"text" : "Host name",
 				"type" : "textinput",
 				"value" : "Nebula Station"
 			},
 			"host_user" : 
 			{
-				"index" : 28,
-				"order" : 128,
+				"index" : 30,
+				"order" : 130,
 				"text" : "Prompt (user@host)",
 				"type" : "textinput",
 				"value" : "root@unit"
 			},
+			"hud_style" : 
+			{
+				"index" : 2,
+				"options" : 
+				[
+					{
+						"label" : "Classic",
+						"value" : "classic"
+					},
+					{
+						"label" : "Blade",
+						"value" : "blade"
+					}
+				],
+				"order" : 102,
+				"text" : "Panel style",
+				"type" : "combo",
+				"value" : "classic"
+			},
 			"lat_dir" : 
 			{
-				"index" : 33,
+				"index" : 35,
 				"options" : 
 				[
 					{
@@ -315,30 +334,30 @@
 						"value" : "S"
 					}
 				],
-				"order" : 133,
+				"order" : 135,
 				"text" : "Lat hemisphere",
 				"type" : "combo",
 				"value" : "N"
 			},
 			"latitude" : 
 			{
-				"index" : 32,
-				"order" : 132,
+				"index" : 34,
+				"order" : 134,
 				"text" : "Latitude",
 				"type" : "textinput",
 				"value" : "37.7749"
 			},
 			"layout_reset" : 
 			{
-				"index" : 56,
-				"order" : 156,
+				"index" : 58,
+				"order" : 158,
 				"text" : "Forget dragged positions (switch on, then off)",
 				"type" : "bool",
 				"value" : false
 			},
 			"lon_dir" : 
 			{
-				"index" : 35,
+				"index" : 37,
 				"options" : 
 				[
 					{
@@ -350,25 +369,25 @@
 						"value" : "E"
 					}
 				],
-				"order" : 135,
+				"order" : 137,
 				"text" : "Lon hemisphere",
 				"type" : "combo",
 				"value" : "W"
 			},
 			"longitude" : 
 			{
-				"index" : 34,
-				"order" : 134,
+				"index" : 36,
+				"order" : 136,
 				"text" : "Longitude",
 				"type" : "textinput",
 				"value" : "122.4194"
 			},
 			"metric_speed" : 
 			{
-				"index" : 21,
+				"index" : 23,
 				"max" : 3,
 				"min" : 0.2,
-				"order" : 121,
+				"order" : 123,
 				"step" : 0.1,
 				"text" : "Simulated metric liveliness",
 				"type" : "slider",
@@ -376,398 +395,104 @@
 			},
 			"metrics_url" : 
 			{
-				"index" : 18,
-				"order" : 118,
+				"index" : 20,
+				"order" : 120,
 				"text" : "Remote metrics host (blank = this PC)",
 				"type" : "textinput",
 				"value" : ""
 			},
 			"monitor_layout" : 
 			{
-				"index" : 50,
-				"order" : 150,
+				"index" : 52,
+				"order" : 152,
 				"text" : "Monitors, blank = auto  (e.g. 2560x1440@-2560,419; 3840x2160@0,0*; 1440x2560@3840,0)",
 				"type" : "textinput",
 				"value" : ""
 			},
 			"oled_mode" : 
 			{
-				"index" : 2,
-				"order" : 102,
+				"index" : 4,
+				"order" : 104,
 				"text" : "OLED true-black mode",
 				"type" : "bool",
 				"value" : false
 			},
 			"os_name" : 
 			{
-				"index" : 29,
-				"order" : 129,
+				"index" : 31,
+				"order" : 131,
 				"text" : "OS name",
 				"type" : "textinput",
 				"value" : "CyberOS 2.4.1"
 			},
 			"p_audio" : 
 			{
-				"index" : 43,
-				"order" : 143,
+				"index" : 45,
+				"order" : 145,
 				"text" : "Audio visualizer",
 				"type" : "bool",
 				"value" : true
 			},
 			"p_diag" : 
 			{
-				"index" : 39,
-				"order" : 139,
+				"index" : 41,
+				"order" : 141,
 				"text" : "System diagnostics",
 				"type" : "bool",
 				"value" : true
 			},
 			"p_proc" : 
 			{
-				"index" : 40,
-				"order" : 140,
+				"index" : 42,
+				"order" : 142,
 				"text" : "Process list",
 				"type" : "bool",
 				"value" : true
 			},
 			"p_sysmon" : 
 			{
-				"index" : 41,
-				"order" : 141,
+				"index" : 43,
+				"order" : 143,
 				"text" : "System monitor",
 				"type" : "bool",
 				"value" : true
 			},
 			"p_tailnet" : 
 			{
-				"index" : 42,
-				"order" : 142,
+				"index" : 44,
+				"order" : 144,
 				"text" : "Tailnet devices",
 				"type" : "bool",
 				"value" : true
 			},
 			"p_terminal" : 
 			{
-				"index" : 38,
-				"order" : 138,
+				"index" : 40,
+				"order" : 140,
 				"text" : "Terminal",
 				"type" : "bool",
 				"value" : true
 			},
 			"p_tl" : 
 			{
-				"index" : 44,
-				"order" : 144,
+				"index" : 46,
+				"order" : 146,
 				"text" : "Time / location",
 				"type" : "bool",
 				"value" : true
 			},
 			"panel_opacity" : 
 			{
-				"index" : 15,
+				"index" : 17,
 				"max" : 1,
 				"min" : 0.15,
-				"order" : 115,
+				"order" : 117,
 				"step" : 0.05,
 				"text" : "Panel opacity (raise it to read over a photo)",
 				"type" : "slider",
 				"value" : 0.55
 			},
 			"pl_audio_mon" : 
-			{
-				"index" : 64,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "1",
-						"value" : "1"
-					},
-					{
-						"label" : "2",
-						"value" : "2"
-					},
-					{
-						"label" : "3",
-						"value" : "3"
-					},
-					{
-						"label" : "4",
-						"value" : "4"
-					},
-					{
-						"label" : "5",
-						"value" : "5"
-					},
-					{
-						"label" : "6",
-						"value" : "6"
-					},
-					{
-						"label" : "7",
-						"value" : "7"
-					},
-					{
-						"label" : "8",
-						"value" : "8"
-					}
-				],
-				"order" : 164,
-				"text" : "Audio visualizer · monitor",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_audio_pos" : 
-			{
-				"index" : 65,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "Top left",
-						"value" : "tl"
-					},
-					{
-						"label" : "Top center",
-						"value" : "tc"
-					},
-					{
-						"label" : "Top right",
-						"value" : "tr"
-					},
-					{
-						"label" : "Middle left",
-						"value" : "ml"
-					},
-					{
-						"label" : "Center",
-						"value" : "mc"
-					},
-					{
-						"label" : "Middle right",
-						"value" : "mr"
-					},
-					{
-						"label" : "Bottom left",
-						"value" : "bl"
-					},
-					{
-						"label" : "Bottom center",
-						"value" : "bc"
-					},
-					{
-						"label" : "Bottom right",
-						"value" : "br"
-					}
-				],
-				"order" : 165,
-				"text" : "Audio visualizer · position",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_diag_mon" : 
-			{
-				"index" : 60,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "1",
-						"value" : "1"
-					},
-					{
-						"label" : "2",
-						"value" : "2"
-					},
-					{
-						"label" : "3",
-						"value" : "3"
-					},
-					{
-						"label" : "4",
-						"value" : "4"
-					},
-					{
-						"label" : "5",
-						"value" : "5"
-					},
-					{
-						"label" : "6",
-						"value" : "6"
-					},
-					{
-						"label" : "7",
-						"value" : "7"
-					},
-					{
-						"label" : "8",
-						"value" : "8"
-					}
-				],
-				"order" : 160,
-				"text" : "Diagnostics · monitor",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_diag_pos" : 
-			{
-				"index" : 61,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "Top left",
-						"value" : "tl"
-					},
-					{
-						"label" : "Top center",
-						"value" : "tc"
-					},
-					{
-						"label" : "Top right",
-						"value" : "tr"
-					},
-					{
-						"label" : "Middle left",
-						"value" : "ml"
-					},
-					{
-						"label" : "Center",
-						"value" : "mc"
-					},
-					{
-						"label" : "Middle right",
-						"value" : "mr"
-					},
-					{
-						"label" : "Bottom left",
-						"value" : "bl"
-					},
-					{
-						"label" : "Bottom center",
-						"value" : "bc"
-					},
-					{
-						"label" : "Bottom right",
-						"value" : "br"
-					}
-				],
-				"order" : 161,
-				"text" : "Diagnostics · position",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_proc_mon" : 
-			{
-				"index" : 68,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "1",
-						"value" : "1"
-					},
-					{
-						"label" : "2",
-						"value" : "2"
-					},
-					{
-						"label" : "3",
-						"value" : "3"
-					},
-					{
-						"label" : "4",
-						"value" : "4"
-					},
-					{
-						"label" : "5",
-						"value" : "5"
-					},
-					{
-						"label" : "6",
-						"value" : "6"
-					},
-					{
-						"label" : "7",
-						"value" : "7"
-					},
-					{
-						"label" : "8",
-						"value" : "8"
-					}
-				],
-				"order" : 168,
-				"text" : "Process list · monitor",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_proc_pos" : 
-			{
-				"index" : 69,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "Top left",
-						"value" : "tl"
-					},
-					{
-						"label" : "Top center",
-						"value" : "tc"
-					},
-					{
-						"label" : "Top right",
-						"value" : "tr"
-					},
-					{
-						"label" : "Middle left",
-						"value" : "ml"
-					},
-					{
-						"label" : "Center",
-						"value" : "mc"
-					},
-					{
-						"label" : "Middle right",
-						"value" : "mr"
-					},
-					{
-						"label" : "Bottom left",
-						"value" : "bl"
-					},
-					{
-						"label" : "Bottom center",
-						"value" : "bc"
-					},
-					{
-						"label" : "Bottom right",
-						"value" : "br"
-					}
-				],
-				"order" : 169,
-				"text" : "Process list · position",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_sysmon_mon" : 
 			{
 				"index" : 66,
 				"options" : 
@@ -810,11 +535,11 @@
 					}
 				],
 				"order" : 166,
-				"text" : "System monitor · monitor",
+				"text" : "Audio visualizer · monitor",
 				"type" : "combo",
 				"value" : "auto"
 			},
-			"pl_sysmon_pos" : 
+			"pl_audio_pos" : 
 			{
 				"index" : 67,
 				"options" : 
@@ -861,207 +586,11 @@
 					}
 				],
 				"order" : 167,
-				"text" : "System monitor · position",
+				"text" : "Audio visualizer · position",
 				"type" : "combo",
 				"value" : "auto"
 			},
-			"pl_tailnet_mon" : 
-			{
-				"index" : 70,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "1",
-						"value" : "1"
-					},
-					{
-						"label" : "2",
-						"value" : "2"
-					},
-					{
-						"label" : "3",
-						"value" : "3"
-					},
-					{
-						"label" : "4",
-						"value" : "4"
-					},
-					{
-						"label" : "5",
-						"value" : "5"
-					},
-					{
-						"label" : "6",
-						"value" : "6"
-					},
-					{
-						"label" : "7",
-						"value" : "7"
-					},
-					{
-						"label" : "8",
-						"value" : "8"
-					}
-				],
-				"order" : 170,
-				"text" : "Tailnet · monitor",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_tailnet_pos" : 
-			{
-				"index" : 71,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "Top left",
-						"value" : "tl"
-					},
-					{
-						"label" : "Top center",
-						"value" : "tc"
-					},
-					{
-						"label" : "Top right",
-						"value" : "tr"
-					},
-					{
-						"label" : "Middle left",
-						"value" : "ml"
-					},
-					{
-						"label" : "Center",
-						"value" : "mc"
-					},
-					{
-						"label" : "Middle right",
-						"value" : "mr"
-					},
-					{
-						"label" : "Bottom left",
-						"value" : "bl"
-					},
-					{
-						"label" : "Bottom center",
-						"value" : "bc"
-					},
-					{
-						"label" : "Bottom right",
-						"value" : "br"
-					}
-				],
-				"order" : 171,
-				"text" : "Tailnet · position",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_terminal_mon" : 
-			{
-				"index" : 58,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "1",
-						"value" : "1"
-					},
-					{
-						"label" : "2",
-						"value" : "2"
-					},
-					{
-						"label" : "3",
-						"value" : "3"
-					},
-					{
-						"label" : "4",
-						"value" : "4"
-					},
-					{
-						"label" : "5",
-						"value" : "5"
-					},
-					{
-						"label" : "6",
-						"value" : "6"
-					},
-					{
-						"label" : "7",
-						"value" : "7"
-					},
-					{
-						"label" : "8",
-						"value" : "8"
-					}
-				],
-				"order" : 158,
-				"text" : "System · monitor",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_terminal_pos" : 
-			{
-				"index" : 59,
-				"options" : 
-				[
-					{
-						"label" : "Auto",
-						"value" : "auto"
-					},
-					{
-						"label" : "Top left",
-						"value" : "tl"
-					},
-					{
-						"label" : "Top center",
-						"value" : "tc"
-					},
-					{
-						"label" : "Top right",
-						"value" : "tr"
-					},
-					{
-						"label" : "Middle left",
-						"value" : "ml"
-					},
-					{
-						"label" : "Center",
-						"value" : "mc"
-					},
-					{
-						"label" : "Middle right",
-						"value" : "mr"
-					},
-					{
-						"label" : "Bottom left",
-						"value" : "bl"
-					},
-					{
-						"label" : "Bottom center",
-						"value" : "bc"
-					},
-					{
-						"label" : "Bottom right",
-						"value" : "br"
-					}
-				],
-				"order" : 159,
-				"text" : "System · position",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"pl_tl_mon" : 
+			"pl_diag_mon" : 
 			{
 				"index" : 62,
 				"options" : 
@@ -1104,11 +633,11 @@
 					}
 				],
 				"order" : 162,
-				"text" : "Time / location · monitor",
+				"text" : "Diagnostics · monitor",
 				"type" : "combo",
 				"value" : "auto"
 			},
-			"pl_tl_pos" : 
+			"pl_diag_pos" : 
 			{
 				"index" : 63,
 				"options" : 
@@ -1155,102 +684,13 @@
 					}
 				],
 				"order" : 163,
-				"text" : "Time / location · position",
+				"text" : "Diagnostics · position",
 				"type" : "combo",
 				"value" : "auto"
 			},
-			"real_metrics" : 
+			"pl_proc_mon" : 
 			{
-				"index" : 17,
-				"order" : 117,
-				"text" : "Use real metrics if companion app is running",
-				"type" : "bool",
-				"value" : true
-			},
-			"scanlines" : 
-			{
-				"index" : 5,
-				"order" : 105,
-				"text" : "CRT scanlines",
-				"type" : "bool",
-				"value" : true
-			},
-			"schemecolor" : 
-			{
-				"order" : 1,
-				"text" : "Accent color",
-				"type" : "color",
-				"value" : "0 0.851 0.909"
-			},
-			"screen_mode" : 
-			{
-				"index" : 49,
-				"options" : 
-				[
-					{
-						"label" : "Auto-detect",
-						"value" : "auto"
-					},
-					{
-						"label" : "One screen (this monitor)",
-						"value" : "single"
-					},
-					{
-						"label" : "Span all monitors",
-						"value" : "span"
-					}
-				],
-				"order" : 149,
-				"text" : "Screen layout",
-				"type" : "combo",
-				"value" : "auto"
-			},
-			"show_seconds" : 
-			{
-				"index" : 26,
-				"order" : 126,
-				"text" : "Show seconds",
-				"type" : "bool",
-				"value" : true
-			},
-			"show_starfield" : 
-			{
-				"index" : 6,
-				"order" : 106,
-				"text" : "Background particles",
-				"type" : "bool",
-				"value" : true
-			},
-			"show_terrain" : 
-			{
-				"index" : 7,
-				"order" : 107,
-				"text" : "Wireframe terrain",
-				"type" : "bool",
-				"value" : true
-			},
-			"span_preset" : 
-			{
-				"index" : 51,
-				"options" : 
-				[
-					{
-						"label" : "Spread across monitors",
-						"value" : "spread"
-					},
-					{
-						"label" : "Keep on the primary monitor",
-						"value" : "primary"
-					}
-				],
-				"order" : 151,
-				"text" : "Default panel placement",
-				"type" : "combo",
-				"value" : "spread"
-			},
-			"this_monitor" : 
-			{
-				"index" : 54,
+				"index" : 70,
 				"options" : 
 				[
 					{
@@ -1290,17 +730,623 @@
 						"value" : "8"
 					}
 				],
-				"order" : 154,
+				"order" : 170,
+				"text" : "Process list · monitor",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_proc_pos" : 
+			{
+				"index" : 71,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "Top left",
+						"value" : "tl"
+					},
+					{
+						"label" : "Top center",
+						"value" : "tc"
+					},
+					{
+						"label" : "Top right",
+						"value" : "tr"
+					},
+					{
+						"label" : "Middle left",
+						"value" : "ml"
+					},
+					{
+						"label" : "Center",
+						"value" : "mc"
+					},
+					{
+						"label" : "Middle right",
+						"value" : "mr"
+					},
+					{
+						"label" : "Bottom left",
+						"value" : "bl"
+					},
+					{
+						"label" : "Bottom center",
+						"value" : "bc"
+					},
+					{
+						"label" : "Bottom right",
+						"value" : "br"
+					}
+				],
+				"order" : 171,
+				"text" : "Process list · position",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_sysmon_mon" : 
+			{
+				"index" : 68,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "1",
+						"value" : "1"
+					},
+					{
+						"label" : "2",
+						"value" : "2"
+					},
+					{
+						"label" : "3",
+						"value" : "3"
+					},
+					{
+						"label" : "4",
+						"value" : "4"
+					},
+					{
+						"label" : "5",
+						"value" : "5"
+					},
+					{
+						"label" : "6",
+						"value" : "6"
+					},
+					{
+						"label" : "7",
+						"value" : "7"
+					},
+					{
+						"label" : "8",
+						"value" : "8"
+					}
+				],
+				"order" : 168,
+				"text" : "System monitor · monitor",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_sysmon_pos" : 
+			{
+				"index" : 69,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "Top left",
+						"value" : "tl"
+					},
+					{
+						"label" : "Top center",
+						"value" : "tc"
+					},
+					{
+						"label" : "Top right",
+						"value" : "tr"
+					},
+					{
+						"label" : "Middle left",
+						"value" : "ml"
+					},
+					{
+						"label" : "Center",
+						"value" : "mc"
+					},
+					{
+						"label" : "Middle right",
+						"value" : "mr"
+					},
+					{
+						"label" : "Bottom left",
+						"value" : "bl"
+					},
+					{
+						"label" : "Bottom center",
+						"value" : "bc"
+					},
+					{
+						"label" : "Bottom right",
+						"value" : "br"
+					}
+				],
+				"order" : 169,
+				"text" : "System monitor · position",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_tailnet_mon" : 
+			{
+				"index" : 72,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "1",
+						"value" : "1"
+					},
+					{
+						"label" : "2",
+						"value" : "2"
+					},
+					{
+						"label" : "3",
+						"value" : "3"
+					},
+					{
+						"label" : "4",
+						"value" : "4"
+					},
+					{
+						"label" : "5",
+						"value" : "5"
+					},
+					{
+						"label" : "6",
+						"value" : "6"
+					},
+					{
+						"label" : "7",
+						"value" : "7"
+					},
+					{
+						"label" : "8",
+						"value" : "8"
+					}
+				],
+				"order" : 172,
+				"text" : "Tailnet · monitor",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_tailnet_pos" : 
+			{
+				"index" : 73,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "Top left",
+						"value" : "tl"
+					},
+					{
+						"label" : "Top center",
+						"value" : "tc"
+					},
+					{
+						"label" : "Top right",
+						"value" : "tr"
+					},
+					{
+						"label" : "Middle left",
+						"value" : "ml"
+					},
+					{
+						"label" : "Center",
+						"value" : "mc"
+					},
+					{
+						"label" : "Middle right",
+						"value" : "mr"
+					},
+					{
+						"label" : "Bottom left",
+						"value" : "bl"
+					},
+					{
+						"label" : "Bottom center",
+						"value" : "bc"
+					},
+					{
+						"label" : "Bottom right",
+						"value" : "br"
+					}
+				],
+				"order" : 173,
+				"text" : "Tailnet · position",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_terminal_mon" : 
+			{
+				"index" : 60,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "1",
+						"value" : "1"
+					},
+					{
+						"label" : "2",
+						"value" : "2"
+					},
+					{
+						"label" : "3",
+						"value" : "3"
+					},
+					{
+						"label" : "4",
+						"value" : "4"
+					},
+					{
+						"label" : "5",
+						"value" : "5"
+					},
+					{
+						"label" : "6",
+						"value" : "6"
+					},
+					{
+						"label" : "7",
+						"value" : "7"
+					},
+					{
+						"label" : "8",
+						"value" : "8"
+					}
+				],
+				"order" : 160,
+				"text" : "System · monitor",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_terminal_pos" : 
+			{
+				"index" : 61,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "Top left",
+						"value" : "tl"
+					},
+					{
+						"label" : "Top center",
+						"value" : "tc"
+					},
+					{
+						"label" : "Top right",
+						"value" : "tr"
+					},
+					{
+						"label" : "Middle left",
+						"value" : "ml"
+					},
+					{
+						"label" : "Center",
+						"value" : "mc"
+					},
+					{
+						"label" : "Middle right",
+						"value" : "mr"
+					},
+					{
+						"label" : "Bottom left",
+						"value" : "bl"
+					},
+					{
+						"label" : "Bottom center",
+						"value" : "bc"
+					},
+					{
+						"label" : "Bottom right",
+						"value" : "br"
+					}
+				],
+				"order" : 161,
+				"text" : "System · position",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_tl_mon" : 
+			{
+				"index" : 64,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "1",
+						"value" : "1"
+					},
+					{
+						"label" : "2",
+						"value" : "2"
+					},
+					{
+						"label" : "3",
+						"value" : "3"
+					},
+					{
+						"label" : "4",
+						"value" : "4"
+					},
+					{
+						"label" : "5",
+						"value" : "5"
+					},
+					{
+						"label" : "6",
+						"value" : "6"
+					},
+					{
+						"label" : "7",
+						"value" : "7"
+					},
+					{
+						"label" : "8",
+						"value" : "8"
+					}
+				],
+				"order" : 164,
+				"text" : "Time / location · monitor",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"pl_tl_pos" : 
+			{
+				"index" : 65,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "Top left",
+						"value" : "tl"
+					},
+					{
+						"label" : "Top center",
+						"value" : "tc"
+					},
+					{
+						"label" : "Top right",
+						"value" : "tr"
+					},
+					{
+						"label" : "Middle left",
+						"value" : "ml"
+					},
+					{
+						"label" : "Center",
+						"value" : "mc"
+					},
+					{
+						"label" : "Middle right",
+						"value" : "mr"
+					},
+					{
+						"label" : "Bottom left",
+						"value" : "bl"
+					},
+					{
+						"label" : "Bottom center",
+						"value" : "bc"
+					},
+					{
+						"label" : "Bottom right",
+						"value" : "br"
+					}
+				],
+				"order" : 165,
+				"text" : "Time / location · position",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"real_metrics" : 
+			{
+				"index" : 19,
+				"order" : 119,
+				"text" : "Use real metrics if companion app is running",
+				"type" : "bool",
+				"value" : true
+			},
+			"scanlines" : 
+			{
+				"index" : 7,
+				"order" : 107,
+				"text" : "CRT scanlines",
+				"type" : "bool",
+				"value" : true
+			},
+			"scene_style" : 
+			{
+				"index" : 1,
+				"options" : 
+				[
+					{
+						"label" : "Waves (flowing wireframe)",
+						"value" : "waves"
+					},
+					{
+						"label" : "Data Stream",
+						"value" : "datastream"
+					},
+					{
+						"label" : "Solar System",
+						"value" : "solar"
+					},
+					{
+						"label" : "Galaxy",
+						"value" : "galaxy"
+					}
+				],
+				"order" : 101,
+				"text" : "Scene",
+				"type" : "combo",
+				"value" : "waves"
+			},
+			"schemecolor" : 
+			{
+				"order" : 1,
+				"text" : "Accent color",
+				"type" : "color",
+				"value" : "0 0.851 0.909"
+			},
+			"screen_mode" : 
+			{
+				"index" : 51,
+				"options" : 
+				[
+					{
+						"label" : "Auto-detect",
+						"value" : "auto"
+					},
+					{
+						"label" : "One screen (this monitor)",
+						"value" : "single"
+					},
+					{
+						"label" : "Span all monitors",
+						"value" : "span"
+					}
+				],
+				"order" : 151,
+				"text" : "Screen layout",
+				"type" : "combo",
+				"value" : "auto"
+			},
+			"show_seconds" : 
+			{
+				"index" : 28,
+				"order" : 128,
+				"text" : "Show seconds",
+				"type" : "bool",
+				"value" : true
+			},
+			"show_starfield" : 
+			{
+				"index" : 8,
+				"order" : 108,
+				"text" : "Background particles",
+				"type" : "bool",
+				"value" : true
+			},
+			"show_terrain" : 
+			{
+				"index" : 9,
+				"order" : 109,
+				"text" : "Wireframe terrain",
+				"type" : "bool",
+				"value" : true
+			},
+			"span_preset" : 
+			{
+				"index" : 53,
+				"options" : 
+				[
+					{
+						"label" : "Spread across monitors",
+						"value" : "spread"
+					},
+					{
+						"label" : "Keep on the primary monitor",
+						"value" : "primary"
+					}
+				],
+				"order" : 153,
+				"text" : "Default panel placement",
+				"type" : "combo",
+				"value" : "spread"
+			},
+			"this_monitor" : 
+			{
+				"index" : 56,
+				"options" : 
+				[
+					{
+						"label" : "Auto",
+						"value" : "auto"
+					},
+					{
+						"label" : "1",
+						"value" : "1"
+					},
+					{
+						"label" : "2",
+						"value" : "2"
+					},
+					{
+						"label" : "3",
+						"value" : "3"
+					},
+					{
+						"label" : "4",
+						"value" : "4"
+					},
+					{
+						"label" : "5",
+						"value" : "5"
+					},
+					{
+						"label" : "6",
+						"value" : "6"
+					},
+					{
+						"label" : "7",
+						"value" : "7"
+					},
+					{
+						"label" : "8",
+						"value" : "8"
+					}
+				],
+				"order" : 156,
 				"text" : "When not spanning, this wallpaper is on monitor",
 				"type" : "combo",
 				"value" : "auto"
 			},
 			"ui_scale" : 
 			{
-				"index" : 45,
+				"index" : 47,
 				"max" : 1.8,
 				"min" : 0.6,
-				"order" : 145,
+				"order" : 147,
 				"step" : 0.05,
 				"text" : "Interface scale",
 				"type" : "slider",
@@ -1308,10 +1354,10 @@
 			},
 			"uptime_days" : 
 			{
-				"index" : 27,
+				"index" : 29,
 				"max" : 999,
 				"min" : 0,
-				"order" : 127,
+				"order" : 129,
 				"step" : 1,
 				"text" : "Uptime base (days)",
 				"type" : "slider",
@@ -1319,7 +1365,7 @@
 			},
 			"weather_unit" : 
 			{
-				"index" : 46,
+				"index" : 48,
 				"options" : 
 				[
 					{
@@ -1331,7 +1377,7 @@
 						"value" : "C"
 					}
 				],
-				"order" : 146,
+				"order" : 148,
 				"text" : "Weather units",
 				"type" : "combo",
 				"value" : "F"
@@ -1344,7 +1390,7 @@
 	"ratingsex" : "none",
 	"ratingviolence" : "none",
 	"tags" : [ "Abstract" ],
-	"title" : "CyberOS  HUD v0.2.11",
+	"title" : "CyberOS  HUD v0.2.12",
 	"type" : "web",
 	"version" : 24,
 	"visibility" : "public",

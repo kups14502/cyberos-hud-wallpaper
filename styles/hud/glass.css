@@ -1,0 +1,275 @@
+/* =========================================================================
+   HUD STYLE: GLASS
+   Soft rounded cards with a hairline edge that catches a little light along
+   the top, light numerals, thin dials and pill bars. No backdrop-filter and
+   no blend modes: the depth comes from background layers and a plain
+   box-shadow, which add no render target on a big span (see LARGE-SURFACE
+   ECONOMY), so the look is the same at 1080p and across three monitors.
+   Every rule is scoped under body.hud-glass.
+   ========================================================================= */
+body.hud-glass{
+  --gl-ui:    "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --gl-small: "Segoe UI Variable Small","Segoe UI",system-ui,sans-serif;
+  --gl-num:   "Bahnschrift","Segoe UI Variable Display","Segoe UI",sans-serif;
+  --gl-mono:  "Cascadia Mono","Cascadia Code","JetBrains Mono",Consolas,ui-monospace,monospace;
+  --gl-r: 0.6rem;
+  font-family: var(--gl-ui);
+  letter-spacing: 0.01em;
+}
+
+/* ---- the card ----
+   The fill is the user's panel color over a little smoke: with no blur to
+   frost it, a darker pane is what keeps the scene's lines behind the text
+   instead of running through it. The border is a hairline, a step
+   brighter along the top; ::before lays a highlight on that top edge that
+   fades out toward the corners, the way light catches the rim of a glass
+   pane, and ::after is the faint glow that light leaves just under the rim.
+   The .win is its own stacking context (position + z-index), so z-index:-1
+   keeps that glow above the fill and under the text. */
+body.hud-glass .win{
+  border-radius: var(--gl-r);
+  border: 1px solid var(--accent-faint);
+  border-top-color: var(--accent-line);
+  background: linear-gradient(var(--panel), var(--panel)), rgba(0,0,0,0.42);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: 0 0.9rem 2.2rem rgba(0,0,0,0.42);
+}
+body.hud-glass .win::before{
+  content:""; position:absolute; top:-1px; left:10%; right:10%; height:1px;
+  background: linear-gradient(90deg, transparent, var(--accent-bright), transparent);
+  opacity:0.72; pointer-events:none;
+}
+body.hud-glass .win::after{
+  content:""; position:absolute; inset:0; z-index:-1; border-radius:inherit; pointer-events:none;
+  background: radial-gradient(75% 3.2rem at 50% 0, var(--accent-faint), transparent);
+  opacity:0.45;
+}
+body.hud-glass .win .bdy{ padding: 1.05rem 1.2rem 1.1rem; }
+
+/* section labels: small tracked caps with a status dot, no rule, no glow */
+body.hud-glass .sec-h{
+  font-family: var(--gl-small); font-size:0.62rem; font-weight:600;
+  letter-spacing:0.22em; color:var(--text-dim); text-shadow:none;
+  gap:0.6rem; margin-bottom:0.95rem;
+}
+body.hud-glass .sec-h .plus{ display:none; }
+body.hud-glass .sec-h::before{
+  content:""; flex:none; width:0.34rem; height:0.34rem; border-radius:50%;
+  background:var(--accent);
+}
+body.hud-glass .sec-h::after{ display:none; }
+
+/* ---- OS label above the identity card ---- */
+body.hud-glass #os-label{
+  font-family: var(--gl-small); font-size:0.7rem; font-weight:600;
+  letter-spacing:0.28em; color:var(--text); text-shadow:none;
+  align-items:center; gap:0.6rem; padding:0 0.3rem 0.05rem;
+}
+body.hud-glass #os-label .ver{
+  font-family: var(--gl-num); font-size:0.62rem; font-weight:400; letter-spacing:0.08em;
+  color:var(--text-dim); border:1px solid var(--accent-faint); border-radius:1rem;
+  padding:0.08rem 0.5rem;
+}
+
+/* ---- identity: the block-letter logo becomes an app tile ----
+   Rows and columns overlap by a hair: block glyphs that only touch leave a
+   faint antialiased seam at every fractional pixel edge. */
+body.hud-glass .nf{ gap:0.2rem 1.25rem; }
+body.hud-glass .nf pre{
+  font-family: var(--gl-mono); font-size:0.5rem; line-height:0.92; letter-spacing:-0.04em;
+  color:var(--accent); text-shadow:none;
+  padding:0.85rem 0.8rem; border-radius:0.75rem;
+  border:1px solid var(--accent-faint);
+  background: linear-gradient(160deg, var(--accent-faint), transparent 70%);
+}
+/* label | value columns. The value text arrives as ": value", so a mono
+   face and a 2ch negative indent tuck the colon and space out of view. */
+body.hud-glass .nf .info div{
+  display:grid; grid-template-columns:5.1rem 1fr; align-items:baseline;
+  font-size:0.72rem; line-height:1.7;
+}
+body.hud-glass .nf .info b{
+  font-family: var(--gl-small); font-weight:400; font-size:0.66rem;
+  letter-spacing:0.06em; color:var(--text-dim);
+}
+body.hud-glass .nf .info span{
+  font-family: var(--gl-mono); font-size:0.7rem; font-weight:350; letter-spacing:0;
+  color:var(--text); text-indent:-2ch; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+}
+
+/* ---- diagnostics: hairline dials, light numerals ----
+   The px values inside the dial are SVG user units of its 110-unit viewBox,
+   so they scale with the dial the way the classic ones do. */
+body.hud-glass .gauges{ justify-content:space-between; padding:0 0.2rem; }
+body.hud-glass .gauge{ width:6.6rem; position:relative; }
+body.hud-glass .gauge::before{
+  content:""; position:absolute; left:23%; top:23%; width:54%; height:54%;
+  border-radius:50%; border:1px solid var(--accent-faint); opacity:0.55;
+}
+body.hud-glass .gauge .g-track{ stroke:var(--accent-faint); stroke-width:1.6; }
+body.hud-glass .gauge .g-arc{ stroke-width:3; filter:none; }
+body.hud-glass .gauge .g-val{
+  font-family: var(--gl-num); font-weight:300; font-size:20px; letter-spacing:0;
+  fill:var(--accent-bright); transform:translateY(3px);
+}
+body.hud-glass .gauge .g-lbl{
+  font-family: var(--gl-small); font-weight:600; font-size:7.2px; letter-spacing:1.6px;
+  fill:var(--text-dim); transform:translateY(38px);
+}
+
+/* ---- time / location / weather ---- */
+body.hud-glass .tl-grid{ grid-template-columns:1.15fr 1fr; gap:1.1rem; }
+body.hud-glass .tl-block{ display:flex; flex-wrap:wrap; align-items:baseline; align-content:flex-start; }
+body.hud-glass .tl-block > *{ flex:0 0 100%; }
+body.hud-glass .tl-block .h{
+  font-family: var(--gl-small); font-size:0.62rem; font-weight:600; letter-spacing:0.22em;
+  color:var(--text-dim); margin-bottom:0.55rem;
+}
+body.hud-glass .tl-block .h .plus{ display:none; }
+body.hud-glass #clock{
+  font-family: var(--gl-num); font-weight:300; font-size:2.55rem; letter-spacing:0.01em;
+  color:var(--accent-bright); text-shadow:none; line-height:1;
+}
+body.hud-glass #clock small{
+  font-family: var(--gl-small); font-size:0.26em; font-weight:600; letter-spacing:0.16em;
+  color:var(--text-dim); margin-left:0.45em; vertical-align:0.95em;
+}
+/* weekday and date share one line under the clock: "Sunday  2026 / 09 / 27" */
+body.hud-glass #weekday{
+  flex:0 0 auto; order:5; margin-top:0.6rem;
+  font-size:0.78rem; font-weight:600; letter-spacing:0.02em; color:var(--text);
+  text-shadow:none; text-transform:lowercase;
+}
+body.hud-glass #weekday::first-letter{ text-transform:uppercase; }
+body.hud-glass #date{
+  flex:0 0 auto; order:6; margin:0.6rem 0 0 0.6rem;
+  font-family: var(--gl-num); font-size:0.74rem; letter-spacing:0.04em; word-spacing:-0.12em;
+  color:var(--text-dim); font-variant-numeric:tabular-nums;
+}
+body.hud-glass #coords{
+  font-family: var(--gl-num); font-size:0.78rem; letter-spacing:0.02em; color:var(--text);
+  text-shadow:none; font-variant-numeric:tabular-nums; margin-top:0;
+}
+body.hud-glass #elev{
+  font-family: var(--gl-small); font-size:0.6rem; letter-spacing:0.18em; color:var(--text-dim);
+  margin-top:0.25rem;
+}
+body.hud-glass #weather{
+  font-family: var(--gl-small); font-size:0.64rem; letter-spacing:0.08em; color:var(--text);
+  text-shadow:none; margin-top:0.6rem; line-height:1.3;
+}
+body.hud-glass #weather .wx-t{
+  font-family: var(--gl-num); font-weight:300; font-size:1.45rem; letter-spacing:0;
+  color:var(--accent-bright); margin-right:0.15rem;
+}
+body.hud-glass #weather .wx-sub{
+  font-size:0.56rem; letter-spacing:0.06em; color:var(--text-dim); margin-top:0.25rem;
+}
+
+/* ---- visualizer card ---- */
+body.hud-glass #audio{ height:6rem; }
+body.hud-glass #audio .bdy{ padding:0.5rem 0.9rem; }
+body.hud-glass #audio-cv{ filter:none; }
+
+/* ---- system monitor ---- */
+/* Group names sit in the label color and step up by weight alone, so the
+   readings stay the brightest thing in the card. (--accent-dim reads well on
+   a pale accent but nearly vanishes on a saturated mid-tone like the cyan.) */
+body.hud-glass .mgrp{
+  font-family: var(--gl-small); font-size:0.6rem; font-weight:700; letter-spacing:0.22em;
+  color:var(--text-dim); margin:0.8rem 0 0.15rem;
+}
+body.hud-glass .mgrp:first-child{ margin-top:0; }
+body.hud-glass .mgrp .clk{
+  font-family: var(--gl-num); font-size:0.68rem; font-weight:400; letter-spacing:0.04em;
+  color:var(--text-dim); text-shadow:none;
+}
+body.hud-glass .mrow{
+  grid-template-columns:4.1rem 1fr 4.7rem; gap:0.9rem; padding:0.36rem 0; font-size:0.72rem;
+}
+body.hud-glass .mrow + .mrow{ border-top:0; }
+body.hud-glass .mrow .lbl{ color:var(--text-dim); font-size:0.7rem; }
+body.hud-glass .mrow .val{
+  font-family: var(--gl-num); font-size:0.84rem; font-weight:350; letter-spacing:0.02em;
+  color:var(--text); text-shadow:none; min-width:0; font-variant-numeric:tabular-nums;
+}
+body.hud-glass .mrow .val.dual{ font-size:0.66rem; line-height:1.3; color:var(--text-dim); }
+body.hud-glass .spark{ height:1.5rem; }
+
+/* Pill bars. The markup is 18 segments; with the gaps closed they read as
+   one bar, the track is the rounded container, and the first segment past
+   the fill carries a round cap so the fill ends in a half circle too. No
+   transition: a segment fading in behind a cap that has already moved shows
+   as a gray notch at the end of the bar. Two lit segments that meet on a
+   fractional pixel antialias into a faint seam (a zoomed span screen hits
+   this), so each one also paints a 1px sliver over its right neighbor. */
+body.hud-glass .segbar{
+  gap:0; height:0.3rem; border-radius:1rem; overflow:hidden;
+  background:var(--accent-faint);
+}
+body.hud-glass .segbar i{ position:relative; background:transparent; box-shadow:none; transition:none; }
+body.hud-glass .segbar i.on{ background:var(--accent); box-shadow:1px 0 0 var(--accent); }
+body.hud-glass .segbar i.hot{ background:var(--alert); box-shadow:1px 0 0 var(--alert); }
+body.hud-glass .segbar i.on + i:not(.on)::before,
+body.hud-glass .segbar i.hot + i:not(.hot)::before{
+  content:""; position:absolute; top:0; bottom:0; left:-0.15rem; width:0.3rem;
+  border-radius:50%; background:var(--accent);
+}
+body.hud-glass .segbar i.hot + i:not(.hot)::before{ background:var(--alert); }
+
+/* drives: the same pill; here the fill is one element and can glide */
+body.hud-glass .drv{ padding:0.45rem 0; }
+body.hud-glass .drv + .drv{ border-top:0; }
+body.hud-glass .drv .top{ gap:0.8rem; }
+body.hud-glass .drv .id{ font-family: var(--gl-num); font-weight:350; font-size:0.8rem; color:var(--text); }
+body.hud-glass .drv .pct{
+  font-family: var(--gl-num); font-weight:350; font-size:0.8rem; color:var(--text); text-shadow:none;
+}
+body.hud-glass .drv .bar{
+  display:block; padding:0; border:0; height:0.3rem; border-radius:1rem;
+  background:var(--accent-faint);
+}
+body.hud-glass .drv .bar i{
+  border-radius:1rem; box-shadow:none; background:var(--accent);
+}
+body.hud-glass .drv .bar i.hot{ background:var(--alert); box-shadow:none; }
+body.hud-glass .drv .sub{ font-size:0.6rem; letter-spacing:0.06em; margin-top:0.3rem; }
+body.hud-glass .drv .sub .io{ font-family: var(--gl-num); letter-spacing:0.03em; color:var(--text-dim); }
+
+/* ---- process list ---- */
+body.hud-glass .ptbl{ font-size:0.72rem; }
+body.hud-glass .ptbl th{
+  font-family: var(--gl-small); font-size:0.56rem; font-weight:600; letter-spacing:0.2em;
+  color:var(--text-dim); padding:0 0.35rem 0.45rem; border-bottom:1px solid var(--accent-faint);
+}
+body.hud-glass .ptbl td{ padding:0.36rem 0.35rem; color:var(--text); vertical-align:baseline; }
+body.hud-glass .ptbl tbody tr:first-child td{ padding-top:0.6rem; }
+body.hud-glass .ptbl td.n{ font-family: var(--gl-num); font-weight:350; color:var(--text); font-size:0.78rem; }
+body.hud-glass .ptbl tr td:first-child{ text-align:left; color:var(--text-dim); }
+body.hud-glass .ptbl tr td:nth-child(2){ color:var(--accent-bright); }
+
+/* ---- tailnet ---- */
+body.hud-glass .tn{ gap:0.7rem; padding:0.34rem 0; font-size:0.72rem; }
+body.hud-glass .tn + .tn{ border-top:0; }
+body.hud-glass .tn .led{
+  width:0.4rem; height:0.4rem;
+  box-shadow:0 0 0 0.18rem var(--accent-faint);
+}
+body.hud-glass .tn.off .led{ box-shadow:none; }
+body.hud-glass .tn .nm b{ font-weight:600; color:var(--text); }
+body.hud-glass .tn .nm .os{ font-size:0.62rem; letter-spacing:0.04em; }
+body.hud-glass .tn .st{ font-size:0.62rem; letter-spacing:0.06em; color:var(--text-dim); }
+
+/* ---- screen chrome: rounded corner marks, a page-dot row, a quiet tag ---- */
+body.hud-glass .corner{ width:1.6rem; height:1.6rem; border-color:var(--accent-faint); }
+body.hud-glass .corner.tl{ border-top-left-radius:0.9rem; }
+body.hud-glass .corner.tr{ border-top-right-radius:0.9rem; }
+body.hud-glass .corner.bl{ border-bottom-left-radius:0.9rem; }
+body.hud-glass .corner.br{ border-bottom-right-radius:0.9rem; }
+body.hud-glass .bottom-hash{ gap:0.45rem; align-items:center; opacity:0.55; }
+body.hud-glass .bottom-hash i{
+  width:0.32rem; height:0.32rem; border-radius:1rem; transform:none;
+  background:var(--accent-dim);
+}
+body.hud-glass .bottom-hash i:nth-child(3){ width:1.4rem; background:var(--accent); }
+body.hud-glass #mode-tag{ font-family: var(--gl-small); font-size:0.58rem; letter-spacing:0.2em; }

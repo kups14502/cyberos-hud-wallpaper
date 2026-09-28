@@ -47,8 +47,22 @@ adjustable live, no editing required:
 **Panels** — toggle any panel on/off independently: terminal, diagnostics,
 process list, system monitor, audio visualizer, time/location.
 
-**Scene** — starfield on/off, wireframe terrain on/off, audio reactivity on/off,
-metric animation speed.
+**Scene**: pick the animated background.
+- **Waves**: the original flowing wireframe terrain.
+- **Data Stream**: sparse columns of hex glyphs falling onto a glass floor. In
+  game mode the streams stop and only the floor stays.
+- **Solar System**: a live orrery. The planets, the Moon and Jupiter's four big
+  moons sit at their real positions for today's date and move at their real
+  speed, so they look still. The Moon is labeled with its current phase. Orbit
+  sizes are spaced to fit the screen, not drawn to scale.
+- **Galaxy**: a tilted spiral galaxy that turns once every 18 minutes.
+
+**Background particles** and **Wireframe terrain** switch off the scene's two
+layers, and audio reactivity and metric animation speed sit here too.
+
+**Panel style**: **Classic** is the original look. **Blade** has cut corners,
+bracket ticks, numbered headers, tick-ring gauges and an LED spectrum
+visualizer.
 
 **Your own background** — point **Background image or GIF** at any picture on
 your PC, or **Background video** at a `.webm`, and the HUD draws on top of it.
@@ -399,6 +413,8 @@ a JSON blob. (Simpler alternative: a shortcut to the same `pythonw` + script in
 index.html          the wallpaper (everything is in here)
 project.json        Wallpaper Engine manifest + property definitions
 metrics_server.py   optional real-metrics server (psutil)
+styles/             source of each scene and panel style; tools/inline_styles.py
+                    builds the ones project.json offers into index.html
 preview.jpg         Wallpaper Engine thumbnail
 README.md           this file
 ```

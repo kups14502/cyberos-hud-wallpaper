@@ -1,0 +1,340 @@
+/* =========================================================================
+   HUD STYLE: Blade
+   Angular military panels. Every panel is cut on two opposite corners, with
+   the cut drawn by the fill gradient itself (no clip-path: that is one more
+   full-surface render target, see LARGE-SURFACE ECONOMY). The two square
+   corners carry bright brackets and the outer edge carries an accent spine,
+   so a left-column panel and a right-column panel mirror each other across
+   the screen. Bahnschrift (ships with Windows 10/11) sets the headers and the
+   big numerals; tables and spec lines keep the monospace.
+   Every rule is scoped under body.hud-blade.
+   ========================================================================= */
+
+body.hud-blade{
+  --bl-font: "Bahnschrift","DIN Alternate","DIN 2014","Barlow Semi Condensed",
+             "Segoe UI",sans-serif;
+  --bl-c: 0.95rem;                        /* corner cut, along each edge */
+  --bl-d: calc(var(--bl-c) * 0.7071);     /* the same cut, square to the diagonal */
+  --bl-arm: 0.75rem;                      /* bracket arm length */
+}
+
+/* ------------------------------- PANEL SHELL ------------------------------ */
+/* One gradient paints the fill with both cuts and their diagonal hairlines;
+   four solid layers draw the straight edges, each stopping where a cut starts.
+   The border stays 1px (transparent) so the box measures exactly as classic. */
+/* The shadow is a rectangle and cannot follow the cuts, so it stays short and
+   light: enough to lift a panel off a bright scene without a square halo
+   showing past the notched corners. */
+body.hud-blade .win{
+  border-color: transparent;
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  box-shadow: 0 0 0.6rem rgba(0,0,0,0.35);
+  background:
+    linear-gradient(var(--panel-brd),var(--panel-brd)) right top    / calc(100% - var(--bl-c)) 1px no-repeat,
+    linear-gradient(var(--panel-brd),var(--panel-brd)) left  bottom / 1px calc(100% - var(--bl-c)) no-repeat,
+    linear-gradient(var(--panel-brd),var(--panel-brd)) left  bottom / calc(100% - var(--bl-c)) 1px no-repeat,
+    linear-gradient(var(--panel-brd),var(--panel-brd)) right top    / 1px calc(100% - var(--bl-c)) no-repeat,
+    linear-gradient(135deg,
+      transparent calc(var(--bl-d) - 1px), var(--panel-brd) var(--bl-d), var(--panel) calc(var(--bl-d) + 1px),
+      var(--panel) calc(100% - var(--bl-d) - 1px), var(--panel-brd) calc(100% - var(--bl-d)),
+      transparent calc(100% - var(--bl-d) + 1px));
+  background-origin: border-box;
+}
+/* Right-hand stacks mirror: cuts on the top-right and bottom-left. */
+body.hud-blade .col.x-r .win{
+  background:
+    linear-gradient(var(--panel-brd),var(--panel-brd)) left  top    / calc(100% - var(--bl-c)) 1px no-repeat,
+    linear-gradient(var(--panel-brd),var(--panel-brd)) right bottom / 1px calc(100% - var(--bl-c)) no-repeat,
+    linear-gradient(var(--panel-brd),var(--panel-brd)) right bottom / calc(100% - var(--bl-c)) 1px no-repeat,
+    linear-gradient(var(--panel-brd),var(--panel-brd)) left  top    / 1px calc(100% - var(--bl-c)) no-repeat,
+    linear-gradient(225deg,
+      transparent calc(var(--bl-d) - 1px), var(--panel-brd) var(--bl-d), var(--panel) calc(var(--bl-d) + 1px),
+      var(--panel) calc(100% - var(--bl-d) - 1px), var(--panel-brd) calc(100% - var(--bl-d)),
+      transparent calc(100% - var(--bl-d) + 1px));
+  background-origin: border-box;
+}
+
+/* Accent spine on the outer edge: a long bar that grows straight out of the
+   cut's vertex, flush with the border's outer pixel, and one short index mark
+   after it. Anchored to the vertex so it reads as the frame thickening, not a
+   loose mark beside it. Capped so a short panel never runs it into the
+   bracket on its lower corner. */
+body.hud-blade .win::before{
+  content:""; position:absolute; pointer-events:none; z-index:1;
+  left:-1px; top:calc(var(--bl-c) - 1px);
+  width:0.16rem; height:3.6rem; max-height:calc(100% - var(--bl-c) - 1.4rem);
+  background:
+    linear-gradient(var(--accent),var(--accent))           0 0      / 100% 2.6rem no-repeat,
+    linear-gradient(var(--accent-glow),var(--accent-glow)) 0 3rem   / 100% 0.6rem no-repeat;
+}
+body.hud-blade .col.x-r .win::before{ left:auto; right:-1px; }
+
+/* Brackets on the two square corners, plus a tick ruler on the bottom edge
+   just short of the lower cut. */
+body.hud-blade .win::after{
+  content:""; position:absolute; pointer-events:none; z-index:1;
+  inset:-1px;
+  background:
+    linear-gradient(var(--accent),var(--accent)) right top   / var(--bl-arm) 0.1rem no-repeat,
+    linear-gradient(var(--accent),var(--accent)) right top   / 0.1rem var(--bl-arm) no-repeat,
+    linear-gradient(var(--accent),var(--accent)) left bottom / var(--bl-arm) 0.1rem no-repeat,
+    linear-gradient(var(--accent),var(--accent)) left bottom / 0.1rem var(--bl-arm) no-repeat,
+    repeating-linear-gradient(90deg, var(--accent-line) 0 1px, transparent 1px 0.36rem)
+      right calc(var(--bl-c) + 0.55rem) bottom 1px / 2.9rem 0.28rem no-repeat;
+}
+body.hud-blade .col.x-r .win::after{
+  background:
+    linear-gradient(var(--accent),var(--accent)) left top     / var(--bl-arm) 0.1rem no-repeat,
+    linear-gradient(var(--accent),var(--accent)) left top     / 0.1rem var(--bl-arm) no-repeat,
+    linear-gradient(var(--accent),var(--accent)) right bottom / var(--bl-arm) 0.1rem no-repeat,
+    linear-gradient(var(--accent),var(--accent)) right bottom / 0.1rem var(--bl-arm) no-repeat,
+    repeating-linear-gradient(90deg, var(--accent-line) 0 1px, transparent 1px 0.36rem)
+      left calc(var(--bl-c) + 0.55rem) bottom 1px / 2.9rem 0.28rem no-repeat;
+}
+
+body.hud-blade .win .bdy{ padding:0.75rem 0.95rem 0.85rem; position:relative; z-index:2; }
+
+/* ------------------------------- HEADER STRIP ------------------------------ */
+/* The title strip bleeds to the panel edges. Its tint is cut on the same
+   diagonal as the panel and fades out along it, so it never fills the notch. */
+body.hud-blade .sec-h{
+  position:relative;
+  margin:-0.75rem -0.95rem 0.8rem;
+  padding:0.62rem 0.95rem 0.55rem;
+  gap:0.6rem;
+  font-family:var(--bl-font); font-weight:600; font-size:0.8rem;
+  letter-spacing:0.26em; line-height:1;
+  color:var(--accent-bright);
+  text-shadow:0 0 calc(0.4rem*var(--glow-strength)) var(--accent-glow);
+  background:
+    linear-gradient(var(--accent-line),var(--accent-line)) left bottom / 100% 1px no-repeat,
+    linear-gradient(var(--accent),var(--accent)) left calc(var(--bl-c) * 0.2) bottom / 4.2rem 1px no-repeat;
+}
+body.hud-blade .sec-h::before{
+  content:""; position:absolute; inset:0 0 1px 0; pointer-events:none; z-index:-1;
+  opacity:0.7;
+  background:linear-gradient(135deg, transparent var(--bl-d), var(--accent-faint) var(--bl-d),
+                             transparent 16rem);
+}
+/* mirrored panels have their cut on the right, so the tint can start flush */
+body.hud-blade .col.x-r .sec-h::before{
+  background:linear-gradient(90deg, var(--accent-faint), transparent 16rem);
+}
+/* the "+" becomes a solid slanted marker */
+body.hud-blade .sec-h .plus,
+body.hud-blade .tl-block .h .plus{
+  font-size:0; width:0.34rem; height:0.72rem; flex:none;
+  background:var(--accent); transform:skewX(-22deg);
+}
+/* hash block, a hairline, then the section's index number, the way a
+   technical manual numbers its plates */
+body.hud-blade .sec-h::after{
+  content:"00"; flex:1; align-self:center; margin-left:0.35rem;
+  height:0.6rem; font-size:0.6rem; font-weight:400; letter-spacing:0.16em; line-height:0.62rem;
+  text-align:right; color:var(--text-dim); text-shadow:none;
+  font-variant-numeric:tabular-nums;
+  background:
+    repeating-linear-gradient(115deg, var(--accent-line) 0 0.13rem, transparent 0.13rem 0.34rem)
+      left center / 2.3rem 0.5rem no-repeat,
+    linear-gradient(var(--accent-faint),var(--accent-faint)) right 1.75rem center / calc(100% - 4.4rem) 1px no-repeat;
+}
+body.hud-blade #terminal .sec-h::after{ content:"01"; }
+body.hud-blade #diag     .sec-h::after{ content:"02"; }
+body.hud-blade #sysmon   .sec-h::after{ content:"03"; }
+body.hud-blade #proc     .sec-h::after{ content:"04"; }
+body.hud-blade #tailnet  .sec-h::after{ content:"05"; }
+
+/* ------------------------------- OS LABEL -------------------------------- */
+body.hud-blade #os-label{
+  font-family:var(--bl-font); font-weight:600; font-size:0.98rem;
+  letter-spacing:0.3em; color:var(--accent-bright);
+  align-items:center; gap:0.7rem; padding:0 0.1rem 0.15rem;
+}
+body.hud-blade #os-label::before{
+  content:""; width:0.3rem; height:0.95rem; flex:none;
+  background:var(--accent); transform:skewX(-22deg);
+}
+body.hud-blade #os-label .ver{
+  font-family:var(--bl-font); font-weight:400; font-size:0.7rem; letter-spacing:0.2em;
+  color:var(--text-dim); padding:0.12rem 0.45rem; border:1px solid var(--accent-faint);
+}
+
+/* ----------------------------- SYSTEM (identity) --------------------------- */
+body.hud-blade .nf{ gap:0.2rem 1.3rem; }
+body.hud-blade .nf pre{ opacity:0.92; }
+body.hud-blade .nf .info div{ font-size:0.72rem; line-height:1.6; }
+body.hud-blade .nf .info b{
+  font-family:var(--bl-font); font-weight:600; font-size:0.66rem; letter-spacing:0.16em;
+  text-transform:uppercase; color:var(--accent); opacity:0.72;
+  display:inline-block; min-width:5.6rem;
+}
+body.hud-blade .nf .info span{ color:var(--text); }
+
+/* ------------------------------ SYSTEM MONITOR ----------------------------- */
+body.hud-blade .mgrp{
+  font-family:var(--bl-font); font-weight:600; font-size:0.66rem; letter-spacing:0.28em;
+  color:var(--accent); margin:0.75rem 0 0.2rem; align-items:center; gap:0.5rem;
+  padding-bottom:0.22rem;
+  background:linear-gradient(90deg, var(--accent-faint), transparent 85%) left bottom / 100% 1px no-repeat;
+}
+body.hud-blade .mgrp:first-child{ margin-top:0; }
+body.hud-blade .mgrp::before{
+  content:""; width:0.4rem; height:0.4rem; flex:none;
+  border:1px solid var(--accent); transform:rotate(45deg);
+}
+body.hud-blade .mgrp .clk{
+  font-family:var(--bl-font); font-weight:400; font-size:0.74rem; letter-spacing:0.08em;
+  color:var(--accent-bright); text-shadow:none; font-variant-numeric:tabular-nums;
+}
+body.hud-blade .mrow{ grid-template-columns:5.4rem 1fr auto; gap:0.75rem; padding:0.4rem 0; }
+body.hud-blade .mrow + .mrow{ border-top:0; }
+body.hud-blade .mrow .lbl{
+  font-family:var(--bl-font); font-size:0.68rem; letter-spacing:0.18em;
+  text-transform:uppercase; color:var(--text-dim);
+}
+body.hud-blade .mrow .val{
+  font-family:var(--bl-font); font-weight:600; font-size:0.92rem; letter-spacing:0.04em;
+  color:var(--accent-bright); font-variant-numeric:tabular-nums; min-width:5rem;
+  text-shadow:0 0 calc(0.35rem*var(--glow-strength)) var(--accent-glow);
+}
+body.hud-blade .mrow .val.dual{ font-size:0.72rem; font-weight:400; line-height:1.3; letter-spacing:0.06em; }
+
+/* segmented bars: slanted slats, the unlit ones barely there */
+body.hud-blade .segbar{ gap:0.15rem; height:0.74rem; padding:0 0.12rem; }
+body.hud-blade .segbar i{
+  background:var(--accent-faint); opacity:0.55; transform:skewX(-20deg);
+}
+body.hud-blade .segbar i.on{ background:var(--accent); opacity:0.9; box-shadow:none; }
+body.hud-blade .segbar i.hot{ background:var(--alert); opacity:1; box-shadow:none; }
+/* the leading lit slat reads as the needle */
+body.hud-blade .segbar i.on:has(+ i:not(.on)){ background:var(--accent-bright); opacity:1; }
+body.hud-blade .spark{ height:1.5rem; }
+
+/* drives: a graduated track with a hard end cap on the fill */
+body.hud-blade .drv{ padding:0.42rem 0; }
+body.hud-blade .drv + .drv{ border-top:0; }
+body.hud-blade .drv .id{
+  font-family:var(--bl-font); font-weight:600; font-size:0.8rem; letter-spacing:0.06em;
+  color:var(--accent-bright);
+}
+body.hud-blade .drv .pct{
+  font-family:var(--bl-font); font-weight:600; font-size:0.84rem;
+  color:var(--accent-bright); text-shadow:none;
+}
+body.hud-blade .drv .bar{
+  height:0.46rem; overflow:visible;
+  background:
+    repeating-linear-gradient(90deg, var(--accent-line) 0 1px, transparent 1px 10%) left bottom / 100% 0.14rem no-repeat,
+    linear-gradient(var(--accent-faint),var(--accent-faint)) left top / 100% 0.3rem no-repeat;
+}
+/* Same family as the segment bars (accent up to accent-bright; accent-dim is
+   a saturated mid blue under a pale accent). The fill ends on the cap's
+   color, so a hairline notch keeps the cap a separate block. */
+body.hud-blade .drv .bar i{
+  height:0.3rem; bottom:auto;
+  background:linear-gradient(90deg, var(--accent), var(--accent-bright));
+  box-shadow:inset -0.16rem 0 0 var(--accent-bright), inset -0.24rem 0 0 var(--bg);
+}
+body.hud-blade .drv .bar i.hot{
+  background:var(--alert);
+}
+body.hud-blade .drv .sub{ font-size:0.64rem; margin-top:0.26rem; }
+body.hud-blade .drv .sub .io{ color:var(--accent); opacity:0.62; }
+
+/* ------------------------------ DIAGNOSTICS -------------------------------- */
+/* The track becomes a tick scale that runs exactly the 72% sweep: 31 ticks,
+   then one long gap covering the rest of the ring. The fill arc is narrower
+   than the ticks, so the scale shows on both sides of it. */
+body.hud-blade .gauge .g-track{
+  stroke:var(--accent-line); stroke-width:11px;
+  stroke-dasharray:1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012
+                   1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012
+                   1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012
+                   1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012
+                   1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012
+                   1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012 1.3 4.99012
+                   1.3 80;
+}
+body.hud-blade .gauge .g-arc{ stroke-width:5px; stroke-linecap:butt; }
+body.hud-blade .gauge .g-lbl{
+  font-family:var(--bl-font); font-weight:600; font-size:7.5px; letter-spacing:2.2px;
+  fill:var(--text-dim);
+}
+body.hud-blade .gauge .g-val{
+  font-family:var(--bl-font); font-weight:600; font-size:21px; letter-spacing:0.5px;
+  fill:var(--accent-bright); font-variant-numeric:tabular-nums;
+  transform:translateY(2px);
+}
+
+/* ------------------------------- PROCESSES --------------------------------- */
+body.hud-blade .ptbl{ font-size:0.74rem; }
+body.hud-blade .ptbl th{
+  font-family:var(--bl-font); font-weight:600; font-size:0.64rem; letter-spacing:0.22em;
+  color:var(--accent); opacity:0.72; padding:0.15rem 0.3rem 0.35rem;
+  border-bottom:1px solid var(--accent-faint);
+}
+/* PID values are right-aligned numbers, so their header sits over them */
+body.hud-blade .ptbl th:first-child{ text-align:right; }
+body.hud-blade .ptbl td{ padding:0.34rem 0.3rem; font-variant-numeric:tabular-nums; }
+body.hud-blade .ptbl tbody tr + tr td{ border-top:1px solid var(--accent-faint); }
+body.hud-blade .ptbl td.n{ color:var(--accent); }
+body.hud-blade .ptbl tr td:nth-child(2){ color:var(--text); }
+/* the busiest process gets the marker */
+body.hud-blade .ptbl tbody tr:first-child td:first-child{ box-shadow:inset 0.16rem 0 0 var(--accent); }
+body.hud-blade .ptbl tbody tr:first-child td:nth-child(2){ color:var(--accent-bright); }
+
+/* -------------------------------- TAILNET ---------------------------------- */
+body.hud-blade .tn{ grid-template-columns:0.7rem 1fr auto; padding:0.34rem 0; }
+body.hud-blade .tn + .tn{ border-top:1px solid var(--accent-faint); }
+body.hud-blade .tn .led{
+  width:0.44rem; height:0.44rem; border-radius:0; transform:rotate(45deg);
+  box-shadow:0 0 0.3rem var(--accent-glow);
+}
+body.hud-blade .tn.off .led{ background:transparent; border:1px solid var(--text-dim); box-shadow:none; }
+body.hud-blade .tn .st{ font-family:var(--bl-font); letter-spacing:0.14em; text-transform:uppercase; font-size:0.64rem;
+  color:var(--accent); opacity:0.7; }
+body.hud-blade .tn.off .st{ color:var(--text-dim); opacity:1; }
+
+/* ---------------------------- TIME / LOCATION ------------------------------ */
+body.hud-blade .tl-grid{ gap:1rem; }
+body.hud-blade .tl-block .h{
+  font-family:var(--bl-font); font-weight:600; font-size:0.66rem; letter-spacing:0.28em;
+  color:var(--accent); margin-bottom:0.45rem; gap:0.5rem;
+  padding-bottom:0.3rem;
+  background:linear-gradient(90deg, var(--accent-line), transparent) left bottom / 100% 1px no-repeat;
+}
+body.hud-blade .tl-block .h .plus{ width:0.26rem; height:0.6rem; }
+body.hud-blade #clock{
+  font-family:var(--bl-font); font-weight:600; font-size:2.25rem; letter-spacing:0.02em;
+  color:var(--accent-bright);
+}
+body.hud-blade #clock small{
+  font-family:var(--bl-font); font-weight:400; font-size:0.36em; letter-spacing:0.16em;
+  color:var(--accent); margin-left:0.3em;
+}
+body.hud-blade #date{
+  font-family:var(--bl-font); font-size:0.74rem; letter-spacing:0.24em;
+  margin-top:0.45rem; font-variant-numeric:tabular-nums;
+}
+body.hud-blade #weekday{
+  font-family:var(--bl-font); font-weight:600; font-size:0.9rem; letter-spacing:0.42em;
+  margin-top:0.5rem; color:var(--accent);
+}
+body.hud-blade #coords{
+  font-family:var(--bl-font); font-weight:600; font-size:0.84rem; letter-spacing:0.04em;
+  color:var(--accent-bright); font-variant-numeric:tabular-nums; text-shadow:none;
+}
+body.hud-blade #elev{ font-family:var(--bl-font); font-size:0.68rem; letter-spacing:0.24em; margin-top:0.35rem; }
+body.hud-blade #weather{ font-family:var(--bl-font); font-size:0.8rem; letter-spacing:0.1em; margin-top:0.6rem; text-shadow:none; }
+body.hud-blade #weather .wx-t{ font-weight:600; font-size:1.05em; }
+body.hud-blade #weather .wx-sub{ font-family:var(--bl-font); font-size:0.66rem; letter-spacing:0.14em; margin-top:0.25rem; }
+
+/* ------------------------------ VISUALIZER --------------------------------- */
+body.hud-blade #audio .bdy{ padding:0.5rem 1rem; }
+
+/* ------------------------------ SCREEN CHROME ------------------------------ */
+body.hud-blade .corner{ width:1.8rem; height:1.8rem; border-color:var(--accent-faint); }
+body.hud-blade .bottom-hash{ gap:0.22rem; opacity:0.5; }
+body.hud-blade .bottom-hash i{ width:0.9rem; height:0.3rem; transform:skewX(-40deg); background:var(--accent-glow); }
+body.hud-blade .bottom-hash i:nth-child(3){ background:var(--accent); }
+body.hud-blade #mode-tag{ font-family:var(--bl-font); letter-spacing:0.22em; font-size:0.62rem; }
