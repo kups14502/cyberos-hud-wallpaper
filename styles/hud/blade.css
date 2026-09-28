@@ -331,6 +331,16 @@ body.hud-blade #weather .wx-sub{ font-family:var(--bl-font); font-size:0.66rem; 
 
 /* ------------------------------ VISUALIZER --------------------------------- */
 body.hud-blade #audio .bdy{ padding:0.5rem 1rem; }
+body.hud-blade #np{
+  font-family:var(--bl-font); font-size:0.8rem; letter-spacing:0.06em;
+  padding-bottom:0.3rem;
+  background:linear-gradient(90deg, var(--accent-line), transparent) left bottom / 100% 1px no-repeat;
+}
+body.hud-blade #np .np-t{
+  font-weight:600;
+  text-shadow:0 0 calc(0.4rem*var(--glow-strength)) var(--accent-glow);
+}
+body.hud-blade #np .np-a{ letter-spacing:0.1em; }
 
 /* ------------------------------ SCREEN CHROME ------------------------------ */
 body.hud-blade .corner{ width:1.8rem; height:1.8rem; border-color:var(--accent-faint); }

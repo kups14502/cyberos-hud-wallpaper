@@ -352,6 +352,24 @@ body.has-bgmedia.bg-keep-scene #starfield{ z-index:2; }
 #audio{ height:6.5rem; }
 #audio .bdy{ height:100%; display:flex; align-items:center; padding:0.45rem 0.6rem; }
 #audio canvas{ width:100%; height:100%; display:block; }
+/* now playing: one line over the bars while a track is up. The panel grows by
+   the line's height, so the visualizer keeps its size. */
+#np{ display:none; align-items:center; gap:0.5rem; height:1.25rem; flex:none;
+  font-size:0.74rem; letter-spacing:0.06em; white-space:nowrap; overflow:hidden; }
+#audio.np-on{ height:8.1rem; }
+#audio.np-on .bdy{ flex-direction:column; align-items:stretch; gap:0.35rem; }
+#audio.np-on #np{ display:flex; }
+#audio.np-on canvas{ flex:1 1 0; min-height:0; height:auto; }
+#np .np-i{ flex:none; width:0; height:0; border-style:solid;
+  border-width:0.3rem 0 0.3rem 0.5rem; border-color:transparent transparent transparent var(--accent); }
+#np.paused .np-i{ width:0.5rem; height:0.6rem; border:none;
+  background:linear-gradient(90deg, var(--accent) 35%, transparent 35% 65%, var(--accent) 65%); }
+#np .np-t, #np .np-a{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
+#np .np-t{ flex:0 1 auto; color:var(--accent-bright); }
+#np .np-a{ flex:0 0 auto; max-width:40%; color:var(--text-dim); }
+#np .np-a::before{ content:"· "; }
+#np .np-a:empty{ display:none; }
+#np.paused .np-t, #np.paused .np-a{ opacity:0.55; }
 
 /* ----------------------- TIME / LOCATION / WEATHER ----------------------- */
 .tl-grid{ display:grid; grid-template-columns:1fr 1.15fr; gap:1.1rem; }
@@ -808,6 +826,16 @@ body.hud-blade #weather .wx-sub{ font-family:var(--bl-font); font-size:0.66rem; 
 
 /* ------------------------------ VISUALIZER --------------------------------- */
 body.hud-blade #audio .bdy{ padding:0.5rem 1rem; }
+body.hud-blade #np{
+  font-family:var(--bl-font); font-size:0.8rem; letter-spacing:0.06em;
+  padding-bottom:0.3rem;
+  background:linear-gradient(90deg, var(--accent-line), transparent) left bottom / 100% 1px no-repeat;
+}
+body.hud-blade #np .np-t{
+  font-weight:600;
+  text-shadow:0 0 calc(0.4rem*var(--glow-strength)) var(--accent-glow);
+}
+body.hud-blade #np .np-a{ letter-spacing:0.1em; }
 
 /* ------------------------------ SCREEN CHROME ------------------------------ */
 body.hud-blade .corner{ width:1.8rem; height:1.8rem; border-color:var(--accent-faint); }
@@ -878,7 +906,10 @@ body.hud-blade #mode-tag{ font-family:var(--bl-font); letter-spacing:0.22em; fon
 
   <!-- ============ AUDIO VISUALIZER ============ -->
   <section class="win" id="audio" style="animation-delay:.5s">
-    <div class="bdy"><canvas id="audio-cv"></canvas></div>
+    <div class="bdy">
+      <div id="np"><i class="np-i"></i><span class="np-t"></span><span class="np-a"></span></div>
+      <canvas id="audio-cv"></canvas>
+    </div>
   </section>
 
   <!-- ============ SYSTEM MONITOR ============ -->
@@ -1269,6 +1300,7 @@ const CFG={
   bg:"0.0078 0.031 0.047",
   alert:"1 0.36 0.36",
   audio:true,
+  nowPlaying:true,           // track title over the visualizer (WE media integration)
   terrain:true,
   starfield:true,
   scanlines:true,
@@ -1277,6 +1309,7 @@ const CFG={
   uiScale:1.0,
   panelOpacity:0.55,         // panel fill opacity; raise it to read over a photo
   sceneStyle:"waves",        // procedural background, a key of SCENES
+  galaxySize:1,              // Galaxy scene: 1 fills the primary, more spills onto a span
   hudStyle:"classic",        // panel look, a key of HUDS
 
   /* ---- user background image ---- */
@@ -1897,7 +1930,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "3.1";
+const VERSION = "3.2";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -2072,6 +2105,35 @@ function drawAudioStill(){
   }
   ctx.fillStyle=PAL.accent;
   ctx.fillText(label, w/2, mid);
+}
+
+/* =========================================================================
+   NOW PLAYING
+   Wallpaper Engine's media integration passes on what Windows' media controls
+   see: Spotify, a browser tab, any player that shows in the volume flyout. WE
+   only calls these listeners while "Media integration" is on in its own
+   settings, and the status listener says whether it is. The line shows while a
+   track has a title, dims while paused, and goes away when the player stops.
+   ========================================================================= */
+const NP={ enabled:true, title:"", artist:"", state:null };
+function npRender(){
+  const el=$("#np"), panel=$("#audio"); if(!el || !panel) return;
+  const MI=window.wallpaperMediaIntegration||{};
+  const stopped=NP.state!==null && NP.state===(MI.PLAYBACK_STOPPED!==undefined ? MI.PLAYBACK_STOPPED : 0);
+  const paused =NP.state!==null && NP.state===(MI.PLAYBACK_PAUSED!==undefined ? MI.PLAYBACK_PAUSED : 2);
+  const on=CFG.nowPlaying && NP.enabled && !!NP.title && !stopped;
+  el.querySelector(".np-t").textContent=NP.title;
+  el.querySelector(".np-a").textContent=NP.artist;
+  el.classList.toggle("paused", paused);
+  if(panel.classList.contains("np-on")===on) return;
+  panel.classList.toggle("np-on", on);
+  // the canvas changes height with the line: re-measure it, and redraw a parked one
+  const a=$("#audio-cv"); if(a) a._ctx=null;
+  if(GAME.on && LAY_BUILT) gameAudioSync();
+}
+function npListen(name, fn){
+  if(typeof window[name]!=="function") return;
+  try{ window[name](e=>{ if(e){ fn(e); npRender(); } }); }catch(err){}
 }
 
 /* =========================================================================
@@ -3355,6 +3417,7 @@ function applyConfig(){
   // panel visibility
   const map={terminal:"#terminal",sysmon:"#sysmon",diag:"#diag",proc:"#proc",tailnet:"#tailnet",audio:"#audio",tl:"#tl"};
   Object.entries(map).forEach(([k,sel])=>{ const el=$(sel); if(el) el.classList.toggle("hidden", !CFG.panels[k]); });
+  npRender();
 
   // monitors / placement / edit mode
   relayout();
@@ -3373,6 +3436,7 @@ window.wallpaperPropertyListener = {
       if(p.bgcolor)       CFG.bg     = p.bgcolor.value;
       if(p.alertcolor)    CFG.alert  = p.alertcolor.value;
       if(p.audio_react)   CFG.audio  = asBool(p.audio_react);
+      if(p.now_playing!==undefined) CFG.nowPlaying = asBool(p.now_playing);
       if(p.show_terrain)  CFG.terrain= asBool(p.show_terrain);
       if(p.show_starfield)CFG.starfield=asBool(p.show_starfield);
       if(p.scanlines)     CFG.scanlines=asBool(p.scanlines);
@@ -3381,6 +3445,7 @@ window.wallpaperPropertyListener = {
       if(p.ui_scale)      CFG.uiScale= +p.ui_scale.value || 1;
       if(p.panel_opacity) CFG.panelOpacity = +p.panel_opacity.value;
       if(p.scene_style)   CFG.sceneStyle = String(p.scene_style.value);
+      if(p.galaxy_size)   CFG.galaxySize = +p.galaxy_size.value || 1;
       if(p.hud_style)     CFG.hudStyle   = String(p.hud_style.value);
 
       // ---- user background media ----
@@ -3456,6 +3521,13 @@ window.wallpaperPropertyListener = {
 if(window.wallpaperRegisterAudioListener){
   try{ window.wallpaperRegisterAudioListener(onAudioSamples); }catch(e){}
 }
+// Wallpaper Engine media integration (now playing)
+npListen("wallpaperRegisterMediaStatusListener", e=>{ NP.enabled=!!e.enabled; });
+npListen("wallpaperRegisterMediaPropertiesListener", e=>{
+  NP.title=String(e.title||"").trim();
+  NP.artist=String(e.artist||e.albumArtist||"").trim();
+});
+npListen("wallpaperRegisterMediaPlaybackListener", e=>{ NP.state=e.state; });
 
 /* =========================================================================
    WEATHER  (open-meteo, no API key; uses the configured lat/lon)
@@ -5098,11 +5170,20 @@ const GALAXY=(()=>{
     const P=L ? (L[live ? SC.primary : (LAY.primary||0)] || L[0]) : null;
     return P || {x:0, y:0, w:K.w, h:K.h};
   }
-  function layout(K, P, k, key){
-    const R=Math.min(P.w*0.43, P.h*0.53, Math.max(P.w,P.h)*0.285);
+  /* Size 1 is the largest disk whose reference ellipse and caption still fit
+     the primary: HX and HY are the tilted ellipse's half extents per disk
+     radius, fp*5 the caption's height below it. At 60 degrees the disk is about
+     half as tall as it is wide, so past 1 its ends reach the neighboring
+     monitors of a span and the primary crops its top and bottom. */
+  const HX=RE*Math.hypot(CPA, CI*SPA), HY=RE*Math.hypot(SPA, CI*CPA);
+  function layout(K, P, k, key, size){
+    const fp=clamp(Math.min(P.w,P.h)*0.0078,9,17);
+    const fit=Math.max(40, Math.min((P.w*0.46)/HX, (P.h*0.45-fp*5)/HY));
+    const R=fit*size;
     const G={ key, k, P, R, cx:P.x+P.w/2, cy:P.y+P.h*0.5, dx:P.w*0.005, dy:P.h*0.006,
-              u:clamp(Math.min(P.w,P.h)/2160,0.45,1.5), af:clamp((R/1188)*(R/1188),0.1,1.2), gen:-1 };
-    G.Rt=Math.max(64, Math.round(R*k*TEXS));
+              u:clamp(Math.min(P.w,P.h)/2160,0.45,1.5), af:clamp((R/1188)*(R/1188),0.1,3), gen:-1 };
+    // the texture is capped: past this a big disk only gets a little softer
+    G.Rt=Math.max(64, Math.min(2048, Math.round(R*k*TEXS)));
     G.tn=2*Math.ceil(G.Rt*1.03)+4; G.tc=G.tn/2;
     const px=1/k;
 
@@ -5357,14 +5438,20 @@ const GALAXY=(()=>{
     x.fillStyle=hslStr(C.h,clamp(C.s*0.7,0,100),C.text,0.42); x.fillText(lines[0], lw/2, lh*0.5+2);
     x.fillStyle=hslStr(C.h,clamp(C.s*0.7,0,100),C.text,0.28); x.fillText(lines[1], lw/2, lh*1.5+2);
     ov.label=freeze(cv); ov.lw=lw/G.k; ov.lh=(lh*2+4)/G.k;
-    // centered under the minor axis, clear of the ellipse across its width
-    const bx=PX(0,RE)*R;
-    let by=PY(0,RE)*R;
-    for(let d=0;d<=180;d+=2){
-      const t=d*D2R, x=PX(RE*Math.cos(t),RE*Math.sin(t))*R;
-      if(Math.abs(x-bx)<ov.lw/2+fp) by=Math.max(by, PY(RE*Math.cos(t),RE*Math.sin(t))*R);
+    // centered under the disk center, clear of the ellipse across its width.
+    // The minor axis's end sits left of center because of the tilt.
+    const bx=PX(0,0)*R;
+    let by=PY(0,RE)*R, bi=Infinity;
+    for(let d=0;d<360;d+=2){
+      const t=d*D2R, x=PX(RE*Math.cos(t),RE*Math.sin(t))*R, y=PY(RE*Math.cos(t),RE*Math.sin(t))*R;
+      if(Math.abs(x-bx)<ov.lw/2+fp && y>0){ by=Math.max(by,y); bi=Math.min(bi,y); }
     }
-    ov.lx=bx-ov.lw/2; ov.ly=by+fp*1.6;
+    // Past size 1 there is no room under the ellipse on the primary, so the
+    // caption moves just inside it, and once the ellipse leaves the screen it
+    // stays on the primary's bottom edge.
+    const lim=G.P.h*0.46, below=by+fp*1.6;
+    ov.lx=bx-ov.lw/2;
+    ov.ly=below+ov.lh<=lim ? below : Math.min(bi-fp*1.2-ov.lh, lim-ov.lh);
     G.ov=ov;
   }
 
@@ -5392,8 +5479,9 @@ const GALAXY=(()=>{
 
   function ensure(K, SC){
     const P=primary(K, SC), k=K.ctx.canvas.width/Math.max(1,K.w);
-    const key=[K.w,K.h,k.toFixed(4),P.x,P.y,P.w,P.h].join(",");
-    if(!ST.G || ST.G.key!==key) ST.G=layout(K, P, k, key);
+    const size=clamp(+CFG.galaxySize||1, 0.3, 3);
+    const key=[K.w,K.h,k.toFixed(4),P.x,P.y,P.w,P.h,size].join(",");
+    if(!ST.G || ST.G.key!==key) ST.G=layout(K, P, k, key, size);
     if(ST.G.gen!==PAL.gen) bake(ST.G, K.ctx);
     return ST.G;
   }

@@ -47,6 +47,12 @@ adjustable live, no editing required:
 **Panels** — toggle any panel on/off independently: terminal, diagnostics,
 process list, system monitor, audio visualizer, time/location.
 
+**Now playing**: the audio visualizer shows the current track's title and artist
+above the bars. It reads whatever Windows' media controls see, such as Spotify or
+a browser tab. The line dims while the track is paused and goes away when playback
+stops. Switch it off with the **Now playing** toggle under Panels. It needs
+**Media integration** turned on in Wallpaper Engine's own settings.
+
 **Scene**: pick the animated background.
 - **Waves**: the original flowing wireframe terrain.
 - **Data Stream**: sparse columns of hex glyphs falling onto a glass floor. In
@@ -56,6 +62,8 @@ process list, system monitor, audio visualizer, time/location.
   real speed, so they look still. The Moon is labeled with its current phase.
   Orbit sizes are spaced to fit the screen, not drawn to scale.
 - **Galaxy**: a tilted spiral galaxy that turns once every 18 minutes.
+  **Galaxy size** sets how big it is. At 1 it fills your main screen. Above
+  about 1.5 its ends reach onto the monitors either side of a span.
 - **Ridgeline**: a slow flyover of a wireframe mountain range toward a glowing
   pass.
 - **Topographic**: a live contour map of slowly shifting terrain, with index

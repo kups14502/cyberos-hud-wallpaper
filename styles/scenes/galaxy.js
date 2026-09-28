@@ -164,11 +164,20 @@ const GALAXY=(()=>{
     const P=L ? (L[live ? SC.primary : (LAY.primary||0)] || L[0]) : null;
     return P || {x:0, y:0, w:K.w, h:K.h};
   }
-  function layout(K, P, k, key){
-    const R=Math.min(P.w*0.43, P.h*0.53, Math.max(P.w,P.h)*0.285);
+  /* Size 1 is the largest disk whose reference ellipse and caption still fit
+     the primary: HX and HY are the tilted ellipse's half extents per disk
+     radius, fp*5 the caption's height below it. At 60 degrees the disk is about
+     half as tall as it is wide, so past 1 its ends reach the neighboring
+     monitors of a span and the primary crops its top and bottom. */
+  const HX=RE*Math.hypot(CPA, CI*SPA), HY=RE*Math.hypot(SPA, CI*CPA);
+  function layout(K, P, k, key, size){
+    const fp=clamp(Math.min(P.w,P.h)*0.0078,9,17);
+    const fit=Math.max(40, Math.min((P.w*0.46)/HX, (P.h*0.45-fp*5)/HY));
+    const R=fit*size;
     const G={ key, k, P, R, cx:P.x+P.w/2, cy:P.y+P.h*0.5, dx:P.w*0.005, dy:P.h*0.006,
-              u:clamp(Math.min(P.w,P.h)/2160,0.45,1.5), af:clamp((R/1188)*(R/1188),0.1,1.2), gen:-1 };
-    G.Rt=Math.max(64, Math.round(R*k*TEXS));
+              u:clamp(Math.min(P.w,P.h)/2160,0.45,1.5), af:clamp((R/1188)*(R/1188),0.1,3), gen:-1 };
+    // the texture is capped: past this a big disk only gets a little softer
+    G.Rt=Math.max(64, Math.min(2048, Math.round(R*k*TEXS)));
     G.tn=2*Math.ceil(G.Rt*1.03)+4; G.tc=G.tn/2;
     const px=1/k;
 
@@ -423,14 +432,20 @@ const GALAXY=(()=>{
     x.fillStyle=hslStr(C.h,clamp(C.s*0.7,0,100),C.text,0.42); x.fillText(lines[0], lw/2, lh*0.5+2);
     x.fillStyle=hslStr(C.h,clamp(C.s*0.7,0,100),C.text,0.28); x.fillText(lines[1], lw/2, lh*1.5+2);
     ov.label=freeze(cv); ov.lw=lw/G.k; ov.lh=(lh*2+4)/G.k;
-    // centered under the minor axis, clear of the ellipse across its width
-    const bx=PX(0,RE)*R;
-    let by=PY(0,RE)*R;
-    for(let d=0;d<=180;d+=2){
-      const t=d*D2R, x=PX(RE*Math.cos(t),RE*Math.sin(t))*R;
-      if(Math.abs(x-bx)<ov.lw/2+fp) by=Math.max(by, PY(RE*Math.cos(t),RE*Math.sin(t))*R);
+    // centered under the disk center, clear of the ellipse across its width.
+    // The minor axis's end sits left of center because of the tilt.
+    const bx=PX(0,0)*R;
+    let by=PY(0,RE)*R, bi=Infinity;
+    for(let d=0;d<360;d+=2){
+      const t=d*D2R, x=PX(RE*Math.cos(t),RE*Math.sin(t))*R, y=PY(RE*Math.cos(t),RE*Math.sin(t))*R;
+      if(Math.abs(x-bx)<ov.lw/2+fp && y>0){ by=Math.max(by,y); bi=Math.min(bi,y); }
     }
-    ov.lx=bx-ov.lw/2; ov.ly=by+fp*1.6;
+    // Past size 1 there is no room under the ellipse on the primary, so the
+    // caption moves just inside it, and once the ellipse leaves the screen it
+    // stays on the primary's bottom edge.
+    const lim=G.P.h*0.46, below=by+fp*1.6;
+    ov.lx=bx-ov.lw/2;
+    ov.ly=below+ov.lh<=lim ? below : Math.min(bi-fp*1.2-ov.lh, lim-ov.lh);
     G.ov=ov;
   }
 
@@ -458,8 +473,9 @@ const GALAXY=(()=>{
 
   function ensure(K, SC){
     const P=primary(K, SC), k=K.ctx.canvas.width/Math.max(1,K.w);
-    const key=[K.w,K.h,k.toFixed(4),P.x,P.y,P.w,P.h].join(",");
-    if(!ST.G || ST.G.key!==key) ST.G=layout(K, P, k, key);
+    const size=clamp(+CFG.galaxySize||1, 0.3, 3);
+    const key=[K.w,K.h,k.toFixed(4),P.x,P.y,P.w,P.h,size].join(",");
+    if(!ST.G || ST.G.key!==key) ST.G=layout(K, P, k, key, size);
     if(ST.G.gen!==PAL.gen) bake(ST.G, K.ctx);
     return ST.G;
   }
