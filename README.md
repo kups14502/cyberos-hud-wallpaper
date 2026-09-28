@@ -51,10 +51,10 @@ process list, system monitor, audio visualizer, time/location.
 - **Waves**: the original flowing wireframe terrain.
 - **Data Stream**: sparse columns of hex glyphs falling onto a glass floor. In
   game mode the streams stop and only the floor stays.
-- **Solar System**: a live orrery. The planets, the Moon and Jupiter's four big
-  moons sit at their real positions for today's date and move at their real
-  speed, so they look still. The Moon is labeled with its current phase. Orbit
-  sizes are spaced to fit the screen, not drawn to scale.
+- **Solar System**: a live orrery. Every planet and moon sits at its real
+  position for today's date, Jupiter's four big moons included, and moves at
+  real speed, so they look still. The Moon is labeled with its current phase.
+  Orbit sizes are spaced to fit the screen, not drawn to scale.
 - **Galaxy**: a tilted spiral galaxy that turns once every 18 minutes.
 
 **Background particles** and **Wireframe terrain** switch off the scene's two
