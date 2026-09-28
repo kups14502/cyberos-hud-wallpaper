@@ -7,7 +7,7 @@
    spot height, and a survey level climbs the massif once a minute, lighting
    the contours it passes. Index contours breathe with the music's low end.
 
-   Cost control, because the band covers the whole layer:
+   Cost control, because the band covers the whole desktop:
      * the noise is sampled on a coarse grid (two fine cells per sample) and
        Catmull-Rom upsampled, since the field is far smoother than the grid;
      * only keyframes are sampled, KP seconds apart, and the next one is built
@@ -16,21 +16,28 @@
        every other frame and ~20 fps. The morph is slow enough that a faster
        redraw would move nothing but subpixels, and the canvas keeps its
        pixels in between;
-     * segments are chained into whole contours and drawn as curves through
-       their midpoints: one path call per segment instead of two, and smooth
-       on a grid far coarser than straight chords would need;
+     * every path is cut into tiles of TILE device px. A wide stroke whose
+       path spans the desktop is rasterized through a coverage mask the size
+       of its bounds, so a few dozen of them cost the raster thread ~40 ms a
+       redraw (26 fps at 4K), while the same strokes in tiles cost almost
+       nothing (60 fps at 4K). The JS timer never sees that cost;
+     * segments are chained into whole contours and drawn as cubic B-spline
+       curves over their crossings: one path call per segment, and round even
+       where a contour turns inside one cell;
      * the plain contours are dropped behind the panels, where the panel fill
        would have hidden them anyway, and only the index contours carry on.
    Strokes share a small set of cached styles: alpha is quantized into NB
    buckets (mask x elevation), one Path2D per bucket. */
 (function(){
   const KP=0.5;              // s between field keyframes
+  const TILE=256;            // path tile edge, device px
   const STEP=0.05;           // height between contours, in field units
   const ESTEP=20;            // meters per contour, so index contours land on 100s
   const ELEV0=1200;          // meters at field height 0
   const NB=12;               // alpha buckets
   const A_NORM=0.30, A_IDX=0.88, A_CROSS=0.42, A_LBL=0.80;
-  const LBL_INSET=0.09;       // labels and spot heights stay this far (short edges) off the panels
+  const IDX_DIM=0.34;        // a crowded odd index contour steps down to a plain one's weight
+  const LBL_INSET=0.09;      // labels and spot heights stay this far (short edges) off the panels
   const T0=500;              // start the clock mid-morph, not on a noise lattice plane
 
   /* ---- 3D simplex noise (Gustavson). Fixed seed: every boot shows the same land. ---- */
@@ -98,32 +105,83 @@
 
   const smooth=(a,b,x)=>{ const t=clamp((x-a)/(b-a),0,1); return t*t*(3-2*t); };
 
-  /* How loud the map may be at (x,y), 0..1. The panels sit in the corners, so
-     the lines stay full strength in the corridor between the panel columns and
-     in the lower half, and sink to a faint floor behind the panels and along
-     the top where the clock and identity boxes are. The corridor comes from
-     the same numbers the layout engine uses: a 25rem column, rem at 1.3% of
-     the short edge, and the 2:1 content band on an ultrawide. A portrait
-     screen stacks its panels at the top and the bottom only, so its middle
-     band is open edge to edge. `inset` (in short edges) narrows the corridor;
-     text uses it to keep off the panels. */
-  function maskAt(S, pi, x, y, inset){
+  /* ---- the panels ----
+     Every panel's box (.win and the OS label), padded by 2rem at its screen's
+     zoom, in this canvas's px. Boxes stacked closer than JOIN short edges
+     join into one block, and a block within REACH of its screen's edge
+     reaches out to it, so a corner stack fades as one calm block instead of
+     lighting the seams and margins between its panels. Reading a box forces
+     a layout, so this runs once a second, never per frame. */
+  const JOIN=0.15, REACH=0.25;
+  function readRects(T){
+    const out=[], L=(LAY.screens && LAY.screens.length) ? LAY.screens : [{el:document, zoom:1}];
+    let rem=16;
+    try{ rem=parseFloat(getComputedStyle(document.documentElement).fontSize)||16; }catch(e){}
+    for(const s of L){
+      if(!s.el) continue;
+      const pad=2*rem*(s.zoom||1);
+      s.el.querySelectorAll(".win, #os-label").forEach(el=>{
+        const r=el.getBoundingClientRect();
+        if(r.width>1 && r.height>1) out.push(r.left-pad-T.x, r.top-pad-T.y, r.right+pad-T.x, r.bottom+pad-T.y);
+      });
+    }
+    return out;
+  }
+  function blocks(G, R){
+    const S=G.S, B=[];
+    for(let i=0;i<R.length;i+=4){
+      const cx=(R[i]+R[i+2])/2, cy=(R[i+1]+R[i+3])/2;
+      let s=S[G.pi];
+      for(const q of S) if(cx>=q.x && cx<q.x+q.w && cy>=q.y && cy<q.y+q.h){ s=q; break; }
+      B.push({ x0:R[i], y0:R[i+1], x1:R[i+2], y1:R[i+3], s, sh:Math.min(s.w,s.h) });
+    }
+    for(let again=true; again;){
+      again=false;
+      for(let i=0;i<B.length && !again;i++) for(let j=i+1;j<B.length;j++){
+        const a=B[i], b=B[j], gap=JOIN*a.sh;
+        if(a.s!==b.s) continue;
+        const ox=Math.min(a.x1,b.x1)-Math.max(a.x0,b.x0), oy=Math.min(a.y1,b.y1)-Math.max(a.y0,b.y0);
+        if(!(ox>-gap && oy>-gap && (ox>0 || oy>0))) continue;
+        a.x0=Math.min(a.x0,b.x0); a.y0=Math.min(a.y0,b.y0);
+        a.x1=Math.max(a.x1,b.x1); a.y1=Math.max(a.y1,b.y1);
+        B.splice(j,1); again=true; break;
+      }
+    }
+    for(const b of B){
+      const s=b.s, r=REACH*b.sh;
+      if(b.x0-s.x<r) b.x0=s.x-1;
+      if(s.x+s.w-b.x1<r) b.x1=s.x+s.w+1;
+      if(b.y0-s.y<r) b.y0=s.y-1;
+      if(s.y+s.h-b.y1<r) b.y1=s.y+s.h+1;
+    }
+    return B;
+  }
+  // 0 behind a panel block .. 1 in the open; `inset` (short edges) pushes the open ground further off
+  function openAt(G, x, y, inset){
+    let o=1;
+    for(const b of G.blk){
+      const dx=Math.max(b.x0-x, x-b.x1), dy=Math.max(b.y0-y, y-b.y1);
+      const d=(dx>0 || dy>0) ? Math.sqrt(Math.max(dx,0)*Math.max(dx,0)+Math.max(dy,0)*Math.max(dy,0)) : Math.max(dx,dy);
+      const f=smooth(-0.165*b.sh, 0.075*b.sh, d-inset*b.sh);
+      if(f<o) o=f;
+    }
+    return o;
+  }
+
+  /* How loud the map may be at (x,y), 0..1. The lines stay full strength in
+     the open and in the lower half, and sink to a faint floor behind the
+     panels and toward the top, where the clock and identity boxes are. */
+  function maskAt(G, x, y, inset){
+    const S=G.S;
     let best=0;
     for(let n=0;n<S.length;n++){
       const s=S[n];
       if(x<s.x || x>s.x+s.w || y<s.y || y>s.y+s.h) continue;
-      const sh=Math.min(s.w,s.h), v=(y-s.y)/s.h;
-      const edge=Math.max(0.022, (1-2*s.h/s.w)/2);
-      const rem=clamp(0.013*sh, 9, 30)*clamp(+CFG.uiScale||1, 0.5, 2);
-      const colW=Math.min(25*rem, (s.w/s.h<1.3 ? 0.46 : 0.34)*s.w);
-      const inner=s.w*(0.5-edge)-colW-(inset||0)*sh;
-      const dx=Math.abs(x-(s.x+s.w/2)), tall=s.w<s.h;
-      let hx=1-smooth(inner-0.10*sh, inner+0.14*sh, dx);
-      if(tall) hx=1-(1-hx)*(1-smooth(0.22, 0.32, v)*(1-smooth(0.62, 0.71, v)));
-      const top=smooth(0.03, tall ? 0.30 : 0.50, v);
+      const v=(y-s.y)/s.h, hx=openAt(G, x, y, inset);
+      const top=smooth(0.03, s.w<s.h ? 0.30 : 0.50, v);
       const foot=1-0.45*smooth(0.90, 1.0, v);
       let f=(0.20+0.80*hx*(0.30+0.70*top))*(0.50+0.50*top)*foot;
-      if(n!==pi) f*=0.8;
+      if(n!==G.pi) f*=0.8;
       if(f>best) best=f;
     }
     return best;
@@ -138,48 +196,24 @@
     const cs=clamp(Math.round(U/72), 9, 36);
     const nx=Math.ceil(T.w/cs)+1, ny=Math.ceil(T.h/cs)+1;
     const ncx=Math.ceil((nx-1)/2)+4, ncy=Math.ceil((ny-1)/2)+4;
-    const N=nx*ny;
-    const G={ S, pi, U, cs, nx, ny, ncx, ncy,
+    const N=nx*ny, NC=(nx-1)*(ny-1);
+    const G={ S, pi, U, cs, nx, ny, ncx, ncy, w:T.w, h:T.h,
               // world origin = the primary monitor's center, so the composition
               // there is the same on one monitor, a span, or per-monitor bands
               ox:P.x+P.w/2, oy:P.y+P.h/2,
               A:new Float32Array(N), B:new Float32Array(N), C:new Float32Array(N),
               H:new Float32Array(N), crs:new Float32Array(ncx*ncy), tmp:new Float32Array(ncy*nx),
-              mask:new Float32Array((nx-1)*(ny-1)), rowOn:new Uint8Array(ny-1),
-              mN:new Float32Array((nx-1)*(ny-1)), mI:new Float32Array((nx-1)*(ny-1)),
-              foc:new Uint8Array((nx-1)*(ny-1)), lmask:new Float32Array((nx-1)*(ny-1)),
-              ta:-1, cRow:0, cUp:false, drawn:-1,
-              big: S.reduce((a,s)=>a+s.w*s.h, 0)>12e6, rest:false,
+              mask:new Float32Array(NC), rowOn:new Uint8Array(ny-1),
+              mN:new Float32Array(NC), mI:new Float32Array(NC),
+              foc:new Uint8Array(NC), lmask:new Float32Array(NC),
+              ta:-1, cRow:0, cUp:false, lo:0, hi:0,
               ix:new Float32Array(5*4096),
               lwN:Math.max(1, U/2160), lwI:Math.max(1.3, 1.6*U/2160), lwS:Math.max(1.6, 2.0*U/2160),
               fz:Math.round(clamp(U*0.0072, 9, 18)),
-              labels:[], peaks:[], pkAt:-1, pkTxtAt:0 };
-    for(let j=0;j<ny-1;j++){
-      let on=0;
-      for(let i=0;i<nx-1;i++){
-        const m=maskAt(S, pi, (i+0.5)*cs, (j+0.5)*cs);
-        G.mask[j*(nx-1)+i]=m;
-        // plain contours fade out behind the panels; index contours keep a floor
-        G.mN[j*(nx-1)+i]=m*smooth(0.10, 0.45, m); G.mI[j*(nx-1)+i]=Math.max(m, 0.2);
-        G.lmask[j*(nx-1)+i]=maskAt(S, pi, (i+0.5)*cs, (j+0.5)*cs, LBL_INSET);
-        // the survey level's reach, as a bucket: the ground around the massif
-        const fx=((i+0.5)*cs-G.ox)/U-MX, fy=((j+0.5)*cs-G.oy)/U-MY;
-        G.foc[j*(nx-1)+i]=Math.round(NB*m*Math.exp(-(fx*fx/1.6+fy*fy)/(0.42*0.42)));
-        if(m>=0.03) on=1;
-      }
-      G.rowOn[j]=on;
-    }
-    // survey crosses on a lattice pinned to the primary center
-    const gs=U/5.5, arm=Math.max(2.5, U*0.0027);
-    G.cross=[];
-    const gx0=G.ox-Math.ceil(G.ox/gs)*gs, gy0=G.oy-Math.ceil(G.oy/gs)*gs;
-    for(let y=gy0;y<T.h;y+=gs) for(let x=gx0;x<T.w;x+=gs){
-      if(x<arm || y<arm) continue;
-      const b=Math.round(maskAt(S, pi, x, y)*NB);
-      if(b<1) continue;
-      const p=G.cross[b]||(G.cross[b]=new Path2D());
-      p.moveTo(x-arm,y); p.lineTo(x+arm,y); p.moveTo(x,y-arm); p.lineTo(x,y+arm);
-    }
+              labels:[], peaks:[], pkAt:-1, pkTxtAt:0,
+              rects:[], blk:[], rt:-9, cross:[], drawn:-1,
+              big: S.reduce((a,s)=>a+s.w*s.h, 0)>12e6, rest:false,
+              ntx:Math.max(1, Math.ceil(T.w*T.dpr/TILE)), nty:Math.max(1, Math.ceil(T.h*T.dpr/TILE)) };
     // elevation label anchors: a loose ring around each screen's center, more on the primary
     const RING=[[-0.34,0.10],[0.30,0.02],[-0.04,0.30],[0.42,0.28],[-0.52,0.32],[0.08,-0.12]];
     S.forEach((s,n)=>{
@@ -188,9 +222,8 @@
       list.forEach(a=>{
         const ax=cx+a[0]*sh, ay=cy+a[1]*sh;
         if(ax<0 || ax>T.w || ay<0 || ay>T.h) return;
-        if(maskAt(S, pi, ax, ay, LBL_INSET)<0.7) return;
         G.labels.push({ ax, ay, k:null, x:ax, y:ay, ang:0, tx:ax, ty:ay, ta:0,
-                        al:0, lost:false, txt:"", tw:0, gap2:0, w:1 });
+                        al:0, lost:false, off:true, txt:"", tw:0, gap2:0, w:1 });
       });
     });
     let fam="monospace";
@@ -198,7 +231,51 @@
     G.font=G.fz+"px "+fam;
     G.fontPk=Math.round(G.fz*0.9)+"px "+fam;
     T.topo=G;
+    G.rects=readRects(T); panelsChanged(G);
     return G;
+  }
+  /* The masks, the crosses and which label anchors are usable all follow the
+     panels, so they are rebuilt whenever a panel box moves. */
+  function panelsChanged(G){
+    G.blk=blocks(G, G.rects);
+    const nx=G.nx, ny=G.ny, cs=G.cs, U=G.U;
+    for(let j=0;j<ny-1;j++){
+      let on=0;
+      for(let i=0;i<nx-1;i++){
+        const x=(i+0.5)*cs, y=(j+0.5)*cs, c=j*(nx-1)+i;
+        const m=maskAt(G, x, y, 0);
+        G.mask[c]=m;
+        // plain contours fade out behind the panels; index contours keep a floor
+        G.mN[c]=m*smooth(0.10, 0.45, m); G.mI[c]=Math.max(m, 0.2);
+        G.lmask[c]=maskAt(G, x, y, LBL_INSET);
+        // the survey level's reach, as a bucket: the ground around the massif
+        const fx=(x-G.ox)/U-MX, fy=(y-G.oy)/U-MY;
+        G.foc[c]=Math.round(NB*m*Math.exp(-(fx*fx/1.6+fy*fy)/(0.42*0.42)));
+        if(m>=0.03) on=1;
+      }
+      G.rowOn[j]=on;
+    }
+    // survey crosses on a lattice pinned to the primary center
+    const gs=U/5.5, arm=Math.max(2.5, U*0.0027);
+    G.cross=[];
+    const gx0=G.ox-Math.ceil(G.ox/gs)*gs, gy0=G.oy-Math.ceil(G.oy/gs)*gs;
+    for(let y=gy0;y<G.h;y+=gs) for(let x=gx0;x<G.w;x+=gs){
+      if(x<arm || y<arm) continue;
+      const b=Math.round(maskAt(G, x, y, 0)*NB);
+      if(b<1) continue;
+      const p=G.cross[b]||(G.cross[b]=new Path2D());
+      p.moveTo(x-arm,y); p.lineTo(x+arm,y); p.moveTo(x,y-arm); p.lineTo(x,y+arm);
+    }
+    for(const L of G.labels) L.off=maskAt(G, L.ax, L.ay, LBL_INSET)<0.7;
+  }
+  // re-read the panel boxes; a change of more than a pixel rebuilds the masks
+  function panels(T, G, t){
+    G.rt=t;
+    const R=readRects(T), O=G.rects;
+    let same=R.length===O.length;
+    for(let i=0;same && i<R.length;i++) if(Math.abs(R[i]-O[i])>1) same=false;
+    if(same) return;
+    G.rects=R; panelsChanged(G);
   }
   // the text mask under a point, from the cached cell grid
   function maskHere(G, x, y){
@@ -253,6 +330,17 @@
       if(G.cRow>=G.ncy){ upsample(G, G.C); G.cUp=true; }
     }
   }
+  // the height grid at time t, and its range
+  function heights(G, t){
+    field(G, t);
+    const n=G.nx*G.ny, H=G.H, A=G.A, B=G.B, u=clamp((t-G.ta)/KP, 0, 1);
+    let lo=Infinity, hi=-Infinity;
+    for(let i=0;i<n;i++){
+      const h=A[i]+(B[i]-A[i])*u; H[i]=h;
+      if(h<lo) lo=h; if(h>hi) hi=h;
+    }
+    G.lo=lo; G.hi=hi;
+  }
 
   /* ---- cached styles, rebuilt when the palette changes ---- */
   const ST={ gen:-1 };
@@ -274,10 +362,8 @@
   /* ---- marching squares, chained ----
      A crossing point belongs to the cell edge it sits on, and the two cells
      sharing that edge share the point, so the segments come out linked into
-     whole contours. Cell-length chords with a kink at every edge read as a
-     polygon at 4K; curving them through their midpoints costs far less than a
-     finer grid. The cell being contoured lives in module variables, so the
-     hot loop passes nothing but edge numbers around. */
+     whole contours. The cell being contoured lives in module variables, so
+     the hot loop passes nothing but edge numbers around. */
   // edge pairs for the unambiguous cases, as e1*4+e2 (0 top, 1 right, 2 bottom, 3 left)
   const SEGT=new Int8Array([-1, 12, 1, 13, 6, -1, 2, 14, 11, 2, -1, 6, 7, 1, 12, -1]);
   let C0=0, C1=0, C2=0, C3=0, CX=0, CY=0, CS=0, CL=0, EX=0, EY=0;
@@ -341,16 +427,18 @@
   }
 
   /* ---- chains to curves ---- */
-  const CH={ x:new Float32Array(2048), y:new Float32Array(2048), b:new Uint8Array(2048) };
+  const CH={ x:new Float32Array(2048), y:new Float32Array(2048), b:new Uint8Array(2048),
+              sx:new Float32Array(2048), sy:new Float32Array(2048) };
   function chGrow(){
     const n=CH.x.length*2, x=new Float32Array(n), y=new Float32Array(n), b=new Uint8Array(n);
     x.set(CH.x); y.set(CH.y); b.set(CH.b); CH.x=x; CH.y=y; CH.b=b;
+    CH.sx=new Float32Array(n); CH.sy=new Float32Array(n);
   }
   let CHM=0, CHC=false;
   /* Walk the contour from `start` into CH: points, and the bucket of each
      segment. A crossing that lands next to a grid corner leaves a stub of a
-     segment, and a midpoint curve turns on a stub like a corner, so points
-     closer than MIN2 to the last one kept are merged into it. */
+     segment, and a spline turns on a stub like a corner, so points closer
+     than MIN2 to the last one kept are merged into it. */
   let MIN2=0;
   function walk(start){
     let prev=-1, cur=start, m=0, nx=-1, cut=false;
@@ -373,9 +461,25 @@
     }else if(cut && m>1){ CH.x[m-1]=QX[cur]; CH.y[m-1]=QY[cur]; }
     CHM=m;
   }
-  // Pieces: the curve from one segment midpoint to the next, bent by the point
-  // between them. A run of pieces in one bucket is one subpath.
-  let EP=null, EB=-1, CUTS=null, NCUT=0, FOC=null;
+  /* The smoothing pass: the chain's points become the control polygon of a
+     uniform cubic B-spline, one Bezier per segment. Where a contour turns
+     inside one cell, marching squares leaves a chord with a corner at each
+     end; the spline rounds those corners off, where a curve through the
+     crossings would keep them. An open end is mirrored, so the curve still
+     ends on the last crossing, heading straight along its segment. */
+  function ctrl(){
+    const X=CH.x, Y=CH.y, SX=CH.sx, SY=CH.sy, m=CHM, cl=CHC;
+    if(m<2) return;
+    for(let i=0;i<m;i++){
+      let px, py, nx, ny;
+      if(i>0){ px=X[i-1]; py=Y[i-1]; } else if(cl){ px=X[m-1]; py=Y[m-1]; } else { px=2*X[0]-X[1]; py=2*Y[0]-Y[1]; }
+      if(i<m-1){ nx=X[i+1]; ny=Y[i+1]; } else if(cl){ nx=X[0]; ny=Y[0]; } else { nx=2*X[i]-X[i-1]; ny=2*Y[i]-Y[i-1]; }
+      SX[i]=(px+4*X[i]+nx)/6; SY[i]=(py+4*Y[i]+ny)/6;
+    }
+  }
+  // A run of segments in one bucket and one tile is one subpath. Paths come
+  // as {p, k}: a Path2D per bucket x tile, and the keys in the order made.
+  let EP=null, EB=-1, CUTS=null, NCUT=0, FOC=null, NTX=1, NTY=1, NT=1, TIX=0, TIY=0;
   function cutAt(x, y){
     for(let q=0;q<NCUT;q++){
       const L=CUTS[q], dx=x-L.x, dy=y-L.y;
@@ -383,60 +487,70 @@
     }
     return false;
   }
-  function piece(P, b, x0, y0, cx, cy, x1, y1, curve){
+  function piece(P, b, x0, y0, ax, ay, bx, by, x1, y1){
+    const mx=0.125*(x0+x1)+0.375*(ax+bx), my=0.125*(y0+y1)+0.375*(ay+by);
     // the survey pass takes its weight from where it is, not from the contour
-    if(FOC) b=FOC[Math.min((cy/CS)|0, NYR-2)*(NXR-1)+Math.min((cx/CS)|0, NXR-2)];
-    if(b<1 || (NCUT && cutAt(cx, cy))){ EB=-1; return; }
-    if(b!==EB){ EP=P[b]||(P[b]=new Path2D()); EP.moveTo(x0,y0); EB=b; }
-    if(curve) EP.quadraticCurveTo(cx,cy,x1,y1); else EP.lineTo(x1,y1);
+    if(FOC) b=FOC[clamp((my/CS)|0, 0, NYR-2)*(NXR-1)+clamp((mx/CS)|0, 0, NXR-2)];
+    if(b<1 || (NCUT && cutAt(mx, my))){ EB=-1; return; }
+    const key=b*NT+clamp((mx*TIX)|0, 0, NTX-1)+clamp((my*TIY)|0, 0, NTY-1)*NTX;
+    if(key!==EB){
+      EP=P.p[key];
+      if(!EP){ EP=P.p[key]=new Path2D(); P.k.push(key); }
+      EP.moveTo(x0,y0); EB=key;
+    }
+    EP.bezierCurveTo(ax,ay,bx,by,x1,y1);
   }
   function emit(P){
     const X=CH.x, Y=CH.y, B=CH.b, m=CHM;
     EB=-1;
-    if(!CHC){
-      if(m<2) return;
-      if(m===2){ piece(P, B[0], X[0],Y[0], X[0],Y[0], X[1],Y[1], false); return; }
-      let mx=(X[0]+X[1])*0.5, my=(Y[0]+Y[1])*0.5;
-      piece(P, B[0], X[0],Y[0], X[0],Y[0], mx,my, false);
-      for(let i=1;i<m-1;i++){
-        const nx=(X[i]+X[i+1])*0.5, ny=(Y[i]+Y[i+1])*0.5;
-        piece(P, B[i-1]>B[i]?B[i-1]:B[i], mx,my, X[i],Y[i], nx,ny, true);
-        mx=nx; my=ny;
+    if(!CHC){ if(m<2) return; }
+    else{
+      // A closed loop thinner than a third of a cell is a knob the grid barely
+      // caught, and it would draw as a stray dash.
+      if(m<3) return;
+      let x0=X[0], x1=x0, y0=Y[0], y1=y0;
+      for(let i=1;i<m;i++){
+        const x=X[i], y=Y[i];
+        if(x<x0) x0=x; else if(x>x1) x1=x;
+        if(y<y0) y0=y; else if(y>y1) y1=y;
       }
-      piece(P, B[m-2], mx,my, X[m-1],Y[m-1], X[m-1],Y[m-1], false);
-      return;
+      if(x1-x0<CS*0.34 || y1-y0<CS*0.34) return;
     }
-    // A closed loop: the last point's segment leads back to the first. A loop
-    // thinner than a third of a cell is a knob the grid barely caught, and it
-    // would draw as a stray dash.
-    if(m<3) return;
-    let x0=X[0], x1=x0, y0=Y[0], y1=y0;
-    for(let i=1;i<m;i++){
-      const x=X[i], y=Y[i];
-      if(x<x0) x0=x; else if(x>x1) x1=x;
-      if(y<y0) y0=y; else if(y>y1) y1=y;
-    }
-    if(x1-x0<CS*0.34 || y1-y0<CS*0.34) return;
-    let mx=(X[m-1]+X[0])*0.5, my=(Y[m-1]+Y[0])*0.5, bp=B[m-1];
-    const sx=mx, sy=my;
-    for(let i=0;i<m;i++){
-      const j=i+1<m ? i+1 : 0;
-      const nx=j ? (X[i]+X[j])*0.5 : sx, ny=j ? (Y[i]+Y[j])*0.5 : sy;
-      piece(P, bp>B[i]?bp:B[i], mx,my, X[i],Y[i], nx,ny, true);
-      mx=nx; my=ny; bp=B[i];
+    const SX=CH.sx, SY=CH.sy, ns=CHC ? m : m-1;
+    for(let i=0;i<ns;i++){
+      const j=i+1<m ? i+1 : 0, x0=X[i], y0=Y[i], x1=X[j], y1=Y[j];
+      piece(P, B[i], SX[i],SY[i], (2*x0+x1)/3,(2*y0+y1)/3, (x0+2*x1)/3,(y0+2*y1)/3, SX[j],SY[j]);
     }
   }
 
-  // per level, for the frame: index or not, and the elevation weight (x NB)
+  /* The survey level climbs from the valleys to the summits and starts over,
+     lighting the contours it passes, so the relief reads as relief even where
+     the lines are all the same weight. It is the same level on every canvas. */
+  const SCAN_LO=-0.6, SCAN_HI=1.3, SCAN_T=64, A_SCAN=0.85;
+  const SV={ scan:0, a:0 };
+  function survey(t){
+    const ph=((t-T0)/SCAN_T+0.35)%1;
+    SV.scan=SCAN_LO+(SCAN_HI-SCAN_LO)*ph;
+    SV.a=A_SCAN*smooth(0, 0.06, ph)*(1-smooth(0.94, 1, ph));
+  }
+
+  /* The map at the height grid in G.H, as a list of strokes. Labels and
+     summits move to it here too, so they are ready to paint after. */
+  // per level, for the frame: 0 plain, 1 index, 2 odd-hundred index, and the elevation weight (x NB)
   const LEL=new Float32Array(1024), LIDX=new Uint8Array(1024);
-  function contour(T, G, pulse, dts, settle, kLoAll, kHiAll, scan, scanA){
-    const ctx=T.ctx, nx=G.nx, ny=G.ny, cs=G.cs, H=G.H, mask=G.mask, MN=G.mN, MI=G.mI;
-    const inv=1/STEP, PN=[], PI=[];
+  function trace(ctx, G, t, dts, settle, pulse){
+    const nx=G.nx, ny=G.ny, cs=G.cs, H=G.H, mask=G.mask, MN=G.mN, MI=G.mI;
+    const kLoAll=Math.ceil(G.lo/STEP), kHiAll=Math.ceil(G.hi/STEP);
+    const inv=1/STEP, PN={p:[],k:[]}, PI={p:[],k:[]};
+    // index contours this close (px) run as one doubled line, so the odd
+    // hundreds step down to a plain line's weight wherever they crowd
+    const isp=5*STEP*2*cs, d0=0.0042*G.U, d1=0.0070*G.U;
     IXB=G.ix; NIX=0; CUR=G; CS=cs; MIN2=(0.28*cs)*(0.28*cs);
+    NTX=G.ntx; NTY=G.nty; NT=NTX*NTY; TIX=NTX/G.w; TIY=NTY/G.h;
     NXR=nx; NYR=ny; NLV=Math.min(kHiAll-kLoAll+1, 1024); TW=NLV*nx;
     for(let q=0;q<NLV;q++){
       const k=kLoAll+q;
-      LIDX[q]=(k%5===0)?1:0;
+      LIDX[q]=k%10===0 ? 1 : k%5===0 ? 2 : 0;
       // higher ground reads brighter, so the relief shows without shading
       LEL[q]=(0.22+0.78*smooth(-0.55, 0.95, k*STEP))*NB;
     }
@@ -458,9 +572,11 @@
         if(kLo>kHi) continue;
         C0=a0; C1=a1; C2=a2; C3=a3; CX=i*cs; CI=i; CID=mr+i;
         const mN=MN[mr+i], mI=MI[mr+i];
+        const gx=a1-a0+a2-a3, gy=a3-a0+a2-a1;
+        const mO=mI*(IDX_DIM+(1-IDX_DIM)*smooth(d0, d1, isp/Math.sqrt(gx*gx+gy*gy+1e-12)));
         for(let k=kLo;k<=kHi;k++){
-          const ki=k-kLoAll, idx=LIDX[ki]===1;
-          const b=((idx ? mI : mN)*LEL[ki]+0.5)|0;
+          const ki=k-kLoAll, li=LIDX[ki], idx=li!==0;
+          const b=((li===0 ? mN : li===1 ? mI : mO)*LEL[ki]+0.5)|0;
           if(!idx && b<1) continue;
           const L=k*STEP; CL=L; KI=ki;
           const c=(a0>L?1:0)|(a1>L?2:0)|(a2>L?4:0)|(a3>L?8:0);
@@ -479,7 +595,8 @@
     labelsUpdate(ctx, G, ix, nIx, dts, settle);
     const LB=G.labels.filter(L=>L.k!==null && L.al>=0.04), cut=[];
     // the survey level: the few contours nearest it are drawn a second time, bright
-    const sk0=Math.round(scan/STEP)-2, PS=[];
+    survey(t);
+    const scan=SV.scan, scanA=SV.a, sk0=Math.round(scan/STEP)-2, PS=[];
     // open contours first, from either end, then whatever is left is a loop
     const nQ=QN, V=QV;
     V.fill(0, 0, nQ);
@@ -487,7 +604,7 @@
       for(let n=0;n<nQ;n++){
         if(V[n] || (pass===0 && QA1[n]>=0)) continue;
         const k=QK[n], s=k-sk0;
-        walk(n);
+        walk(n); ctrl();
         if(k%5===0){
           // index contours break where a label sits on them, the way a printed map does it
           cut.length=0;
@@ -495,37 +612,46 @@
           CUTS=cut; NCUT=cut.length;
           emit(PI);
         }else emit(PN);
-        if(s>=0 && s<5 && scanA>0){ FOC=G.foc; emit(PS[s]||(PS[s]=[])); FOC=null; }
         NCUT=0;
+        if(s>=0 && s<5 && scanA>0){ FOC=G.foc; emit(PS[s]||(PS[s]={p:[],k:[]})); FOC=null; }
       }
     }
     CUTS=null;
+    peaksUpdate(G, t, dts, settle);
 
-    ctx.lineWidth=G.lwN;
-    for(let b=1;b<=NB;b++) if(PN[b]){ ctx.strokeStyle=ST.norm[b]; ctx.stroke(PN[b]); }
-    ctx.lineWidth=G.lwI;
-    ctx.globalAlpha=pulse;
-    for(let b=1;b<=NB;b++) if(PI[b]){ ctx.strokeStyle=ST.idx[b]; ctx.stroke(PI[b]); }
+    const out=[];
+    for(const k of PN.k) out.push({ p:PN.p[k], st:ST.norm[(k/NT)|0], lw:G.lwN, a:1 });
+    for(const k of PI.k) out.push({ p:PI.p[k], st:ST.idx[(k/NT)|0], lw:G.lwI, a:pulse });
     // each survey contour's weight comes from its distance to the level, not a
     // bucket, so the brightness slides from line to line instead of stepping
-    ctx.lineWidth=G.lwS;
     for(let s=0;s<5;s++){
       const P=PS[s]; if(!P) continue;
-      const d=((sk0+s)*STEP-scan)/(0.85*STEP);
-      const a=scanA*Math.exp(-d*d);
+      const d=((sk0+s)*STEP-scan)/(0.85*STEP), a=scanA*Math.exp(-d*d);
       if(a<0.01) continue;
-      ctx.globalAlpha=a;
-      for(let b=1;b<=NB;b++) if(P[b]){ ctx.strokeStyle=ST.scan[b]; ctx.stroke(P[b]); }
+      for(const k of P.k) out.push({ p:P.p[k], st:ST.scan[(k/NT)|0], lw:G.lwS, a });
     }
+    return out;
+  }
+  // Butt caps: a contour changes alpha bucket and tile mid-line, and two round
+  // caps meeting there would overlap into a brighter bead. The curves turn
+  // smoothly at every point, so the joins never show and plain miters do.
+  function strokeCross(ctx, G){
+    ctx.lineWidth=1; ctx.lineCap="butt"; ctx.lineJoin="miter";
+    for(let b=1;b<=NB;b++) if(G.cross[b]){ ctx.strokeStyle=ST.cross[b]; ctx.stroke(G.cross[b]); }
+  }
+  function strokeList(ctx, L){
+    ctx.lineCap="butt"; ctx.lineJoin="miter";
+    for(const s of L){ ctx.lineWidth=s.lw; ctx.globalAlpha=s.a; ctx.strokeStyle=s.st; ctx.stroke(s.p); }
     ctx.globalAlpha=1;
   }
 
   /* ---- elevation labels ----
      Each label hangs off a fixed anchor and rides the nearest index contour.
-     Every redraw it moves to the closest point on the same contour level (with
-     a slight pull back toward its anchor, so it never wanders off), and fades
-     out if that level has left the area or drifted toward a panel. A faded
-     label picks up whichever index contour now passes closest to its anchor. */
+     Every redraw it moves to the closest point on the same contour level
+     (with a slight pull back toward its anchor, so it never wanders off), and
+     fades out if that level has left the area or drifted toward a panel. A
+     faded label picks up whichever index contour now passes closest to its
+     anchor, unless a panel now sits over the anchor. */
   const NEAR={ d2:0, x:0, y:0, a:0, k:0 };
   function upright(a){ if(a>Math.PI/2) a-=Math.PI; else if(a<-Math.PI/2) a+=Math.PI; return a; }
   function nearestOn(ix, nIx, k, px, py, r){
@@ -552,11 +678,11 @@
     for(const L of LB){
       if(L.k!==null && !L.lost){
         const px=L.tx+(L.ax-L.tx)*0.04, py=L.ty+(L.ay-L.ty)*0.04;
-        if(nearestOn(ix, nIx, L.k, px, py, keepR) && maskHere(G, NEAR.x, NEAR.y)>=0.62){
+        if(!L.off && nearestOn(ix, nIx, L.k, px, py, keepR) && maskHere(G, NEAR.x, NEAR.y)>=0.62){
           L.tx=NEAR.x; L.ty=NEAR.y; L.ta=NEAR.a;
         }else L.lost=true;
       }
-      if(L.k===null && nearestOn(ix, nIx, null, L.ax, L.ay, acqR)){
+      if(L.k===null && !L.off && nearestOn(ix, nIx, null, L.ax, L.ay, acqR)){
         // take a level no other nearby label already carries
         const k=NEAR.k, nx0=NEAR.x, ny0=NEAR.y;
         const dup=LB.some(o=>o!==L && o.k===k && (o.x-nx0)*(o.x-nx0)+(o.y-ny0)*(o.y-ny0)<dup2);
@@ -578,8 +704,8 @@
       }
     }
   }
-  function labelsDraw(T, G){
-    const ctx=T.ctx, LB=G.labels, dpr=T.dpr;
+  function labelsDraw(ctx, dpr, G){
+    const LB=G.labels;
     ctx.font=G.font; ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillStyle=ST.label;
     for(const L of LB){
@@ -605,7 +731,7 @@
     const PK=G.peaks;
     const fade=settle ? 1 : clamp(dts/1.2, 0, 1), sm=settle ? 1 : clamp(dts*8, 0, 1);
     // the height readout ticks at most twice a second, so digits never shimmer
-    const retxt = settle || t-G.pkTxtAt>0.5;
+    const retxt = settle || t-G.pkTxtAt>0.5 || t<G.pkTxtAt;
     if(retxt) G.pkTxtAt=t;
     for(let n=PK.length-1;n>=0;n--){
       const p=PK[n];
@@ -656,8 +782,8 @@
       live++;
     }
   }
-  function peaksDraw(T, G){
-    const ctx=T.ctx, r=Math.max(3, G.U*0.0028);
+  function peaksDraw(ctx, G){
+    const r=Math.max(3, G.U*0.0028);
     ctx.font=G.fontPk; ctx.textAlign="left"; ctx.textBaseline="middle";
     ctx.fillStyle=ST.label;
     for(const p of G.peaks){
@@ -673,31 +799,16 @@
 
   /* ---- one full redraw of a band canvas ---- */
   function render(T, G, t, dts, settle){
-    const n=G.nx*G.ny, H=G.H, A=G.A, B=G.B, u=clamp((t-G.ta)/KP, 0, 1);
-    let lo=Infinity, hi=-Infinity;
-    for(let i=0;i<n;i++){
-      const h=A[i]+(B[i]-A[i])*u; H[i]=h;
-      if(h<lo) lo=h; if(h>hi) hi=h;
-    }
-    styles();
+    heights(G, t); styles();
     const ctx=T.ctx;
     ctx.clearRect(0,0,T.w,T.h);
-    // Butt caps: a contour changes alpha bucket mid-line, and two round caps
-    // meeting there would overlap into a brighter bead.
-    ctx.lineWidth=1; ctx.lineCap="butt"; ctx.lineJoin="round";
-    for(let b=1;b<=NB;b++) if(G.cross[b]){ ctx.strokeStyle=ST.cross[b]; ctx.stroke(G.cross[b]); }
-    contour(T, G, settle ? 0.85 : TOPO.pulse, dts, settle, Math.ceil(lo/STEP), Math.ceil(hi/STEP),
-            TOPO.scan, settle ? 0 : TOPO.scanA);
-    labelsDraw(T, G);
-    peaksUpdate(G, t, dts, settle);
-    peaksDraw(T, G);
+    strokeCross(ctx, G);
+    strokeList(ctx, trace(ctx, G, t, dts, settle, TOPO.pulse));
+    labelsDraw(ctx, T.dpr, G);
+    peaksDraw(ctx, G);
   }
 
-  /* The survey level climbs from the valleys to the summits and starts over,
-     lighting the contours it passes, so the relief reads as relief even where
-     the lines are all the same weight. It is the same level on every canvas. */
-  const SCAN_LO=-0.6, SCAN_HI=1.3, SCAN_T=64, A_SCAN=0.85;
-  const TOPO={ t:T0, pulse:0.85, scan:0, scanA:0, skyKey:"" };
+  const TOPO={ t:T0, pulse:0.85, skyKey:"" };
   function prep(T){ return T.topo || setup(T); }
 
   SCENES.topo={
@@ -706,9 +817,6 @@
     init(T){ T.topo=null; TOPO.skyKey=""; prep(T); },
     frame(dt, S){
       TOPO.t=T0+S.t;
-      const ph=(S.t/SCAN_T+0.35)%1;
-      TOPO.scan=SCAN_LO+(SCAN_HI-SCAN_LO)*ph;
-      TOPO.scanA=A_SCAN*smooth(0, 0.06, ph)*(1-smooth(0.94, 1, ph));
       // index contours swell a little with the low end of the music, eased so
       // a kick drum reads as a breath rather than a flash
       const want=0.78+0.22*clamp(S.energy*1.6, 0, 1);
@@ -716,6 +824,7 @@
     },
     draw(T){
       const G=prep(T), t=TOPO.t;
+      if(t-G.rt>=1 || t<G.rt) panels(T, G, t);
       field(G, t);
       // A desktop past the economy line redraws at most every other frame and
       // 20 times a second, so a machine that is already struggling gets half
@@ -733,10 +842,13 @@
       if(TOPO.skyKey===key) return;
       TOPO.skyKey=key; K.ctx.clearRect(0,0,K.w,K.h);
     },
-    // game mode freezes the map where it stands, labels and summits settled in
+    /* Game mode freezes the map where it stands, the survey level and the
+       music's swell included, so the still has the live frame's contrast,
+       with labels and summits settled in. */
     still(T){
       const G=prep(T), t=TOPO.t;
-      G.ta=-1; field(G, t);
+      panels(T, G, t);
+      G.ta=-1;
       G.labels.forEach(L=>{ L.k=null; L.al=0; L.lost=false; });
       G.peaks.length=0;
       render(T, G, t, 0, true);

@@ -1897,7 +1897,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "3.0";
+const VERSION = "3.1";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -5532,6 +5532,3734 @@ const GALAXY=(()=>{
   };
 })();
 SCENES.galaxy=GALAXY;
+</script>
+<script data-style="ridgeline">
+/* ---- Ridgeline: a slow flyover of the game-mode mountains ----
+   The world is a fixed heightfield and the camera glides forward over it, so
+   each ridge is sampled once, cached, and only re-projected per frame. Rows sit
+   at fixed world depths. The valley runs straight down world x = 0, which
+   projects to T.cx: the eye always has a path to the pass and the glow behind
+   it.
+   Hidden lines go the other way round from drawMountainsOne: rows are walked
+   near to far against a floating horizon (the highest point drawn so far at
+   each x), and only what clears it is kept. The canvas rasterizes a concave
+   fill as a mask the size of its bounding box, so a fill per row, as the
+   game-mode mountains do once, costs a full-band mask 80 times a frame; here
+   the whole range is one fill under its own silhouette, and every line of
+   one light tier and brightness goes into one stroke. A row enters at the
+   far plane at zero alpha and rises out of the haze as it nears, and leaves
+   through the foreground fade, so nothing pops.
+   Every line takes its level from a light grid as well: it dims behind the
+   panels (their boxes are read from the DOM once a second, never per frame)
+   and toward the lower corners, so the bottom panels sit over near-black. */
+SCENES.ridgeline=(function(){
+  "use strict";
+  const BAND=0.61;       // band canvas height as a share of its layer
+  const FRAME=0.52;      // the composed view: this share of its monitor's height, on its bottom edge
+  const CELL=8;          // px per cell of the light grid
+  const PANEL_A=0.25;    // what a line keeps behind a panel, reached 3rem outside its box
+  // the foreground fade: from FL_V0 to FL_V1 of the way from the horizon to
+  // the bottom edge, down to FL_MID at the valley's center line and FL_EDGE
+  // toward the sides (FL_U0..FL_U1 of the monitor's half width)
+  const FL_V0=0.14, FL_V1=0.64, FL_MID=0.28, FL_EDGE=0.03, FL_U0=0.18, FL_U1=0.8;
+  const SP=0.6;          // world depth between rows
+  const DX=0.3;          // world width between columns
+  const CAM_Y=1.7;       // camera altitude; the valley floor sits near 0
+  const Z_FAR=50;        // far plane: rows are born here at zero alpha
+  const FADE_FAR=12;     // depth over which a new row fades in
+  const Z_MIN=0.8;       // nothing nearer than this is ever on screen
+  const HORIZON=0.42;    // horizon as a share of the design height
+  const SPEED=0.85;      // world units per second
+  const STILL_Z=12;      // game mode's view: a narrow pass under tall walls
+  const RES=3;           // px between floating-horizon samples
+  const EPS=0.75;        // px a line may sit under the horizon and still show
+  const HAZE_A=0.55;     // how much of the sky a far ridge hides while it fades in
+  const ODD_IN=22, ODD_OUT=32;   // depths over which every other slope line fades out
+  const RING=Math.ceil((Z_FAR-Z_MIN)/SP)+6;
+  // three light tiers by altitude (valley floor, slopes, crests), as alpha
+  // multipliers, so the peaks carry the light and the floor stays quiet.
+  // band3 takes the sum of two heights, the mean of a segment's ends x 2.
+  const RIDGE_A=[0.42, 0.80, 1.20], SLOPE_A=[0.19, 0.36, 0.50];
+  const band3=(h2)=> h2<0.32 ? 0 : h2<0.84 ? 1 : 2;
+  // a row's brightness is quantized so rows share strokes: level l means
+  // alpha (l/LQ)^2, fine steps near zero where a far row is fading in
+  const LQ=40, LV=46, LA=new Float32Array(LV);
+  for(let l=0;l<LV;l++) LA[l]=(l/LQ)*(l/LQ);
+  const VIS_A=0.002;     // under this alpha a line adds under half a step of 8-bit color
+
+  // the flight starts from game mode's composed view
+  const S={ camZ:STILL_Z, e:0, cmax:0, ring:[], ringK:[] };
+
+  /* ---- deterministic gradient noise, so the range is the same every boot ---- */
+  const PERM=new Uint8Array(512);
+  { let s=90210; const p=[]; for(let i=0;i<256;i++) p.push(i);
+    for(let i=255;i>0;i--){ s=(s*1103515245+12345)>>>0; const j=(s>>>8)%(i+1); const t=p[i]; p[i]=p[j]; p[j]=t; }
+    for(let i=0;i<512;i++) PERM[i]=p[i&255]; }
+  const GX=[1,-1,1,-1,1.41,-1.41,0,0], GY=[1,1,-1,-1,0,0,1.41,-1.41];
+  function noise(x,y){
+    const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi, X=xi&255, Y=yi&255;
+    const u=xf*xf*xf*(xf*(xf*6-15)+10), v=yf*yf*yf*(yf*(yf*6-15)+10);
+    const a=PERM[X]+Y, b=PERM[X+1]+Y;
+    const h00=PERM[a]&7, h10=PERM[b]&7, h01=PERM[a+1]&7, h11=PERM[b+1]&7;
+    const n00=GX[h00]*xf+GY[h00]*yf,     n10=GX[h10]*(xf-1)+GY[h10]*yf;
+    const n01=GX[h01]*xf+GY[h01]*(yf-1), n11=GX[h11]*(xf-1)+GY[h11]*(yf-1);
+    const nx0=n00+(n10-n00)*u, nx1=n01+(n11-n01)*u;
+    return nx0+(nx1-nx0)*v;
+  }
+  // ridged multifractal: sharp crests, detail only where the rock is already high
+  function ridged(x,y){
+    let sum=0, a=0.5, f=1, w=1, norm=0;
+    for(let o=0;o<4;o++){
+      let n=1-Math.abs(noise(x*f+o*17.3, y*f-o*9.1)); n*=n; n*=w; w=Math.min(1,n*1.8);
+      sum+=n*a; norm+=a; a*=0.5; f*=2.03;
+    }
+    return sum/norm;
+  }
+  const sstep=(e0,e1,x)=>{ const t=clamp((x-e0)/(e1-e0),0,1); return t*t*(3-2*t); };
+
+  /* Height at a world point, 0..1 before the per-row amplitude. The valley
+     narrows into passes and opens into basins as you fly, but never leaves
+     x = 0, so the path stays on the primary monitor's center line. */
+  function height(x,z){
+    const half=1.8+0.75*Math.sin(z*0.057+0.7)+0.4*Math.sin(z*0.131+2.1);
+    const q=Math.abs(x);
+    const wall=sstep(half, half+4.5, q);
+    const r=ridged(x*0.12, z*0.12);
+    // a slow second field groups the peaks into massifs with saddles between,
+    // so the skyline rises and falls instead of reading as one row of teeth
+    const massif=0.55+0.45*sstep(-0.45, 0.45, noise(x*0.045+11.3, z*0.045-4.2));
+    const rock=wall*massif*(0.12+0.88*Math.pow(r,1.35));
+    const floor=0.035*(1+noise(x*0.42+5.1, z*0.42));
+    return Math.min(1, rock+floor*(1-wall*0.6));
+  }
+  // one cached row of heights per world depth index k
+  function rowHeights(k){
+    const i=((k%RING)+RING)%RING;
+    if(S.ringK[i]!==k){
+      const h=S.ring[i], z=k*SP, n=S.cmax;
+      for(let c=-n;c<=n;c++) h[c+n]=height(c*DX, z);
+      S.ringK[i]=k;
+    }
+    return S.ring[i];
+  }
+  function ensureCols(n){
+    if(n<=S.cmax) return;
+    S.cmax=n;
+    S.ring=[]; S.ringK=[];
+    for(let i=0;i<RING;i++){ S.ring.push(new Float64Array(2*n+1)); S.ringK.push(NaN); }
+  }
+
+  /* Visible lines wait here until the stroke pass, one list per light tier
+     and brightness level: ridges as polylines split by NaN, slopes as
+     segments. Shared by every canvas, since each is painted in one go. */
+  const RB=[], RN=new Int32Array(3*LV), SB=[], SN=new Int32Array(3*LV);
+  for(let i=0;i<3*LV;i++){ RB.push(new Float32Array(256)); SB.push(new Float32Array(256)); }
+  function grow(L, b, need){
+    const o=L[b]; if(need<=o.length) return o;
+    const a=new Float32Array(Math.max(need, o.length*2)); a.set(o); L[b]=a; return a;
+  }
+  function rPt(b, x, y){ const k=RN[b], A=grow(RB, b, k+2); A[k]=x; A[k+1]=y; RN[b]=k+2; }
+  function rEnd(b){ const k=RN[b], A=grow(RB, b, k+2); A[k]=NaN; A[k+1]=NaN; RN[b]=k+2; }
+  function sSeg(b, x0, y0, x1, y1){
+    const k=SN[b], A=grow(SB, b, k+4); A[k]=x0; A[k+1]=y0; A[k+2]=x1; A[k+3]=y1; SN[b]=k+4;
+  }
+
+  /* ---- the light grid ----
+     One cell per CELL px of the band holds sqrt of the share of its alpha a
+     line keeps there, times LQ, so a line's level is one multiply by the
+     sqrt of its own alpha. It holds the panels and the whole foreground
+     fade, so the fade costs no full-width fill per frame. LG is the grid of
+     the canvas being worked on. */
+  let LG=null, LGW=1, LGH=1;
+  function useGrid(r){ LG=r.fg; LGW=r.gw; LGH=r.gh; }
+  function cellAt(x, y){
+    let gx=(x*(1/CELL))|0, gy=(y*(1/CELL))|0;
+    if(gx<0) gx=0; else if(gx>=LGW) gx=LGW-1;
+    if(gy<0) gy=0; else if(gy>=LGH) gy=LGH-1;
+    return LG[gy*LGW+gx];
+  }
+  function lit(s, x, y){ const l=(s*cellAt(x, y)+0.5)|0; return l<LV? l : LV-1; }
+  // a slope line: b is its bucket, or -1 when its ends sit in different light
+  // (a panel's edge, the foreground fade), which cuts it into cell-long
+  // pieces at their own levels
+  function seg(b, b3, s, x0, y0, x1, y1){
+    if(b>=0){ sSeg(b, x0, y0, x1, y1); return; }
+    const dx=x1-x0, dy=y1-y0, m=Math.ceil(Math.max(dx<0? -dx : dx, dy<0? -dy : dy)/CELL)||1;
+    let sx=x0, sy=y0, cl=lit(s, x0+dx*0.5/m, y0+dy*0.5/m);
+    for(let q=1;q<m;q++){
+      const l=lit(s, x0+dx*(q+0.5)/m, y0+dy*(q+0.5)/m);
+      if(l===cl) continue;
+      const x=x0+dx*q/m, y=y0+dy*q/m;
+      if(cl) sSeg(b3+cl, sx, sy, x, y);
+      sx=x; sy=y; cl=l;
+    }
+    if(cl) sSeg(b3+cl, sx, sy, x1, y1);
+  }
+
+  /* ---- the panels ----
+     Every panel's box in viewport px, with its 3rem falloff at its screen's
+     zoom, as [x0,y0,x1,y1,fall]. Reading a box forces a layout, so this runs
+     at most once a second, and a canvas rebuilds its grid only when a box
+     has moved. */
+  const PR={ r:[], t:-1e9, v:0 };
+  function readPanels(){
+    const out=[], L=(LAY.screens && LAY.screens.length) ? LAY.screens : [{el:document, zoom:1}];
+    let rem=16;
+    try{ rem=parseFloat(getComputedStyle(document.documentElement).fontSize)||16; }catch(e){}
+    for(const s of L){
+      if(!s.el) continue;
+      const fall=3*rem*(s.zoom||1);
+      s.el.querySelectorAll(".win, #os-label").forEach(el=>{
+        const b=el.getBoundingClientRect();
+        if(b.width>1 && b.height>1) out.push(b.left, b.top, b.right, b.bottom, fall);
+      });
+    }
+    return out;
+  }
+  function panels(now){
+    PR.t=now;
+    const R=readPanels(), O=PR.r;
+    let same=R.length===O.length;
+    for(let i=0;same && i<R.length;i++) if(Math.abs(R[i]-O[i])>1) same=false;
+    if(!same){ PR.r=R; PR.v++; }
+  }
+  function shade(T, r){
+    const GW=r.gw, GH=r.gh, g=r.fg, pq=r.pq, R=PR.r;
+    pq.fill(1);
+    for(let i=0;i<R.length;i+=5){
+      const x0=R[i]-T.x, y0=R[i+1]-T.y, x1=R[i+2]-T.x, y1=R[i+3]-T.y, fl=R[i+4];
+      const gx0=Math.max(0, Math.floor((x0-fl)/CELL)), gx1=Math.min(GW-1, Math.floor((x1+fl)/CELL));
+      const gy0=Math.max(0, Math.floor((y0-fl)/CELL)), gy1=Math.min(GH-1, Math.floor((y1+fl)/CELL));
+      for(let gy=gy0;gy<=gy1;gy++){
+        const y=(gy+0.5)*CELL, dy= y<y0? y0-y : y>y1? y-y1 : 0;
+        for(let gx=gx0;gx<=gx1;gx++){
+          const x=(gx+0.5)*CELL, dx= x<x0? x0-x : x>x1? x-x1 : 0;
+          const d=Math.sqrt(dx*dx+dy*dy); if(d>=fl) continue;
+          const p=PANEL_A+(1-PANEL_A)*sstep(0, fl, d), k=gy*GW+gx;
+          if(p<pq[k]) pq[k]=p;
+        }
+      }
+    }
+    // the floor darkens below the pass, most toward the lower corners, and
+    // then sinks into the background for good down to the frame's bottom
+    // edge (and stays gone below it, where the primary monitor ends)
+    const hz=r.hz, dv=1/Math.max(1, r.hd-hz), du=1/r.half;
+    const f0=r.y0+r.dh*0.58, f1=r.y0+r.dh*0.985;
+    for(let gy=0;gy<GH;gy++){
+      const y=(gy+0.5)*CELL, t=sstep(FL_V0, FL_V1, (y-hz)*dv);
+      const fp=(y-f0)/(f1-f0);
+      const foot= fp<=0? 1 : fp>=1? 0 : 1-(fp<0.35? fp/0.35*0.2 : fp<0.7? 0.2+(fp-0.35)/0.35*0.42 : 0.62+(fp-0.7)/0.3*0.38);
+      for(let gx=0;gx<GW;gx++){
+        const k=gy*GW+gx;
+        let f=pq[k]*foot;
+        if(t>0) f*=1-t*(1-lerp(FL_MID, FL_EDGE, sstep(FL_U0, FL_U1, Math.abs((gx+0.5)*CELL-T.cx)*du)));
+        g[k]=Math.sqrt(f)*LQ;
+      }
+    }
+    // the far range's outline, cut into runs of one light step each
+    useGrid(r);
+    for(const f of r.far){
+      const P=f.pts, B=new Map(); let cur=-1, path=null;
+      for(let i=0;i+3<P.length;i+=2){
+        const c=cellAt((P[i]+P[i+2])*0.5, (P[i+1]+P[i+3])*0.5)/LQ, q=Math.round(c*c*8);
+        if(q!==cur){
+          cur=q;
+          if(q){ path=B.get(q); if(!path){ path=new Path2D(); B.set(q, path); } path.moveTo(P[i], P[i+1]); }
+        }
+        if(q) path.lineTo(P[i+2], P[i+3]);
+      }
+      f.lines=[...B].map(([q,p])=>({p, a:q/8}));
+    }
+    r.pv=PR.v;
+  }
+
+  // one row's screen points and visibility, and the row in front of it. Sized
+  // to the shared column count, which a wider canvas set up later can raise
+  function rowArrays(r){
+    const m=2*S.cmax+1; r.n=S.cmax;
+    r.ax=new Float32Array(m); r.ay=new Float32Array(m); r.av=new Uint8Array(m);
+    r.bx=new Float32Array(m); r.by=new Float32Array(m); r.bv=new Uint8Array(m);
+  }
+
+  /* Per-canvas geometry. The view is composed in a frame FRAME of the
+     PRIMARY monitor's height tall, standing on its bottom edge, so a span
+     frames the primary the way a single screen would, and the other
+     monitors extend the same world sideways. The band is taller than the
+     frame because on a span its layer is the bounding box, which is taller
+     than the primary; on a single screen the band's top stays empty. A
+     canvas of its own on another monitor is framed on that monitor. */
+  function setup(T){
+    const r=T.rl||(T.rl={});
+    // LAY, not SC: SC.primary is only refreshed by sceneFrame, so on the first
+    // build it still says 0 and would frame the span on the leftmost monitor
+    const SS=T.screens||[], holds=(s)=> s && T.cx>=s.x && T.cx<=s.x+s.w;
+    let P=SS[LAY.primary||0];
+    if(!holds(P)) P=SS.find(holds)||P;
+    let hd=T.h, dh=T.h*FRAME/BAND, half=T.w/2;
+    if(P){ const b=P.y+P.h; if(b>T.h*0.3 && b<T.h-0.5) hd=b; dh=P.h*FRAME; half=P.w/2; }
+    // a band too short for the whole frame keeps what fits
+    dh=Math.min(dh, hd);
+    const y0=hd-dh;
+    r.hd=hd; r.y0=y0; r.dh=dh; r.half=half;
+    r.hz=Math.round(y0+dh*HORIZON)+0.5;
+    // a portrait monitor would see only the valley floor at this focal
+    // length, so cap it to keep a usable field of view
+    r.F=Math.min(dh*3.2, half/0.35);
+    r.uL=T.cx/r.F; r.uR=(T.w-T.cx)/r.F;
+    r.eTop=(r.hz-y0-dh*0.07)/r.F;         // highest angle that stays inside the frame
+    r.zBot=CAM_Y*r.F/(hd-r.hz);           // flat ground meets the design bottom here
+    // the ground stops at the frame's bottom edge; under it only the monitors
+    // that reach lower are painted, since the rest of the box is on no screen
+    r.gb=T.h+2; r.below=[];
+    if(hd<T.h-1){
+      r.gb=hd+2;
+      SS.forEach(s=>{
+        const x0=Math.max(0, s.x), x1=Math.min(T.w, s.x+s.w), y1=Math.min(T.h, s.y+s.h);
+        if(x1>x0 && y1>hd+1) r.below.push([x0, hd, x1-x0, y1-hd]);
+      });
+    }
+    const n=Math.ceil(Math.max(r.uL,r.uR)*(Z_FAR+2*SP)/DX)+3;
+    ensureCols(n);
+    rowArrays(r);
+    // the floating horizon for hiding lines, and the two silhouettes the
+    // ground is filled under: a faint one a new far row joins at once, and
+    // the solid one it only rises into as it nears
+    r.ns=Math.ceil(T.w/RES)+1;
+    r.hh=new Float32Array(r.ns); r.hs=new Float32Array(r.ns); r.hm=new Float32Array(r.ns);
+    r.gw=Math.ceil(T.w/CELL)+1; r.gh=Math.ceil(T.h/CELL)+1;
+    r.fg=new Float32Array(r.gw*r.gh); r.pq=new Float32Array(r.gw*r.gh);
+    r.gen=-1; r.pv=-1;
+    buildRange(T, r);
+  }
+
+  /* The far range is so distant that flying forward never moves it, so it is
+     built once per size as a Path2D in angle space. Its foot sits between the
+     horizon and the far plane, standing in for the terrain the rows never
+     reach, and it dips at the center so the horizon line shows through the
+     end of the valley. */
+  function rangeElev(u, seed, notch, amp, base){
+    const au=Math.abs(u);
+    const n=ridged(u*7.5+seed, seed*0.7);
+    const gap=0.25+0.75*sstep(notch*0.2, notch, au);
+    return -base+amp*n*gap;
+  }
+  function buildRange(T, r){
+    const step=6/r.F, u0=-r.uL-step, u1=r.uR+step;
+    const gapA=CAM_Y/Z_FAR;                    // far plane's floor, as an angle below the horizon
+    r.far=[]; r.lowY=r.hz;
+    // the outline is kept as points: shade() cuts it by the light grid
+    [[3.1, 0.10, 0.034, gapA*0.30], [11.7, 0.22, 0.050, gapA*0.62]].forEach(([seed,notch,amp,base])=>{
+      const pts=[];
+      for(let u=u0; u<=u1+step*0.5; u+=step){
+        const y=r.hz-rangeElev(u,seed,notch,amp,base)*r.F;
+        pts.push(T.cx+u*r.F, y);
+        if(y>r.lowY) r.lowY=y;
+      }
+      r.far.push({pts:new Float32Array(pts), lines:[]});
+    });
+    // each fill only has to reach the ground line: the ground covers the rest
+    const fb=Math.max(r.lowY, r.hz+gapA*r.F*1.35)+3;
+    r.far.forEach(f=>{
+      const P=f.pts, fill=new Path2D();
+      fill.moveTo(P[0], P[1]);
+      for(let i=2;i<P.length;i+=2) fill.lineTo(P[i], P[i+1]);
+      fill.lineTo(P[P.length-2], fb); fill.lineTo(P[0], fb); fill.closePath();
+      f.fill=fill;
+    });
+  }
+
+  /* Colors and gradients, rebuilt only when the palette or the size changes. */
+  function styles(T, r){
+    const ctx=T.ctx, lit=clamp(PAL.l+8,0,80), H=PAL.h, Sa=PAL.s;
+    const col=(a)=>hslStr(H, Sa, lit, +a.toFixed(3));
+    // lines fall off toward each monitor's side edges, where the panels sit
+    const g=ctx.createLinearGradient(0,0,T.w,0);
+    const spans=(T.screens||[]).map(s=>[Math.max(0,s.x), Math.min(T.w,s.x+s.w)])
+                 .filter(s=>s[1]-s[0]>8).sort((a,b)=>a[0]-b[0]);
+    const list=[]; let end=-1;
+    spans.forEach(s=>{ if(s[0]>=end-0.5){ list.push(s); end=s[1]; } });
+    if(!list.length) list.push([0,T.w]);
+    const EDGE=0.42;
+    list.forEach(([x0,x1])=>{
+      const w=x1-x0;
+      [[0,EDGE],[0.2,0.8],[0.36,1],[0.64,1],[0.8,0.8],[1,EDGE]].forEach(([f,a])=>{
+        g.addColorStop(clamp((x0+f*w)/T.w,0,1), col(a));
+      });
+    });
+    r.line=g;
+    // the glow behind the pass: a unit radial gradient, stretched at draw time
+    const gl=ctx.createRadialGradient(0,0,0,0,0,1);
+    const gl2=clamp(PAL.l+4,0,78);
+    gl.addColorStop(0,    hslStr(H, Sa, gl2, 0.30));
+    gl.addColorStop(0.25, hslStr(H, Sa, gl2, 0.15));
+    gl.addColorStop(0.6,  hslStr(H, Sa, gl2, 0.04));
+    gl.addColorStop(1,    hslStr(H, Sa, gl2, 0));
+    r.glow=gl;
+    // mist over the far range and the ground past the far plane, so the
+    // valley floor dissolves into haze instead of ending at a black edge
+    const ms=ctx.createRadialGradient(0,0,0,0,0,1);
+    ms.addColorStop(0,    hslStr(H, Sa, gl2, 0.16));
+    ms.addColorStop(0.45, hslStr(H, Sa, gl2, 0.07));
+    ms.addColorStop(1,    hslStr(H, Sa, gl2, 0));
+    r.mist=ms;
+    // the horizon line itself, bright at the pass and gone well before the panels
+    const hw=(T.w-T.cx>T.cx? T.w-T.cx : T.cx);
+    const hg=ctx.createLinearGradient(T.cx-hw,0,T.cx+hw,0);
+    const L=clamp(PAL.l+16,0,86), k=(T.w? (r.F*0.55)/hw : 0.5);
+    hg.addColorStop(0, hslStr(H, Sa, L, 0));
+    hg.addColorStop(clamp(0.5-k*0.5,0,0.5), hslStr(H, Sa, L, 0));
+    hg.addColorStop(0.5, hslStr(H, Sa, L, 0.75));
+    hg.addColorStop(clamp(0.5+k*0.5,0.5,1), hslStr(H, Sa, L, 0));
+    hg.addColorStop(1, hslStr(H, Sa, L, 0));
+    r.hzLine=hg;
+    r.farLine=col(1);
+    r.gen=PAL.gen;
+  }
+
+  /* The geometry pass, near to far. Each row's slope lines back to the row
+     in front and its ridge line are tested against the horizon of everything
+     nearer, the parts that clear it go to the stroke lists, and the ridge then
+     raises the horizon. */
+  function march(T, r, camZ, e, lowY0){
+    if(r.n!==S.cmax) rowArrays(r);
+    const F=r.F, cx=T.cx, hz=r.hz, n=S.cmax, NS=r.ns, H=r.hh, HS=r.hs, HM=r.hm, iR=1/RES;
+    H.fill(1e6); HS.fill(lowY0); HM.fill(lowY0);
+    RN.fill(0); SN.fill(0);
+    const kFar=Math.floor((camZ+Z_FAR)/SP);
+    const kNear=Math.ceil((camZ+Z_MIN)/SP);
+    let ax=r.ax, ay=r.ay, av=r.av, px=r.bx, py=r.by, pv=r.bv;
+    let ph=null, pc0=0, pc1=-1, paS=0, podd=1;
+    const span=Z_FAR-r.zBot, lift=1+0.22*e;
+    for(let k=kNear;k<=kFar;k++){
+      const d=k*SP-camZ;
+      const h=rowHeights(k);
+      // amplitude grows a little with depth, and is capped so the tallest
+      // peak this row can hold stays inside the band
+      const amp=Math.min(3.0+0.07*d, (CAM_Y+r.eTop*d)*0.94);
+      const inv=F/d;
+      const c0=Math.max(-n, Math.floor(-r.uL*(d+SP)/DX)-1);
+      const c1=Math.min( n, Math.ceil ( r.uR*(d+SP)/DX)+1);
+      const aFar=sstep(Z_FAR, Z_FAR-FADE_FAR, d);
+      // only the very nearest rows fade by depth, since their facets are
+      // coarse; the rest leave through the light grid's foreground fade
+      const aNear=sstep(r.zBot*0.45, r.zBot*0.95, d);
+      const depth=clamp(1-(d-r.zBot)/span, 0, 1);
+      const a=aFar*aNear*(0.32+0.68*depth)*lift;
+      // slopes fade in later than crests: rows still in the haze overlap,
+      // and their slope lines would stack into a gray hatch
+      const aS=a*aFar;
+      // far rows are dense on screen, so every other slope line fades out
+      // with distance: fewer lines where they would only read as a hatch
+      const oddA=sstep(ODD_OUT, ODD_IN, d);
+
+      let minY=1e9;
+      for(let c=c0;c<=c1;c++){
+        const j=c+n, y=hz+(CAM_Y-h[j]*amp)*inv;
+        ax[j]=cx+c*DX*inv; ay[j]=y;
+        if(y<minY) minY=y;
+      }
+      if(minY>r.hd){
+        // under the frame's bottom edge: nothing here shows, but the next row's
+        // slope lines still run down to it
+        for(let c=c0;c<=c1;c++) av[c+n]=1;
+      }else{
+        // slope lines from this row forward to the one in front
+        if(ph){
+          const lo=Math.max(c0,pc0), hi=Math.min(c1,pc1), split=podd<0.999;
+          const sE=Math.sqrt(paS), sO=Math.sqrt(paS*podd);
+          for(let c=lo;c<=hi;c++){
+            const sq=split && (c&1) ? sO : sE;
+            if(sq*LQ<0.5) continue;                 // under the first level even in full light
+            const j=c+n, bxj=ax[j], byj=ay[j];
+            let ib=Math.round(bxj*iR); if(ib<0) ib=0; else if(ib>=NS) ib=NS-1;
+            if(byj>=H[ib]+EPS) continue;            // the far end is behind nearer ground
+            const fx=px[j], fy=py[j], dx=fx-bxj, dy=fy-byj;
+            const la=lit(sq, bxj, byj), lb=lit(sq, fx, fy), b3=band3(h[j]+ph[j])*LV;
+            let b=-1;
+            if(la-lb<=1 && lb-la<=1){ const l=la>lb? la : lb; if(!l) continue; b=b3+l; }
+            if(dx<-2*RES || dx>2*RES){
+              // a long one, out at the sides: nearer ground can rise between
+              // its ends, so it is walked unless three points along it clear
+              if(pv[j]){
+                let clear=true;
+                for(let q=0.25;q<0.8 && clear;q+=0.25){
+                  let ii=Math.round((bxj+dx*q)*iR); if(ii<0) ii=0; else if(ii>=NS) ii=NS-1;
+                  clear= byj+dy*q < H[ii]+EPS;
+                }
+                if(clear){ seg(b, b3, sq, bxj, byj, fx, fy); continue; }
+              }
+              const st=Math.ceil((dx<0? -dx : dx)*iR);
+              let on=true, sx=bxj, sy=byj;
+              for(let q=1;q<=st;q++){
+                const t=q/st, x=bxj+dx*t, y=byj+dy*t;
+                let ii=Math.round(x*iR); if(ii<0) ii=0; else if(ii>=NS) ii=NS-1;
+                const v= q===st? pv[j]===1 : y<H[ii]+EPS;
+                if(v!==on){
+                  const tm=(q-0.5)/st, xm=bxj+dx*tm, ym=byj+dy*tm;
+                  if(on) seg(b, b3, sq, sx, sy, xm, ym); else{ sx=xm; sy=ym; }
+                  on=v;
+                }
+              }
+              if(on) seg(b, b3, sq, sx, sy, fx, fy);
+              continue;
+            }
+            if(pv[j]){ seg(b, b3, sq, bxj, byj, fx, fy); continue; }
+            // the near end is hidden: stop where the line meets the ground in front
+            let jf=Math.round(fx*iR); if(jf<0) jf=0; else if(jf>=NS) jf=NS-1;
+            if(dy<=0.01) continue;
+            let t=(H[jf]-byj)/dy; if(t<=0) continue; if(t>1) t=1;
+            seg(b, b3, sq, bxj, byj, bxj+dx*t, byj+dy*t);
+          }
+        }
+        // the ridge line, walked sample by sample against the horizon. A row
+        // fading in rises out of the ground line into each silhouette, so
+        // neither ever gains a whole peak in one frame
+        const sR=a>0.004? Math.sqrt(a) : 0;
+        const sol=sstep(Z_FAR-4, Z_FAR-FADE_FAR, d), haze=sol<1, shz=sstep(Z_FAR, Z_FAR-5, d);
+        let i=Math.round(ax[c0+n]*iR); if(i<0) i=0; else if(i>=NS) i=NS-1;
+        let pd=ay[c0+n]-H[i]-EPS, pxs=ax[c0+n], vis=pd<0, open=-1;
+        av[c0+n]=vis?1:0;
+        for(let c=c0;c<c1;c++){
+          const j=c+n, x0=ax[j], y0=ay[j], x1=ax[j+1], y1=ay[j+1];
+          // a segment whose ends sit in different light changes level at the
+          // samples where its light does, so a panel's edge stays soft
+          let bk=-1, b3=0, grad=false;
+          if(sR){
+            b3=band3(h[j]+h[j+1])*LV;
+            const la=lit(sR, x0, y0), lb=lit(sR, x1, y1);
+            grad= la-lb>1 || lb-la>1;
+            const l= grad || la>lb ? la : lb;
+            if(l) bk=b3+l;
+          }
+          if(vis && bk!==open){ if(open>=0) rEnd(open); open=bk; if(bk>=0) rPt(bk, x0, y0); }
+          const sl=(y1-y0)/(x1-x0);
+          let i0=Math.floor(x0*iR)+1, i1=Math.floor(x1*iR);
+          if(i0<0) i0=0; if(i1>=NS) i1=NS-1;
+          for(let s=i0;s<=i1;s++){
+            const xs=s*RES, ys=y0+(xs-x0)*sl, hv=H[s], dv=ys-hv-EPS;
+            if((dv<0)!==vis){
+              // it crosses the horizon between the last sample and this one
+              let xc=pxs+(xs-pxs)*pd/(pd-dv); if(xc<x0) xc=x0;
+              const yc=y0+(xc-x0)*sl;
+              if(!vis){ open=bk; if(bk>=0) rPt(bk, xc, yc); }
+              else{ if(open>=0){ rPt(open, xc, yc); rEnd(open); } open=-1; }
+              vis=!vis;
+            }
+            if(grad){
+              const l=lit(sR, xs, ys), nb= l? b3+l : -1;
+              if(nb!==bk){
+                bk=nb;
+                if(vis){ if(open>=0){ rPt(open, xs, ys); rEnd(open); } open=bk; if(bk>=0) rPt(bk, xs, ys); }
+              }
+            }
+            if(ys<hv) H[s]=ys;
+            const yl=lowY0+(ys-lowY0)*sol;
+            if(yl<HS[s]) HS[s]=yl;
+            if(haze){ const ym=lowY0+(ys-lowY0)*shz; if(ym<HM[s]) HM[s]=ym; }
+            pd=dv; pxs=xs;
+          }
+          if(vis && open>=0) rPt(open, x1, y1);
+          av[j+1]=vis?1:0;
+        }
+        if(open>=0) rEnd(open);
+        // a peak between two samples still has to hide what is behind it
+        for(let c=c0;c<=c1;c++){
+          const j=c+n; let s=Math.round(ax[j]*iR);
+          if(s<0 || s>=NS) continue;
+          const y=ay[j]; if(y<H[s]) H[s]=y;
+          const yl=lowY0+(y-lowY0)*sol; if(yl<HS[s]) HS[s]=yl;
+          if(haze){ const ym=lowY0+(y-lowY0)*shz; if(ym<HM[s]) HM[s]=ym; }
+        }
+      }
+      // swap: this row is the one in front of the next
+      let t=px; px=ax; ax=t; t=py; py=ay; ay=t; t=pv; pv=av; av=t;
+      ph=h; pc0=c0; pc1=c1; paS=aS; podd=oddA;
+    }
+    r.ax=ax; r.ay=ay; r.av=av; r.bx=px; r.by=py; r.bv=pv;
+  }
+
+  function strokeRidges(ctx, b, off){
+    const A=RB[b], m=RN[b]; let pen=false;
+    for(let k=0;k<m;k+=2){
+      const x=A[k];
+      if(x!==x){ pen=false; continue; }
+      if(pen) ctx.lineTo(x, A[k+1]+off); else{ ctx.moveTo(x, A[k+1]+off); pen=true; }
+    }
+  }
+
+  function paint(T, camZ, e){
+    const r=T.rl; if(!r) return;
+    if(r.gen!==PAL.gen) styles(T, r);
+    const ctx=T.ctx, F=r.F, cx=T.cx, hz=r.hz, dpr=T.dpr;
+    const gap=CAM_Y/Z_FAR*F, lowY0=Math.max(r.lowY, hz+gap*1.35);
+    if(r.pv!==PR.v) shade(T, r);
+    useGrid(r);
+    march(T, r, camZ, e, lowY0);
+    // nothing is ever drawn above the frame, and everything under the ground
+    // line is repainted opaque below, so only the air between needs clearing
+    const top=Math.max(0, Math.floor(r.y0)-2);
+    ctx.clearRect(0, top, T.w, Math.min(T.h, lowY0+3)-top);
+
+    // 1. glow behind the pass
+    const RX=Math.min(F*0.62, T.w), RY=(hz-r.y0)*0.78;
+    ctx.globalAlpha=clamp(0.85+0.5*e, 0, 1);
+    ctx.setTransform(dpr*RX,0,0,dpr*RY,dpr*cx,dpr*hz);
+    ctx.fillStyle=r.glow; ctx.fillRect(-1,-1,2,2);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    // 2. the horizon line, seen only where the far range dips below it
+    // a wide faint pass under a thin one reads as glow without shadowBlur
+    ctx.strokeStyle=r.hzLine;
+    ctx.globalAlpha=clamp(0.22+0.12*e, 0, 1); ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(0,hz); ctx.lineTo(T.w,hz); ctx.stroke();
+    ctx.globalAlpha=clamp(0.5+0.25*e, 0, 1); ctx.lineWidth=1;
+    ctx.stroke();
+    // 3. the far range, two layers of it
+    ctx.fillStyle=PAL.bg; ctx.strokeStyle=r.farLine;
+    for(let i=0;i<r.far.length;i++){
+      const f=r.far[i], fa=(i? 0.20 : 0.11)*(1+0.3*e);
+      ctx.globalAlpha=1; ctx.fill(f.fill);
+      for(let q=0;q<f.lines.length;q++){ ctx.globalAlpha=fa*f.lines[q].a; ctx.stroke(f.lines[q].p); }
+    }
+    // 4. mist lying in the far valley
+    ctx.globalAlpha=clamp(0.9+0.3*e, 0, 1);
+    ctx.setTransform(dpr*Math.min(F*0.75, T.w),0,0,dpr*gap*1.1,dpr*cx,dpr*(hz+gap*0.25));
+    ctx.fillStyle=r.mist; ctx.fillRect(-1,-1,2,2);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+
+    // 5. the ground: a faint fill under the ridges still fading in, then one
+    // solid fill under the silhouette of the whole range. Everything under
+    // the ground line is solid anyway, so the faint one stops there
+    const HS=r.hs, HM=r.hm, NS=r.ns;
+    ctx.fillStyle=PAL.bg;
+    let m0=0, m1=NS-1;
+    while(m0<NS && HM[m0]>=lowY0) m0++;
+    while(m1>m0 && HM[m1]>=lowY0) m1--;
+    if(m0<m1){
+      ctx.globalAlpha=HAZE_A;
+      ctx.beginPath(); ctx.moveTo(m0*RES, lowY0+1);
+      for(let i=m0;i<=m1;i++) ctx.lineTo(i*RES, HM[i]);
+      ctx.lineTo(m1*RES, lowY0+1); ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.moveTo(0, HS[0]);
+    for(let i=1;i<NS;i++) ctx.lineTo(i*RES, HS[i]);
+    ctx.lineTo((NS-1)*RES, r.gb); ctx.lineTo(0, r.gb); ctx.closePath();
+    ctx.fill();
+    for(let i=0;i<r.below.length;i++){ const b=r.below[i]; ctx.fillRect(b[0], b[1], b[2], b[3]); }
+
+    // 6. the lines. The economy surface drops the CSS glow on .terrain, so
+    // the crests carry their own: faint copies a pixel above and below, which
+    // stay cheap hairlines where a wide stroke would rasterize as a mask
+    // A level whose alpha rounds to nothing on an 8-bit surface is skipped.
+    ctx.strokeStyle=r.line;
+    if(document.body.classList.contains("economy")){
+      for(let l=1;l<LV;l++){
+        const b=2*LV+l; if(!RN[b] || LA[l]*0.3<VIS_A) continue;
+        ctx.globalAlpha=clamp(LA[l]*0.3,0,1);
+        ctx.beginPath(); strokeRidges(ctx, b, -1.25); strokeRidges(ctx, b, 1.25); ctx.stroke();
+      }
+    }
+    for(let t=0;t<3;t++){
+      for(let l=1;l<LV;l++){
+        const b=t*LV+l;
+        if(SN[b] && LA[l]*SLOPE_A[t]>=VIS_A){
+          const A=SB[b], m=SN[b];
+          ctx.globalAlpha=clamp(LA[l]*SLOPE_A[t],0,1);
+          ctx.beginPath();
+          for(let k=0;k<m;k+=4){ ctx.moveTo(A[k],A[k+1]); ctx.lineTo(A[k+2],A[k+3]); }
+          ctx.stroke();
+        }
+        if(RN[b] && LA[l]*RIDGE_A[t]>=VIS_A){
+          ctx.globalAlpha=clamp(LA[l]*RIDGE_A[t],0,1);
+          ctx.beginPath(); strokeRidges(ctx, b, 0); ctx.stroke();
+        }
+      }
+    }
+    ctx.globalAlpha=1;
+  }
+
+  /* The sky: stars at infinity do not move when the camera flies forward, so
+     these hold still and only breathe, each on its own slow period. Nothing
+     in it changes faster than the eye can follow, so it is repainted on every
+     fourth frame and the canvas keeps its pixels in between. */
+  const SKY={ w:0, h:0, stars:null, cols:null, gen:-1, n:0 };
+  function skyStars(K){
+    SKY.w=K.w; SKY.h=K.h; SKY.stars=[];
+    const n=clamp(Math.round(K.w*K.h/27000), 40, 1000);
+    for(let i=0;i<n;i++){
+      const big=Math.random()<0.06;
+      SKY.stars.push({ x:Math.random()*K.w, y:Math.random()*K.h,
+        s:big? rnd(1.6,2.3) : rnd(0.8,1.4), a:big? rnd(0.6,0.9) : rnd(0.2,0.55),
+        w:rnd(0.35,0.8), p:rnd(0,Math.PI*2) });
+    }
+  }
+  function skyPaint(K, t){
+    if(SKY.w!==K.w || SKY.h!==K.h || !SKY.stars) skyStars(K);
+    if(SKY.gen!==PAL.gen){
+      // alpha quantized to 1/20 steps so fillStyle strings come from a small cache
+      const l=clamp(PAL.l+25,0,90);
+      SKY.cols=Array.from({length:21},(_,j)=>hslStr(PAL.h, PAL.s, l, +(j/20).toFixed(2)));
+      SKY.gen=PAL.gen;
+    }
+    const ctx=K.ctx, c=SKY.cols, st=SKY.stars;
+    ctx.clearRect(0,0,K.w,K.h);
+    for(let i=0;i<st.length;i++){
+      const s=st[i], a=s.a*(0.78+0.22*Math.sin(t*s.w+s.p));
+      ctx.fillStyle=c[clamp(Math.round(a*20),0,20)];
+      ctx.fillRect(s.x, s.y, s.s, s.s);
+    }
+  }
+
+  return {
+    label:"Ridgeline", band:BAND,
+    init(T){ setup(T); },
+    frame(dt, SCx){
+      const now=performance.now();
+      if(!(now>=PR.t && now-PR.t<1000)) panels(now);
+      // only real music moves it: the idle visualizer wave would otherwise
+      // make the range breathe with no sound playing
+      const want=(AUD.live && CFG.audio) ? SCx.energy : 0;
+      S.e+=(want-S.e)*(1-Math.exp(-dt/650));
+      S.camZ+=dt*0.001*SPEED*(1+0.35*S.e);
+    },
+    draw(T){ paint(T, S.camZ, S.e); },
+    sky(K, SCx){
+      // a new size repaints at once, so a resize never shows a stretched frame
+      if((SKY.n++&3) && SKY.w===K.w && SKY.h===K.h && SKY.gen===PAL.gen) return;
+      skyPaint(K, SCx.t);
+    },
+    // game mode shows one composed view, and the flight resumes from it, so
+    // the cut happens on entry, while a game has the screen, never on exit
+    still(T){
+      const now=performance.now();
+      if(!(now>=PR.t && now-PR.t<100)) panels(now);
+      S.camZ=STILL_Z; paint(T, STILL_Z, 0);
+    },
+    stillSky(K, SCx){ skyPaint(K, SCx.t); }
+  };
+})();
+</script>
+<script data-style="topo">
+/* ---- Topographic: a live contour map of slowly morphing terrain ----
+   A smooth height field (domain-warped simplex fBm with time as the third
+   axis, over a broad massif under the primary monitor's lower center, so the
+   map has somewhere for the eye to land) is contoured with marching squares
+   and drawn as thin isolines, every fifth one an index contour carrying its
+   elevation. Survey crosses mark a fixed lattice, the highest summits get a
+   spot height, and a survey level climbs the massif once a minute, lighting
+   the contours it passes. Index contours breathe with the music's low end.
+
+   Cost control, because the band covers the whole desktop:
+     * the noise is sampled on a coarse grid (two fine cells per sample) and
+       Catmull-Rom upsampled, since the field is far smoother than the grid;
+     * only keyframes are sampled, KP seconds apart, and the next one is built
+       a few rows per frame; every redraw is a plain lerp between two of them;
+     * contours are redrawn at most ~30 fps, and past the economy line at most
+       every other frame and ~20 fps. The morph is slow enough that a faster
+       redraw would move nothing but subpixels, and the canvas keeps its
+       pixels in between;
+     * every path is cut into tiles of TILE device px. A wide stroke whose
+       path spans the desktop is rasterized through a coverage mask the size
+       of its bounds, so a few dozen of them cost the raster thread ~40 ms a
+       redraw (26 fps at 4K), while the same strokes in tiles cost almost
+       nothing (60 fps at 4K). The JS timer never sees that cost;
+     * segments are chained into whole contours and drawn as cubic B-spline
+       curves over their crossings: one path call per segment, and round even
+       where a contour turns inside one cell;
+     * the plain contours are dropped behind the panels, where the panel fill
+       would have hidden them anyway, and only the index contours carry on.
+   Strokes share a small set of cached styles: alpha is quantized into NB
+   buckets (mask x elevation), one Path2D per bucket. */
+(function(){
+  const KP=0.5;              // s between field keyframes
+  const TILE=256;            // path tile edge, device px
+  const STEP=0.05;           // height between contours, in field units
+  const ESTEP=20;            // meters per contour, so index contours land on 100s
+  const ELEV0=1200;          // meters at field height 0
+  const NB=12;               // alpha buckets
+  const A_NORM=0.30, A_IDX=0.88, A_CROSS=0.42, A_LBL=0.80;
+  const IDX_DIM=0.34;        // a crowded odd index contour steps down to a plain one's weight
+  const LBL_INSET=0.09;      // labels and spot heights stay this far (short edges) off the panels
+  const T0=500;              // start the clock mid-morph, not on a noise lattice plane
+
+  /* ---- 3D simplex noise (Gustavson). Fixed seed: every boot shows the same land. ---- */
+  const PERM=new Uint8Array(512), PM12=new Uint8Array(512);
+  (function(){
+    const p=new Uint8Array(256);
+    for(let i=0;i<256;i++) p[i]=i;
+    let s=0x2f6b1d35;
+    for(let i=255;i>0;i--){
+      s^=s<<13; s^=s>>>17; s^=s<<5;
+      const j=(s>>>0)%(i+1), t=p[i]; p[i]=p[j]; p[j]=t;
+    }
+    for(let i=0;i<512;i++){ PERM[i]=p[i&255]; PM12[i]=PERM[i]%12; }
+  })();
+  const GR=new Float64Array([1,1,0,-1,1,0,1,-1,0,-1,-1,0,1,0,1,-1,0,1,
+                             1,0,-1,-1,0,-1,0,1,1,0,-1,1,0,1,-1,0,-1,-1]);
+  const F3=1/3, G3=1/6;
+  function noise(x,y,z){
+    const s=(x+y+z)*F3;
+    const i=Math.floor(x+s), j=Math.floor(y+s), k=Math.floor(z+s);
+    const t=(i+j+k)*G3;
+    const x0=x-i+t, y0=y-j+t, z0=z-k+t;
+    let i1,j1,k1,i2,j2,k2;
+    if(x0>=y0){
+      if(y0>=z0){ i1=1;j1=0;k1=0;i2=1;j2=1;k2=0; }
+      else if(x0>=z0){ i1=1;j1=0;k1=0;i2=1;j2=0;k2=1; }
+      else { i1=0;j1=0;k1=1;i2=1;j2=0;k2=1; }
+    }else{
+      if(y0<z0){ i1=0;j1=0;k1=1;i2=0;j2=1;k2=1; }
+      else if(x0<z0){ i1=0;j1=1;k1=0;i2=0;j2=1;k2=1; }
+      else { i1=0;j1=1;k1=0;i2=1;j2=1;k2=0; }
+    }
+    const x1=x0-i1+G3, y1=y0-j1+G3, z1=z0-k1+G3;
+    const x2=x0-i2+2*G3, y2=y0-j2+2*G3, z2=z0-k2+2*G3;
+    const x3=x0-1+3*G3, y3=y0-1+3*G3, z3=z0-1+3*G3;
+    const ii=i&255, jj=j&255, kk=k&255;
+    let n=0, q, g;
+    q=0.6-x0*x0-y0*y0-z0*z0;
+    if(q>0){ g=PM12[ii+PERM[jj+PERM[kk]]]*3; q*=q; n+=q*q*(GR[g]*x0+GR[g+1]*y0+GR[g+2]*z0); }
+    q=0.6-x1*x1-y1*y1-z1*z1;
+    if(q>0){ g=PM12[ii+i1+PERM[jj+j1+PERM[kk+k1]]]*3; q*=q; n+=q*q*(GR[g]*x1+GR[g+1]*y1+GR[g+2]*z1); }
+    q=0.6-x2*x2-y2*y2-z2*z2;
+    if(q>0){ g=PM12[ii+i2+PERM[jj+j2+PERM[kk+k2]]]*3; q*=q; n+=q*q*(GR[g]*x2+GR[g+1]*y2+GR[g+2]*z2); }
+    q=0.6-x3*x3-y3*y3-z3*z3;
+    if(q>0){ g=PM12[ii+1+PERM[jj+1+PERM[kk+1]]]*3; q*=q; n+=q*q*(GR[g]*x3+GR[g+1]*y3+GR[g+2]*z3); }
+    return 32*n;
+  }
+
+  /* The land, at (x,y) in units of the primary monitor's short edge, origin
+     at its center. A slow warp bends the octaves into spurs and valleys
+     instead of round blobs, and each octave morphs at its own rate so the map
+     never just breathes. The massif rides the same warp, so it reads as one
+     more mountain rather than a target painted on the screen. */
+  const MX=0.04, MY=0.17, MR=1/(0.30*0.30), MH=0.75;
+  function height(x,y,t){
+    const wx=noise(x*0.9+3.1, y*0.9-1.7, t*0.0075);
+    const wy=noise(x*0.9-5.3, y*0.9+2.9, t*0.0075+7.1);
+    const qx=x+0.26*wx, qy=y+0.26*wy;
+    const dx=qx-MX, dy=(qy-MY)*1.35;
+    return 0.60*noise(qx*1.30,      qy*1.30,     t*0.010)
+         + 0.28*noise(qx*2.6+11.3,  qy*2.6-4.1,  t*0.016)
+         + 0.12*noise(qx*5.2-7.9,   qy*5.2+3.3,  t*0.025)
+         + MH*Math.exp(-(dx*dx+dy*dy)*MR);
+  }
+
+  const smooth=(a,b,x)=>{ const t=clamp((x-a)/(b-a),0,1); return t*t*(3-2*t); };
+
+  /* ---- the panels ----
+     Every panel's box (.win and the OS label), padded by 2rem at its screen's
+     zoom, in this canvas's px. Boxes stacked closer than JOIN short edges
+     join into one block, and a block within REACH of its screen's edge
+     reaches out to it, so a corner stack fades as one calm block instead of
+     lighting the seams and margins between its panels. Reading a box forces
+     a layout, so this runs once a second, never per frame. */
+  const JOIN=0.15, REACH=0.25;
+  function readRects(T){
+    const out=[], L=(LAY.screens && LAY.screens.length) ? LAY.screens : [{el:document, zoom:1}];
+    let rem=16;
+    try{ rem=parseFloat(getComputedStyle(document.documentElement).fontSize)||16; }catch(e){}
+    for(const s of L){
+      if(!s.el) continue;
+      const pad=2*rem*(s.zoom||1);
+      s.el.querySelectorAll(".win, #os-label").forEach(el=>{
+        const r=el.getBoundingClientRect();
+        if(r.width>1 && r.height>1) out.push(r.left-pad-T.x, r.top-pad-T.y, r.right+pad-T.x, r.bottom+pad-T.y);
+      });
+    }
+    return out;
+  }
+  function blocks(G, R){
+    const S=G.S, B=[];
+    for(let i=0;i<R.length;i+=4){
+      const cx=(R[i]+R[i+2])/2, cy=(R[i+1]+R[i+3])/2;
+      let s=S[G.pi];
+      for(const q of S) if(cx>=q.x && cx<q.x+q.w && cy>=q.y && cy<q.y+q.h){ s=q; break; }
+      B.push({ x0:R[i], y0:R[i+1], x1:R[i+2], y1:R[i+3], s, sh:Math.min(s.w,s.h) });
+    }
+    for(let again=true; again;){
+      again=false;
+      for(let i=0;i<B.length && !again;i++) for(let j=i+1;j<B.length;j++){
+        const a=B[i], b=B[j], gap=JOIN*a.sh;
+        if(a.s!==b.s) continue;
+        const ox=Math.min(a.x1,b.x1)-Math.max(a.x0,b.x0), oy=Math.min(a.y1,b.y1)-Math.max(a.y0,b.y0);
+        if(!(ox>-gap && oy>-gap && (ox>0 || oy>0))) continue;
+        a.x0=Math.min(a.x0,b.x0); a.y0=Math.min(a.y0,b.y0);
+        a.x1=Math.max(a.x1,b.x1); a.y1=Math.max(a.y1,b.y1);
+        B.splice(j,1); again=true; break;
+      }
+    }
+    for(const b of B){
+      const s=b.s, r=REACH*b.sh;
+      if(b.x0-s.x<r) b.x0=s.x-1;
+      if(s.x+s.w-b.x1<r) b.x1=s.x+s.w+1;
+      if(b.y0-s.y<r) b.y0=s.y-1;
+      if(s.y+s.h-b.y1<r) b.y1=s.y+s.h+1;
+    }
+    return B;
+  }
+  // 0 behind a panel block .. 1 in the open; `inset` (short edges) pushes the open ground further off
+  function openAt(G, x, y, inset){
+    let o=1;
+    for(const b of G.blk){
+      const dx=Math.max(b.x0-x, x-b.x1), dy=Math.max(b.y0-y, y-b.y1);
+      const d=(dx>0 || dy>0) ? Math.sqrt(Math.max(dx,0)*Math.max(dx,0)+Math.max(dy,0)*Math.max(dy,0)) : Math.max(dx,dy);
+      const f=smooth(-0.165*b.sh, 0.075*b.sh, d-inset*b.sh);
+      if(f<o) o=f;
+    }
+    return o;
+  }
+
+  /* How loud the map may be at (x,y), 0..1. The lines stay full strength in
+     the open and in the lower half, and sink to a faint floor behind the
+     panels and toward the top, where the clock and identity boxes are. */
+  function maskAt(G, x, y, inset){
+    const S=G.S;
+    let best=0;
+    for(let n=0;n<S.length;n++){
+      const s=S[n];
+      if(x<s.x || x>s.x+s.w || y<s.y || y>s.y+s.h) continue;
+      const v=(y-s.y)/s.h, hx=openAt(G, x, y, inset);
+      const top=smooth(0.03, s.w<s.h ? 0.30 : 0.50, v);
+      const foot=1-0.45*smooth(0.90, 1.0, v);
+      let f=(0.20+0.80*hx*(0.30+0.70*top))*(0.50+0.50*top)*foot;
+      if(n!==G.pi) f*=0.8;
+      if(f>best) best=f;
+    }
+    return best;
+  }
+
+  /* ---- per-canvas state ---- */
+  function setup(T){
+    const S=(T.screens && T.screens.length) ? T.screens : [{x:0,y:0,w:T.w,h:T.h}];
+    const pi=clamp((typeof LAY!=="undefined" && LAY.primary)|0, 0, S.length-1);
+    const P=S[pi];
+    const U=Math.max(320, Math.min(P.w,P.h));
+    const cs=clamp(Math.round(U/72), 9, 36);
+    const nx=Math.ceil(T.w/cs)+1, ny=Math.ceil(T.h/cs)+1;
+    const ncx=Math.ceil((nx-1)/2)+4, ncy=Math.ceil((ny-1)/2)+4;
+    const N=nx*ny, NC=(nx-1)*(ny-1);
+    const G={ S, pi, U, cs, nx, ny, ncx, ncy, w:T.w, h:T.h,
+              // world origin = the primary monitor's center, so the composition
+              // there is the same on one monitor, a span, or per-monitor bands
+              ox:P.x+P.w/2, oy:P.y+P.h/2,
+              A:new Float32Array(N), B:new Float32Array(N), C:new Float32Array(N),
+              H:new Float32Array(N), crs:new Float32Array(ncx*ncy), tmp:new Float32Array(ncy*nx),
+              mask:new Float32Array(NC), rowOn:new Uint8Array(ny-1),
+              mN:new Float32Array(NC), mI:new Float32Array(NC),
+              foc:new Uint8Array(NC), lmask:new Float32Array(NC),
+              ta:-1, cRow:0, cUp:false, lo:0, hi:0,
+              ix:new Float32Array(5*4096),
+              lwN:Math.max(1, U/2160), lwI:Math.max(1.3, 1.6*U/2160), lwS:Math.max(1.6, 2.0*U/2160),
+              fz:Math.round(clamp(U*0.0072, 9, 18)),
+              labels:[], peaks:[], pkAt:-1, pkTxtAt:0,
+              rects:[], blk:[], rt:-9, cross:[], drawn:-1,
+              big: S.reduce((a,s)=>a+s.w*s.h, 0)>12e6, rest:false,
+              ntx:Math.max(1, Math.ceil(T.w*T.dpr/TILE)), nty:Math.max(1, Math.ceil(T.h*T.dpr/TILE)) };
+    // elevation label anchors: a loose ring around each screen's center, more on the primary
+    const RING=[[-0.34,0.10],[0.30,0.02],[-0.04,0.30],[0.42,0.28],[-0.52,0.32],[0.08,-0.12]];
+    S.forEach((s,n)=>{
+      const sh=Math.min(s.w,s.h), cx=s.x+s.w/2, cy=s.y+s.h*0.55;
+      const list = n===pi ? RING : RING.slice(0,3);
+      list.forEach(a=>{
+        const ax=cx+a[0]*sh, ay=cy+a[1]*sh;
+        if(ax<0 || ax>T.w || ay<0 || ay>T.h) return;
+        G.labels.push({ ax, ay, k:null, x:ax, y:ay, ang:0, tx:ax, ty:ay, ta:0,
+                        al:0, lost:false, off:true, txt:"", tw:0, gap2:0, w:1 });
+      });
+    });
+    let fam="monospace";
+    try{ fam=getComputedStyle(document.body).fontFamily||fam; }catch(e){}
+    G.font=G.fz+"px "+fam;
+    G.fontPk=Math.round(G.fz*0.9)+"px "+fam;
+    T.topo=G;
+    G.rects=readRects(T); panelsChanged(G);
+    return G;
+  }
+  /* The masks, the crosses and which label anchors are usable all follow the
+     panels, so they are rebuilt whenever a panel box moves. */
+  function panelsChanged(G){
+    G.blk=blocks(G, G.rects);
+    const nx=G.nx, ny=G.ny, cs=G.cs, U=G.U;
+    for(let j=0;j<ny-1;j++){
+      let on=0;
+      for(let i=0;i<nx-1;i++){
+        const x=(i+0.5)*cs, y=(j+0.5)*cs, c=j*(nx-1)+i;
+        const m=maskAt(G, x, y, 0);
+        G.mask[c]=m;
+        // plain contours fade out behind the panels; index contours keep a floor
+        G.mN[c]=m*smooth(0.10, 0.45, m); G.mI[c]=Math.max(m, 0.2);
+        G.lmask[c]=maskAt(G, x, y, LBL_INSET);
+        // the survey level's reach, as a bucket: the ground around the massif
+        const fx=(x-G.ox)/U-MX, fy=(y-G.oy)/U-MY;
+        G.foc[c]=Math.round(NB*m*Math.exp(-(fx*fx/1.6+fy*fy)/(0.42*0.42)));
+        if(m>=0.03) on=1;
+      }
+      G.rowOn[j]=on;
+    }
+    // survey crosses on a lattice pinned to the primary center
+    const gs=U/5.5, arm=Math.max(2.5, U*0.0027);
+    G.cross=[];
+    const gx0=G.ox-Math.ceil(G.ox/gs)*gs, gy0=G.oy-Math.ceil(G.oy/gs)*gs;
+    for(let y=gy0;y<G.h;y+=gs) for(let x=gx0;x<G.w;x+=gs){
+      if(x<arm || y<arm) continue;
+      const b=Math.round(maskAt(G, x, y, 0)*NB);
+      if(b<1) continue;
+      const p=G.cross[b]||(G.cross[b]=new Path2D());
+      p.moveTo(x-arm,y); p.lineTo(x+arm,y); p.moveTo(x,y-arm); p.lineTo(x,y+arm);
+    }
+    for(const L of G.labels) L.off=maskAt(G, L.ax, L.ay, LBL_INSET)<0.7;
+  }
+  // re-read the panel boxes; a change of more than a pixel rebuilds the masks
+  function panels(T, G, t){
+    G.rt=t;
+    const R=readRects(T), O=G.rects;
+    let same=R.length===O.length;
+    for(let i=0;same && i<R.length;i++) if(Math.abs(R[i]-O[i])>1) same=false;
+    if(same) return;
+    G.rects=R; panelsChanged(G);
+  }
+  // the text mask under a point, from the cached cell grid
+  function maskHere(G, x, y){
+    const i=clamp((x/G.cs)|0, 0, G.nx-2), j=clamp((y/G.cs)|0, 0, G.ny-2);
+    return G.lmask[j*(G.nx-1)+i];
+  }
+
+  /* ---- the field: coarse samples, upsampled, keyframed ---- */
+  function coarseRows(G, t, from, to){
+    const U=G.U, ncx=G.ncx, crs=G.crs;
+    const bx=-G.ox/U, by=-G.oy/U, du=2*G.cs/U;
+    for(let cj=from;cj<to;cj++){
+      const wy=by+(cj-1)*du, r=cj*ncx;
+      for(let ci=0;ci<ncx;ci++) crs[r+ci]=height(bx+(ci-1)*du, wy, t);
+    }
+  }
+  // Catmull-Rom midpoints, separable: coarse rows to fine columns, then down
+  function upsample(G, dst){
+    const nx=G.nx, ny=G.ny, ncx=G.ncx, crs=G.crs, tmp=G.tmp;
+    for(let cj=0;cj<G.ncy;cj++){
+      const cr=cj*ncx, tr=cj*nx;
+      for(let fx=0;fx<nx;fx++){
+        if((fx&1)===0) tmp[tr+fx]=crs[cr+(fx>>1)+1];
+        else{ const i=cr+((fx-1)>>1)+1; tmp[tr+fx]=(9*(crs[i]+crs[i+1])-crs[i-1]-crs[i+2])*0.0625; }
+      }
+    }
+    for(let fy=0;fy<ny;fy++){
+      const dr=fy*nx;
+      if((fy&1)===0){ dst.set(tmp.subarray(((fy>>1)+1)*nx, ((fy>>1)+2)*nx), dr); continue; }
+      const j=((fy-1)>>1)+1, r0=(j-1)*nx, r1=j*nx, r2=(j+1)*nx, r3=(j+2)*nx;
+      for(let fx=0;fx<nx;fx++)
+        dst[dr+fx]=(9*(tmp[r1+fx]+tmp[r2+fx])-tmp[r0+fx]-tmp[r3+fx])*0.0625;
+    }
+  }
+  function keyframe(G, t, dst){ coarseRows(G, t, 0, G.ncy); upsample(G, dst); }
+  // Advance the keyframes to time t, building the next one a slice at a time.
+  function field(G, t){
+    if(G.ta<0 || t<G.ta || t>=G.ta+3*KP){          // cold start, or the clock jumped
+      G.ta=Math.floor(t/KP)*KP;
+      keyframe(G, G.ta, G.A); keyframe(G, G.ta+KP, G.B);
+      G.cRow=0; G.cUp=false;
+    }
+    while(t>=G.ta+KP){
+      if(!G.cUp){ coarseRows(G, G.ta+2*KP, G.cRow, G.ncy); upsample(G, G.C); }
+      const a=G.A; G.A=G.B; G.B=G.C; G.C=a;
+      G.ta+=KP; G.cRow=0; G.cUp=false;
+    }
+    if(!G.cUp){
+      // due by 3/4 of the period, so the swap never has to finish it in one go
+      const want=Math.min(G.ncy, Math.ceil(G.ncy*(t-G.ta)/(KP*0.75))+1);
+      if(want>G.cRow){ coarseRows(G, G.ta+2*KP, G.cRow, want); G.cRow=want; }
+      if(G.cRow>=G.ncy){ upsample(G, G.C); G.cUp=true; }
+    }
+  }
+  // the height grid at time t, and its range
+  function heights(G, t){
+    field(G, t);
+    const n=G.nx*G.ny, H=G.H, A=G.A, B=G.B, u=clamp((t-G.ta)/KP, 0, 1);
+    let lo=Infinity, hi=-Infinity;
+    for(let i=0;i<n;i++){
+      const h=A[i]+(B[i]-A[i])*u; H[i]=h;
+      if(h<lo) lo=h; if(h>hi) hi=h;
+    }
+    G.lo=lo; G.hi=hi;
+  }
+
+  /* ---- cached styles, rebuilt when the palette changes ---- */
+  const ST={ gen:-1 };
+  function styles(){
+    if(ST.gen===PAL.gen) return;
+    ST.gen=PAL.gen;
+    const h=PAL.h, s=PAL.s, lit=clamp(PAL.l+8,0,80), litI=clamp(PAL.l+20,0,88);
+    ST.norm=[]; ST.idx=[]; ST.cross=[]; ST.scan=[];
+    for(let b=0;b<=NB;b++){
+      const f=b/NB;
+      ST.norm[b] =hslStr(h, s, lit,  (f*A_NORM).toFixed(3));
+      ST.idx[b]  =hslStr(h, s, litI, (f*A_IDX).toFixed(3));
+      ST.cross[b]=hslStr(h, s, litI, (f*A_CROSS).toFixed(3));
+      ST.scan[b] =hslStr(h, s, clamp(PAL.l+30,0,94), f.toFixed(3));
+    }
+    ST.label=hslStr(h, clamp(s-10,0,100), clamp(PAL.l+22,0,92));
+  }
+
+  /* ---- marching squares, chained ----
+     A crossing point belongs to the cell edge it sits on, and the two cells
+     sharing that edge share the point, so the segments come out linked into
+     whole contours. The cell being contoured lives in module variables, so
+     the hot loop passes nothing but edge numbers around. */
+  // edge pairs for the unambiguous cases, as e1*4+e2 (0 top, 1 right, 2 bottom, 3 left)
+  const SEGT=new Int8Array([-1, 12, 1, 13, 6, -1, 2, 14, 11, 2, -1, 6, 7, 1, 12, -1]);
+  let C0=0, C1=0, C2=0, C3=0, CX=0, CY=0, CS=0, CL=0, EX=0, EY=0;
+  let CI=0, CJ=0, CID=0, KI=0, NXR=0, NYR=0, NLV=0, TW=0, STB=0, STC=0;
+  let IXB=null, NIX=0, CUR=null;
+  /* Crossing points: position, level, and the two segments that meet there
+     (neighbor + alpha bucket). bot/rgt remember the crossings on the last
+     row's bottom edges and the last cell's right edge, per level, stamped so
+     nothing has to be cleared between rows or frames. */
+  let QX, QY, QA0, QA1, QB0, QB1, QK, QV, QBOT, QBOTS, QRGT, QRGTS, QN=0, QCAP=0, QTCAP=0, QRCAP=0;
+  function qGrow(cap){
+    const x=new Float32Array(cap), y=new Float32Array(cap), a0=new Int32Array(cap), a1=new Int32Array(cap),
+          b0=new Uint8Array(cap), b1=new Uint8Array(cap), k=new Int16Array(cap);
+    if(QCAP){ x.set(QX); y.set(QY); a0.set(QA0); a1.set(QA1); b0.set(QB0); b1.set(QB1); k.set(QK); }
+    QX=x; QY=y; QA0=a0; QA1=a1; QB0=b0; QB1=b1; QK=k; QV=new Uint8Array(cap); QCAP=cap;
+  }
+  // a stamp no row or cell can carry, not even row -1 above the first
+  const NOSTAMP=-2147483648;
+  function qTables(tw, nl){
+    if(2*tw>QTCAP){ QTCAP=2*tw; QBOT=new Int32Array(QTCAP); QBOTS=new Int32Array(QTCAP).fill(NOSTAMP); }
+    if(2*nl>QRCAP){ QRCAP=2*nl; QRGT=new Int32Array(QRCAP); QRGTS=new Int32Array(QRCAP).fill(NOSTAMP); }
+    if(STB>1e9 || STC>1e9){ QBOTS.fill(NOSTAMP); QRGTS.fill(NOSTAMP); STB=0; STC=0; }
+  }
+  function edgePt(e){
+    if(e===0){ EX=CX+CS*(CL-C0)/(C1-C0); EY=CY; }
+    else if(e===1){ EX=CX+CS; EY=CY+CS*(CL-C1)/(C2-C1); }
+    else if(e===2){ EX=CX+CS*(CL-C3)/(C2-C3); EY=CY+CS; }
+    else { EX=CX; EY=CY+CS*(CL-C0)/(C3-C0); }
+  }
+  function qNew(e, k){
+    if(QN>=QCAP) qGrow(QCAP*2);
+    edgePt(e);
+    const n=QN++;
+    QX[n]=EX; QY[n]=EY; QA0[n]=-1; QA1[n]=-1; QK[n]=k;
+    return n;
+  }
+  // the crossing of level k on edge e of the current cell, shared with its neighbor
+  function node(e, k){
+    let s, n;
+    if(e===0){
+      s=((CJ+1)&1)*TW + KI*NXR + CI;
+      return QBOTS[s]===STB+CJ-1 ? QBOT[s] : qNew(0, k);
+    }
+    if(e===3){
+      if(CI>0){ s=((CI+1)&1)*NLV + KI; if(QRGTS[s]===STC+CID-1) return QRGT[s]; }
+      return qNew(3, k);
+    }
+    n=qNew(e, k);
+    if(e===2){ s=(CJ&1)*TW + KI*NXR + CI; QBOT[s]=n; QBOTS[s]=STB+CJ; }
+    else     { s=(CI&1)*NLV + KI;         QRGT[s]=n; QRGTS[s]=STC+CID; }
+    return n;
+  }
+  function seg(k, b, idx, e1, e2){
+    const p=node(e1, k), q=node(e2, k);
+    if(QA0[p]<0){ QA0[p]=q; QB0[p]=b; } else { QA1[p]=q; QB1[p]=b; }
+    if(QA0[q]<0){ QA0[q]=p; QB0[q]=b; } else { QA1[q]=p; QB1[q]=b; }
+    if(!idx) return;
+    // index segments also go to a flat buffer, where the labels look for their line
+    if(NIX+5>IXB.length){ const g=new Float32Array(IXB.length*2); g.set(IXB); IXB=CUR.ix=g; }
+    IXB[NIX]=QX[p]; IXB[NIX+1]=QY[p]; IXB[NIX+2]=QX[q]; IXB[NIX+3]=QY[q]; IXB[NIX+4]=k; NIX+=5;
+  }
+
+  /* ---- chains to curves ---- */
+  const CH={ x:new Float32Array(2048), y:new Float32Array(2048), b:new Uint8Array(2048),
+              sx:new Float32Array(2048), sy:new Float32Array(2048) };
+  function chGrow(){
+    const n=CH.x.length*2, x=new Float32Array(n), y=new Float32Array(n), b=new Uint8Array(n);
+    x.set(CH.x); y.set(CH.y); b.set(CH.b); CH.x=x; CH.y=y; CH.b=b;
+    CH.sx=new Float32Array(n); CH.sy=new Float32Array(n);
+  }
+  let CHM=0, CHC=false;
+  /* Walk the contour from `start` into CH: points, and the bucket of each
+     segment. A crossing that lands next to a grid corner leaves a stub of a
+     segment, and a spline turns on a stub like a corner, so points closer
+     than MIN2 to the last one kept are merged into it. */
+  let MIN2=0;
+  function walk(start){
+    let prev=-1, cur=start, m=0, nx=-1, cut=false;
+    for(;;){
+      if(m>=CH.x.length) chGrow();
+      QV[cur]=1;
+      const a=QA0[cur], x=QX[cur], y=QY[cur];
+      let b;
+      if(a>=0 && a!==prev){ nx=a; b=QB0[cur]; } else { nx=QA1[cur]; b=QB1[cur]; }
+      const dx=m ? x-CH.x[m-1] : 1e9, dy=m ? y-CH.y[m-1] : 0;
+      if(dx*dx+dy*dy<MIN2){ if(b>CH.b[m-1]) CH.b[m-1]=b; cut=true; }
+      else { CH.x[m]=x; CH.y[m]=y; CH.b[m]=b; m++; cut=false; }
+      if(nx<0 || QV[nx]) break;
+      prev=cur; cur=nx;
+    }
+    CHC=(nx===start);
+    if(CHC){
+      const dx=CH.x[m-1]-CH.x[0], dy=CH.y[m-1]-CH.y[0];
+      if(dx*dx+dy*dy<MIN2 && m>3) m--;
+    }else if(cut && m>1){ CH.x[m-1]=QX[cur]; CH.y[m-1]=QY[cur]; }
+    CHM=m;
+  }
+  /* The smoothing pass: the chain's points become the control polygon of a
+     uniform cubic B-spline, one Bezier per segment. Where a contour turns
+     inside one cell, marching squares leaves a chord with a corner at each
+     end; the spline rounds those corners off, where a curve through the
+     crossings would keep them. An open end is mirrored, so the curve still
+     ends on the last crossing, heading straight along its segment. */
+  function ctrl(){
+    const X=CH.x, Y=CH.y, SX=CH.sx, SY=CH.sy, m=CHM, cl=CHC;
+    if(m<2) return;
+    for(let i=0;i<m;i++){
+      let px, py, nx, ny;
+      if(i>0){ px=X[i-1]; py=Y[i-1]; } else if(cl){ px=X[m-1]; py=Y[m-1]; } else { px=2*X[0]-X[1]; py=2*Y[0]-Y[1]; }
+      if(i<m-1){ nx=X[i+1]; ny=Y[i+1]; } else if(cl){ nx=X[0]; ny=Y[0]; } else { nx=2*X[i]-X[i-1]; ny=2*Y[i]-Y[i-1]; }
+      SX[i]=(px+4*X[i]+nx)/6; SY[i]=(py+4*Y[i]+ny)/6;
+    }
+  }
+  // A run of segments in one bucket and one tile is one subpath. Paths come
+  // as {p, k}: a Path2D per bucket x tile, and the keys in the order made.
+  let EP=null, EB=-1, CUTS=null, NCUT=0, FOC=null, NTX=1, NTY=1, NT=1, TIX=0, TIY=0;
+  function cutAt(x, y){
+    for(let q=0;q<NCUT;q++){
+      const L=CUTS[q], dx=x-L.x, dy=y-L.y;
+      if(dx*dx+dy*dy<L.gap2) return true;
+    }
+    return false;
+  }
+  function piece(P, b, x0, y0, ax, ay, bx, by, x1, y1){
+    const mx=0.125*(x0+x1)+0.375*(ax+bx), my=0.125*(y0+y1)+0.375*(ay+by);
+    // the survey pass takes its weight from where it is, not from the contour
+    if(FOC) b=FOC[clamp((my/CS)|0, 0, NYR-2)*(NXR-1)+clamp((mx/CS)|0, 0, NXR-2)];
+    if(b<1 || (NCUT && cutAt(mx, my))){ EB=-1; return; }
+    const key=b*NT+clamp((mx*TIX)|0, 0, NTX-1)+clamp((my*TIY)|0, 0, NTY-1)*NTX;
+    if(key!==EB){
+      EP=P.p[key];
+      if(!EP){ EP=P.p[key]=new Path2D(); P.k.push(key); }
+      EP.moveTo(x0,y0); EB=key;
+    }
+    EP.bezierCurveTo(ax,ay,bx,by,x1,y1);
+  }
+  function emit(P){
+    const X=CH.x, Y=CH.y, B=CH.b, m=CHM;
+    EB=-1;
+    if(!CHC){ if(m<2) return; }
+    else{
+      // A closed loop thinner than a third of a cell is a knob the grid barely
+      // caught, and it would draw as a stray dash.
+      if(m<3) return;
+      let x0=X[0], x1=x0, y0=Y[0], y1=y0;
+      for(let i=1;i<m;i++){
+        const x=X[i], y=Y[i];
+        if(x<x0) x0=x; else if(x>x1) x1=x;
+        if(y<y0) y0=y; else if(y>y1) y1=y;
+      }
+      if(x1-x0<CS*0.34 || y1-y0<CS*0.34) return;
+    }
+    const SX=CH.sx, SY=CH.sy, ns=CHC ? m : m-1;
+    for(let i=0;i<ns;i++){
+      const j=i+1<m ? i+1 : 0, x0=X[i], y0=Y[i], x1=X[j], y1=Y[j];
+      piece(P, B[i], SX[i],SY[i], (2*x0+x1)/3,(2*y0+y1)/3, (x0+2*x1)/3,(y0+2*y1)/3, SX[j],SY[j]);
+    }
+  }
+
+  /* The survey level climbs from the valleys to the summits and starts over,
+     lighting the contours it passes, so the relief reads as relief even where
+     the lines are all the same weight. It is the same level on every canvas. */
+  const SCAN_LO=-0.6, SCAN_HI=1.3, SCAN_T=64, A_SCAN=0.85;
+  const SV={ scan:0, a:0 };
+  function survey(t){
+    const ph=((t-T0)/SCAN_T+0.35)%1;
+    SV.scan=SCAN_LO+(SCAN_HI-SCAN_LO)*ph;
+    SV.a=A_SCAN*smooth(0, 0.06, ph)*(1-smooth(0.94, 1, ph));
+  }
+
+  /* The map at the height grid in G.H, as a list of strokes. Labels and
+     summits move to it here too, so they are ready to paint after. */
+  // per level, for the frame: 0 plain, 1 index, 2 odd-hundred index, and the elevation weight (x NB)
+  const LEL=new Float32Array(1024), LIDX=new Uint8Array(1024);
+  function trace(ctx, G, t, dts, settle, pulse){
+    const nx=G.nx, ny=G.ny, cs=G.cs, H=G.H, mask=G.mask, MN=G.mN, MI=G.mI;
+    const kLoAll=Math.ceil(G.lo/STEP), kHiAll=Math.ceil(G.hi/STEP);
+    const inv=1/STEP, PN={p:[],k:[]}, PI={p:[],k:[]};
+    // index contours this close (px) run as one doubled line, so the odd
+    // hundreds step down to a plain line's weight wherever they crowd
+    const isp=5*STEP*2*cs, d0=0.0042*G.U, d1=0.0070*G.U;
+    IXB=G.ix; NIX=0; CUR=G; CS=cs; MIN2=(0.28*cs)*(0.28*cs);
+    NTX=G.ntx; NTY=G.nty; NT=NTX*NTY; TIX=NTX/G.w; TIY=NTY/G.h;
+    NXR=nx; NYR=ny; NLV=Math.min(kHiAll-kLoAll+1, 1024); TW=NLV*nx;
+    for(let q=0;q<NLV;q++){
+      const k=kLoAll+q;
+      LIDX[q]=k%10===0 ? 1 : k%5===0 ? 2 : 0;
+      // higher ground reads brighter, so the relief shows without shading
+      LEL[q]=(0.22+0.78*smooth(-0.55, 0.95, k*STEP))*NB;
+    }
+    qTables(TW, NLV);
+    if(!QCAP) qGrow(16384);
+    QN=0;
+    for(let j=0;j<ny-1;j++){
+      if(!G.rowOn[j]) continue;
+      const r0=j*nx, r1=r0+nx, mr=j*(nx-1);
+      CY=j*cs; CJ=j;
+      for(let i=0;i<nx-1;i++){
+        const m=mask[mr+i]; if(m<0.03) continue;
+        const a0=H[r0+i], a1=H[r0+i+1], a2=H[r1+i+1], a3=H[r1+i];
+        let mn=a0, mx=a0;
+        if(a1<mn) mn=a1; else if(a1>mx) mx=a1;
+        if(a2<mn) mn=a2; else if(a2>mx) mx=a2;
+        if(a3<mn) mn=a3; else if(a3>mx) mx=a3;
+        const kLo=Math.ceil(mn*inv), kHi=Math.ceil(mx*inv)-1;
+        if(kLo>kHi) continue;
+        C0=a0; C1=a1; C2=a2; C3=a3; CX=i*cs; CI=i; CID=mr+i;
+        const mN=MN[mr+i], mI=MI[mr+i];
+        const gx=a1-a0+a2-a3, gy=a3-a0+a2-a1;
+        const mO=mI*(IDX_DIM+(1-IDX_DIM)*smooth(d0, d1, isp/Math.sqrt(gx*gx+gy*gy+1e-12)));
+        for(let k=kLo;k<=kHi;k++){
+          const ki=k-kLoAll, li=LIDX[ki], idx=li!==0;
+          const b=((li===0 ? mN : li===1 ? mI : mO)*LEL[ki]+0.5)|0;
+          if(!idx && b<1) continue;
+          const L=k*STEP; CL=L; KI=ki;
+          const c=(a0>L?1:0)|(a1>L?2:0)|(a2>L?4:0)|(a3>L?8:0);
+          if(c===5 || c===10){
+            // saddle: the cell center decides which corners join
+            if((c===5)===((a0+a1+a2+a3)*0.25>L)){ seg(k, b, idx, 0, 1); seg(k, b, idx, 2, 3); }
+            else { seg(k, b, idx, 3, 0); seg(k, b, idx, 1, 2); }
+          }else{ const e=SEGT[c]; seg(k, b, idx, e>>2, e&3); }
+        }
+      }
+    }
+    STB+=ny+2; STC+=(nx-1)*(ny-1)+2;
+    const ix=IXB, nIx=NIX;
+    IXB=null; CUR=null;
+
+    labelsUpdate(ctx, G, ix, nIx, dts, settle);
+    const LB=G.labels.filter(L=>L.k!==null && L.al>=0.04), cut=[];
+    // the survey level: the few contours nearest it are drawn a second time, bright
+    survey(t);
+    const scan=SV.scan, scanA=SV.a, sk0=Math.round(scan/STEP)-2, PS=[];
+    // open contours first, from either end, then whatever is left is a loop
+    const nQ=QN, V=QV;
+    V.fill(0, 0, nQ);
+    for(let pass=0;pass<2;pass++){
+      for(let n=0;n<nQ;n++){
+        if(V[n] || (pass===0 && QA1[n]>=0)) continue;
+        const k=QK[n], s=k-sk0;
+        walk(n); ctrl();
+        if(k%5===0){
+          // index contours break where a label sits on them, the way a printed map does it
+          cut.length=0;
+          for(let q=0;q<LB.length;q++) if(LB[q].k===k) cut.push(LB[q]);
+          CUTS=cut; NCUT=cut.length;
+          emit(PI);
+        }else emit(PN);
+        NCUT=0;
+        if(s>=0 && s<5 && scanA>0){ FOC=G.foc; emit(PS[s]||(PS[s]={p:[],k:[]})); FOC=null; }
+      }
+    }
+    CUTS=null;
+    peaksUpdate(G, t, dts, settle);
+
+    const out=[];
+    for(const k of PN.k) out.push({ p:PN.p[k], st:ST.norm[(k/NT)|0], lw:G.lwN, a:1 });
+    for(const k of PI.k) out.push({ p:PI.p[k], st:ST.idx[(k/NT)|0], lw:G.lwI, a:pulse });
+    // each survey contour's weight comes from its distance to the level, not a
+    // bucket, so the brightness slides from line to line instead of stepping
+    for(let s=0;s<5;s++){
+      const P=PS[s]; if(!P) continue;
+      const d=((sk0+s)*STEP-scan)/(0.85*STEP), a=scanA*Math.exp(-d*d);
+      if(a<0.01) continue;
+      for(const k of P.k) out.push({ p:P.p[k], st:ST.scan[(k/NT)|0], lw:G.lwS, a });
+    }
+    return out;
+  }
+  // Butt caps: a contour changes alpha bucket and tile mid-line, and two round
+  // caps meeting there would overlap into a brighter bead. The curves turn
+  // smoothly at every point, so the joins never show and plain miters do.
+  function strokeCross(ctx, G){
+    ctx.lineWidth=1; ctx.lineCap="butt"; ctx.lineJoin="miter";
+    for(let b=1;b<=NB;b++) if(G.cross[b]){ ctx.strokeStyle=ST.cross[b]; ctx.stroke(G.cross[b]); }
+  }
+  function strokeList(ctx, L){
+    ctx.lineCap="butt"; ctx.lineJoin="miter";
+    for(const s of L){ ctx.lineWidth=s.lw; ctx.globalAlpha=s.a; ctx.strokeStyle=s.st; ctx.stroke(s.p); }
+    ctx.globalAlpha=1;
+  }
+
+  /* ---- elevation labels ----
+     Each label hangs off a fixed anchor and rides the nearest index contour.
+     Every redraw it moves to the closest point on the same contour level
+     (with a slight pull back toward its anchor, so it never wanders off), and
+     fades out if that level has left the area or drifted toward a panel. A
+     faded label picks up whichever index contour now passes closest to its
+     anchor, unless a panel now sits over the anchor. */
+  const NEAR={ d2:0, x:0, y:0, a:0, k:0 };
+  function upright(a){ if(a>Math.PI/2) a-=Math.PI; else if(a<-Math.PI/2) a+=Math.PI; return a; }
+  function nearestOn(ix, nIx, k, px, py, r){
+    let bd=r*r, found=false;
+    for(let n=0;n<nIx;n+=5){
+      if(k!==null && ix[n+4]!==k) continue;
+      const x1=ix[n], y1=ix[n+1], x2=ix[n+2], y2=ix[n+3];
+      // cheap reject before the projection
+      if((x1<px-r && x2<px-r) || (x1>px+r && x2>px+r) ||
+         (y1<py-r && y2<py-r) || (y1>py+r && y2>py+r)) continue;
+      const dx=x2-x1, dy=y2-y1, l2=dx*dx+dy*dy; if(l2<1e-6) continue;
+      const u=clamp(((px-x1)*dx+(py-y1)*dy)/l2, 0, 1);
+      const qx=x1+dx*u, qy=y1+dy*u, d=(qx-px)*(qx-px)+(qy-py)*(qy-py);
+      if(d<bd){ bd=d; found=true; NEAR.x=qx; NEAR.y=qy; NEAR.a=Math.atan2(dy,dx); NEAR.k=ix[n+4]; }
+    }
+    NEAR.d2=bd; NEAR.a=upright(NEAR.a);
+    return found;
+  }
+
+  function labelsUpdate(ctx, G, ix, nIx, dts, settle){
+    const LB=G.labels, U=G.U;
+    const keepR=3.2*G.cs, acqR=0.16*U, dup2=(0.3*U)*(0.3*U);
+    const fade=settle ? 1 : clamp(dts/0.9, 0, 1), sm=settle ? 1 : clamp(dts*6, 0, 1);
+    for(const L of LB){
+      if(L.k!==null && !L.lost){
+        const px=L.tx+(L.ax-L.tx)*0.04, py=L.ty+(L.ay-L.ty)*0.04;
+        if(!L.off && nearestOn(ix, nIx, L.k, px, py, keepR) && maskHere(G, NEAR.x, NEAR.y)>=0.62){
+          L.tx=NEAR.x; L.ty=NEAR.y; L.ta=NEAR.a;
+        }else L.lost=true;
+      }
+      if(L.k===null && !L.off && nearestOn(ix, nIx, null, L.ax, L.ay, acqR)){
+        // take a level no other nearby label already carries
+        const k=NEAR.k, nx0=NEAR.x, ny0=NEAR.y;
+        const dup=LB.some(o=>o!==L && o.k===k && (o.x-nx0)*(o.x-nx0)+(o.y-ny0)*(o.y-ny0)<dup2);
+        if(!dup){
+          L.k=k; L.lost=false; L.x=L.tx=nx0; L.y=L.ty=ny0; L.ang=L.ta=NEAR.a;
+          L.txt=String(ELEV0+k*ESTEP); L.al=settle?1:0;
+          // as bright as the line it sits on, so a label never outshines a faint valley contour
+          L.w=0.35+0.65*smooth(-0.55, 0.95, k*STEP);
+          ctx.font=G.font; L.tw=ctx.measureText(L.txt).width;
+          L.gap2=Math.pow(L.tw*0.5+G.fz*0.7, 2);
+        }
+      }
+      if(L.k!==null){
+        if(L.lost){ L.al-=fade; if(L.al<=0){ L.al=0; L.k=null; L.lost=false; } }
+        else L.al=Math.min(1, L.al+fade);
+        L.x+=(L.tx-L.x)*sm; L.y+=(L.ty-L.y)*sm;
+        let d=L.ta-L.ang; if(d>Math.PI/2) d-=Math.PI; else if(d<-Math.PI/2) d+=Math.PI;
+        L.ang=upright(L.ang+d*sm);
+      }
+    }
+  }
+  function labelsDraw(ctx, dpr, G){
+    const LB=G.labels;
+    ctx.font=G.font; ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillStyle=ST.label;
+    for(const L of LB){
+      if(L.k===null || L.al<0.01) continue;
+      ctx.globalAlpha=L.al*L.w*A_LBL;
+      const c=Math.cos(L.ang), s=Math.sin(L.ang);
+      ctx.setTransform(dpr*c, dpr*s, -dpr*s, dpr*c, dpr*L.x, dpr*L.y);
+      ctx.fillText(L.txt, 0, 1);
+    }
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.globalAlpha=1;
+  }
+
+  /* ---- spot heights ----
+     Local maxima of the field in the bright part of the map, refined to
+     subpixel with a parabola so they glide instead of hopping cell to cell.
+     A marker lives as long as its summit does; new ones only fill free slots,
+     so two near-equal hills never trade the marker back and forth. The search
+     runs at ~8 Hz, the glide toward what it found every redraw. */
+  const PK_MAX=3;
+  function peaksUpdate(G, t, dts, settle){
+    if(settle || !(t-G.pkAt<0.12 && t>=G.pkAt)){ G.pkAt=t; peaksFind(G, settle); }
+    const PK=G.peaks;
+    const fade=settle ? 1 : clamp(dts/1.2, 0, 1), sm=settle ? 1 : clamp(dts*8, 0, 1);
+    // the height readout ticks at most twice a second, so digits never shimmer
+    const retxt = settle || t-G.pkTxtAt>0.5 || t<G.pkTxtAt;
+    if(retxt) G.pkTxtAt=t;
+    for(let n=PK.length-1;n>=0;n--){
+      const p=PK[n];
+      p.al = p.live ? Math.min(1, p.al+fade) : p.al-fade;
+      if(p.al<=0){ PK.splice(n,1); continue; }
+      p.x+=(p.tx-p.x)*sm; p.y+=(p.ty-p.y)*sm;
+      if(retxt || !p.txt){
+        const e=Math.round(ELEV0+p.h/STEP*ESTEP);
+        if(e!==p.shown){ p.shown=e; p.txt=String(e); }
+      }
+    }
+  }
+  function peaksFind(G, settle){
+    const nx=G.nx, ny=G.ny, H=G.H, cs=G.cs, mask=G.lmask, U=G.U;
+    const cand=[];
+    for(let j=2;j<ny-2;j++){
+      if(!G.rowOn[j]) continue;
+      for(let i=2;i<nx-2;i++){
+        if(mask[j*(nx-1)+i]<0.68) continue;
+        const c=j*nx+i, h=H[c];
+        if(h<0.12 || h<=H[c-1] || h<=H[c+1] || h<=H[c-nx] || h<=H[c+nx] ||
+           h<=H[c-nx-1] || h<=H[c-nx+1] || h<=H[c+nx-1] || h<=H[c+nx+1]) continue;
+        const l=H[c-1], r=H[c+1], u=H[c-nx], d=H[c+nx];
+        const ddx=l-2*h+r, ddy=u-2*h+d;
+        const ox=ddx<0 ? clamp(0.5*(l-r)/ddx, -0.5, 0.5) : 0;
+        const oy=ddy<0 ? clamp(0.5*(u-d)/ddy, -0.5, 0.5) : 0;
+        cand.push({ x:(i+ox)*cs, y:(j+oy)*cs, h, used:false });
+      }
+    }
+    cand.sort((a,b)=>b.h-a.h);
+    const PK=G.peaks, near2=(0.07*U)*(0.07*U), sep2=(0.26*U)*(0.26*U);
+    for(const p of PK){
+      p.live=false;
+      let best=null, bd=near2;
+      for(const c of cand){
+        if(c.used) continue;
+        const d=(c.x-p.tx)*(c.x-p.tx)+(c.y-p.ty)*(c.y-p.ty);
+        if(d<bd){ bd=d; best=c; }
+      }
+      if(best){ best.used=true; p.live=true; p.tx=best.x; p.ty=best.y; p.h=best.h; }
+    }
+    let live=PK.filter(p=>p.live).length;
+    for(const c of cand){
+      if(live>=PK_MAX) break;
+      if(c.used) continue;
+      if(PK.some(p=>(p.tx-c.x)*(p.tx-c.x)+(p.ty-c.y)*(p.ty-c.y)<sep2)) continue;
+      PK.push({ x:c.x, y:c.y, tx:c.x, ty:c.y, h:c.h, al:settle?1:0, live:true, txt:"", shown:NaN });
+      live++;
+    }
+  }
+  function peaksDraw(ctx, G){
+    const r=Math.max(3, G.U*0.0028);
+    ctx.font=G.fontPk; ctx.textAlign="left"; ctx.textBaseline="middle";
+    ctx.fillStyle=ST.label;
+    for(const p of G.peaks){
+      if(p.al<0.01) continue;
+      ctx.globalAlpha=p.al*A_LBL;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y-r); ctx.lineTo(p.x+r*0.9, p.y+r*0.6); ctx.lineTo(p.x-r*0.9, p.y+r*0.6);
+      ctx.closePath(); ctx.fill();
+      ctx.fillText(p.txt, p.x+r*2.2, p.y+0.5);
+    }
+    ctx.globalAlpha=1;
+  }
+
+  /* ---- one full redraw of a band canvas ---- */
+  function render(T, G, t, dts, settle){
+    heights(G, t); styles();
+    const ctx=T.ctx;
+    ctx.clearRect(0,0,T.w,T.h);
+    strokeCross(ctx, G);
+    strokeList(ctx, trace(ctx, G, t, dts, settle, TOPO.pulse));
+    labelsDraw(ctx, T.dpr, G);
+    peaksDraw(ctx, G);
+  }
+
+  const TOPO={ t:T0, pulse:0.85, skyKey:"" };
+  function prep(T){ return T.topo || setup(T); }
+
+  SCENES.topo={
+    label:"Topographic", band:1.0,
+    // a scene switch lands here too, and the last scene's stars must go
+    init(T){ T.topo=null; TOPO.skyKey=""; prep(T); },
+    frame(dt, S){
+      TOPO.t=T0+S.t;
+      // index contours swell a little with the low end of the music, eased so
+      // a kick drum reads as a breath rather than a flash
+      const want=0.78+0.22*clamp(S.energy*1.6, 0, 1);
+      TOPO.pulse+=(want-TOPO.pulse)*clamp(dt/260, 0, 1);
+    },
+    draw(T){
+      const G=prep(T), t=TOPO.t;
+      if(t-G.rt>=1 || t<G.rt) panels(T, G, t);
+      field(G, t);
+      // A desktop past the economy line redraws at most every other frame and
+      // 20 times a second, so a machine that is already struggling gets half
+      // the work; one monitor keeps ~30 fps.
+      if(G.rest){ G.rest=false; return; }
+      if(G.drawn>=0 && t>=G.drawn && t-G.drawn<(G.big ? 1/20 : 1/30)-0.004) return;
+      G.rest=G.big;
+      const dts=G.drawn>=0 ? clamp(t-G.drawn, 0, 0.25) : 0;
+      G.drawn=t;
+      render(T, G, t, dts, false);
+    },
+    // no stars over a map: the sky canvas is cleared once and left alone
+    sky(K){
+      const key=K.w+"x"+K.h;
+      if(TOPO.skyKey===key) return;
+      TOPO.skyKey=key; K.ctx.clearRect(0,0,K.w,K.h);
+    },
+    /* Game mode freezes the map where it stands, the survey level and the
+       music's swell included, so the still has the live frame's contrast,
+       with labels and summits settled in. */
+    still(T){
+      const G=prep(T), t=TOPO.t;
+      panels(T, G, t);
+      G.ta=-1;
+      G.labels.forEach(L=>{ L.k=null; L.al=0; L.lost=false; });
+      G.peaks.length=0;
+      render(T, G, t, 0, true);
+      G.drawn=-1;
+    }
+  };
+})();
+</script>
+<script data-style="orbital">
+/* =========================================================================
+   SCENE: ORBITAL
+   The night side of a planet seen from a station window. A dark globe rises
+   out of the foot of the primary monitor, its continents picked out as a
+   matrix of dots with city lights along the coasts, the graticule turning
+   slowly over them. The sun sits just behind the limb, so the atmosphere is
+   lit from behind, and a couple of satellites cross the sky on faint orbits.
+
+   The band holds the planet and the sky holds everything above it. The band
+   fills the planet body opaque, so the sky's stars, halo and orbit paths are
+   hidden behind it for free, and a satellite going round the back of the
+   planet simply slips behind the limb.
+
+   Cost: the land mask is generated once per boot, the latitude circles, the
+   limb paths and every gradient once per resize or palette change. Per frame
+   it is 24 meridians and the dots on the visible cap only: each ring of the
+   land grid knows which longitudes can ever be on screen, so the dots round
+   the back of the planet are never touched. Both canvases redraw at about
+   30 fps: nothing here moves fast enough to need more, and a canvas keeps
+   its pixels in between.
+   ========================================================================= */
+const ORBITAL=(function(){
+  const D2R=Math.PI/180, TAU=Math.PI*2;
+  // Planet attitude. The pole leans back behind the limb and a little to one
+  // side, so the meridians fan out from under the sun instead of sitting
+  // mirror-square on the screen.
+  const TILT=-26*D2R, ROLL=8*D2R;
+  const cT=Math.cos(TILT), sT=Math.sin(TILT), cR=Math.cos(ROLL), sR=Math.sin(ROLL);
+  const SPIN=0.35*D2R;          // rad/s, one turn in about 17 minutes
+  const APEX=0.58;              // limb apex, as a share of its monitor's height
+  const BAND=0.62;              // tall enough that the limb clears the band top on a span
+  const REDRAW_MS=30;
+  const LEV=8;                  // alpha buckets per kind of dot
+  const STILL_SPIN=2.15, STILL_T=38;
+
+  // meridian samples, pole to pole every 2.5 degrees
+  const MER_N=73, MER_C=new Float32Array(MER_N), MER_S=new Float32Array(MER_N);
+  for(let i=0;i<MER_N;i++){ const f=(-90+i*2.5)*D2R; MER_C[i]=Math.cos(f); MER_S[i]=Math.sin(f); }
+
+  // Orbit paths around the planet's center on screen, sized in planet radii.
+  // Both keep their near half below the screen, so only the far arc shows and
+  // it passes behind the planet where it meets the limb.
+  const ORBITS=[
+    { a:1.62, b:1.17, rot:-6, dash:null },
+    { a:2.10, b:1.06, rot:10, dash:[3,11] }
+  ];
+  const SATS=[
+    { orbit:0, period:300, phase:-2.30 },
+    { orbit:0, period:300, phase:-2.30+Math.PI },
+    { orbit:1, period:210, phase:-1.55 }
+  ];
+
+  const ST={ acc:REDRAW_MS, redraw:true, spin:STILL_SPIN, energy:0, breath:0,
+             ver:0, geos:new Map(), sky:null };
+
+  // small seeded generator: the stars come out the same every boot
+  function rng(seed){
+    let s=seed>>>0;
+    return ()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+  }
+  function gauss(r){ return (r()+r()+r()-1.5)*1.15; }
+
+  /* ---------------- the land ----------------
+     Continents come from warped value noise on the unit sphere, so the
+     planet is the same world on every boot and on every monitor. The grid is
+     rings of dots every half degree of latitude, spaced the same distance
+     along the ground, odd rings offset half a step so the matrix reads as a
+     weave and not a checkerboard. A cell is 0 for sea, 1 for land, 2 for a
+     shore, and 3..LEV+2 for a city light of that brightness. */
+  const DSTEP=0.5*D2R, NRING=Math.round(Math.PI/DSTEP);
+  const RINGS=new Array(NRING);
+  const LAND={ t:null, cand:[], metros:null };
+  function hash(x,y,z){
+    let h=Math.imul(x,374761393)^Math.imul(y,668265263)^Math.imul(z,1440662683);
+    h=Math.imul(h^(h>>>13),1274126177);
+    return ((h^(h>>>16))>>>0)/4294967296;
+  }
+  function vnoise(x,y,z){
+    const X=Math.floor(x), Y=Math.floor(y), Z=Math.floor(z);
+    let u=x-X, v=y-Y, w=z-Z;
+    u=u*u*(3-2*u); v=v*v*(3-2*v); w=w*w*(3-2*w);
+    const a=hash(X,Y,Z), b=hash(X+1,Y,Z), c=hash(X,Y+1,Z), d=hash(X+1,Y+1,Z);
+    const e=hash(X,Y,Z+1), f=hash(X+1,Y,Z+1), g=hash(X,Y+1,Z+1), k=hash(X+1,Y+1,Z+1);
+    const ab=a+(b-a)*u, cd=c+(d-c)*u, ef=e+(f-e)*u, gk=g+(k-g)*u;
+    const p=ab+(cd-ab)*v, q=ef+(gk-ef)*v;
+    return p+(q-p)*w;
+  }
+  function fbm(x,y,z,oct){
+    let s=0, a=0.5, n=0;
+    for(let o=0;o<oct;o++){ s+=a*vnoise(x+o*19.1,y,z); n+=a; a*=0.5; x*=2.03; y*=2.03; z*=2.03; }
+    return s/n;
+  }
+  // warped once so the coasts wander into bays and peninsulas
+  function elev(x,y,z){
+    x*=2.6; y*=2.6; z*=2.6;
+    const wx=fbm(x+5.2,y+1.3,z+2.8,3)-0.5, wy=fbm(x+1.7,y+9.2,z+4.1,3)-0.5, wz=fbm(x+8.3,y+2.8,z+7.7,3)-0.5;
+    return fbm(x+1.5*wx, y+1.5*wy, z+1.5*wz, 5);
+  }
+  // how settled a patch of land is: denser near the coast, in clusters
+  function heat(x,y,z,e){
+    const coast=Math.max(0, 1-e/0.035);
+    const pop=fbm(x*5.5+3.1, y*5.5+7.7, z*5.5+1.9, 3);
+    return (pop-0.47)*3.2 + coast*0.45 - e*3;
+  }
+  function landT(){
+    if(LAND.t!==null) return LAND.t;
+    const r=rng(77), v=[];
+    for(let i=0;i<1600;i++){ const y=r()*2-1, a=r()*TAU, q=Math.sqrt(1-y*y); v.push(elev(q*Math.cos(a),y,q*Math.sin(a))); }
+    v.sort((a,b)=>a-b);
+    LAND.t=v[Math.floor(v.length*0.64)];   // a little over a third land
+    return LAND.t;
+  }
+  function ring(k){
+    if(RINGS[k]) return RINGS[k];
+    const la=-Math.PI/2+(k+0.5)*DSTEP, cl=Math.cos(la), sl=Math.sin(la);
+    const n=Math.max(1, Math.round(TAU*cl/DSTEP)), dl=TAU/n, off=(k&1)*dl*0.5;
+    const c=new Uint8Array(n), T0=landT();
+    for(let j=0;j<n;j++){
+      const lo=off+j*dl, x=cl*Math.cos(lo), z=cl*Math.sin(lo);
+      const e=elev(x,sl,z)-T0;
+      if(e<=0) continue;
+      const hv=heat(x,sl,z,e);
+      c[j]= hv>0.45 && hash(k,j,97)<(hv-0.45)*1.6 ? 3+Math.min(LEV-1, ((hv-0.45)*LEV*1.4)|0)
+          : e<0.012 ? 2 : 1;
+      if(hv>0.95 && c[j]>2){ LAND.cand.push({x, y:sl, z, hv}); LAND.metros=null; }
+    }
+    return (RINGS[k]={ cl, sl, n, dl, off, c });
+  }
+  // The brightest city cells also get a soft glow of their own, kept apart so
+  // the glows never pile up. Only rings some band has built are candidates,
+  // which is every ring that can reach a screen.
+  function metros(){
+    if(LAND.metros) return LAND.metros;
+    const pick=[];
+    LAND.cand.sort((a,b)=>b.hv-a.hv);
+    for(const p of LAND.cand){
+      if(pick.some(o=>o.x*p.x+o.y*p.y+o.z*p.z>0.9976)) continue;   // about 4 degrees apart
+      pick.push(p);
+    }
+    const M=[];
+    for(const p of pick){ const cl=Math.hypot(p.x,p.z); M.push(cl, p.y, p.x/cl, p.z/cl, clamp((p.hv-0.95)*2,0.25,1)); }
+    return (LAND.metros=Float32Array.from(M));
+  }
+
+  // PAL.bg is "#000", a hex default, or an hsl() string from applyBg.
+  function bgHsl(){
+    const b=String(PAL.bg||"#000").trim();
+    let m=b.match(/^hsl\(\s*([\d.]+)[\s,]+([\d.]+)%[\s,]+([\d.]+)%/i);
+    if(m) return [+m[1], +m[2], +m[3]];
+    m=b.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if(!m) return [0,0,0];
+    let x=m[1]; if(x.length===3) x=x.replace(/./g,"$&$&");
+    const r=parseInt(x.slice(0,2),16)/255, g=parseInt(x.slice(2,4),16)/255, bl=parseInt(x.slice(4,6),16)/255;
+    const mx=Math.max(r,g,bl), mn=Math.min(r,g,bl), l=(mx+mn)/2;
+    if(mx===mn) return [0,0,l*100];
+    const d=mx-mn, s=l>0.5? d/(2-mx-mn) : d/(mx+mn);
+    let h= mx===r ? (g-bl)/d+(g<bl?6:0) : mx===g ? (bl-r)/d+2 : (r-g)/d+4;
+    return [h*60, s*100, l*100];
+  }
+
+  // Line lightness follows the waves (PAL.l+8, capped at 80) so a very pale
+  // accent still draws a colored line; the glow is held darker and saturated
+  // for the same reason.
+  function tones(){
+    const l=PAL.l;
+    return { h:PAL.h, s:PAL.s, line:clamp(l+8,0,80), rim:clamp(l+22,62,94),
+             glow:clamp(l,40,64), city:clamp(l+25,60,92) };
+  }
+  function stops(g, h, s, l, list){
+    for(let i=0;i<list.length;i+=2) g.addColorStop(list[i], hslStr(h,s,l,list[i+1]));
+    return g;
+  }
+
+  // The monitor a band belongs to: the primary when the band reaches it (a
+  // span, or the primary's own layer), else the one under its middle. Only the
+  // primary's planet carries the orbits.
+  function bandScreen(T){
+    const S=T.screens||[], P=S[LAY.primary||0];
+    const on=s=>s.x<T.w && s.x+s.w>0 && s.y<T.h && s.y+s.h>0;
+    if(P && on(P)) return {s:P, primary:true};
+    for(const s of S) if(T.cx>=s.x && T.cx<s.x+s.w && on(s)) return {s, primary:false};
+    const lh=T.h/BAND;
+    return { s:{x:0, y:T.h-lh, w:T.w, h:lh}, primary:true };
+  }
+
+  // Planet geometry in band coordinates. The radius follows the monitor's long
+  // edge, so a landscape screen sees the limb dip out through its lower corners
+  // and a portrait one sees a gentle arc from side to side.
+  function geometry(T){
+    const b=bandScreen(T), P=b.s;
+    const u=Math.max(0.4, Math.min(P.w,P.h)/2160);
+    const R=0.6*Math.max(P.w,P.h);
+    const ax=T.cx, ay=Math.max(P.y+P.h*APEX, P.h*0.12);
+    const G={ primary:b.primary, u, R, ax, ay, cx:ax, cy:ay+R, pw:P.w, ph:P.h, w:T.w, h:T.h };
+    // half-angle of the limb that is on the band, measured from the apex
+    G.half=Math.acos(clamp((G.cy-T.h-8)/R, -1, 1))+0.03;
+    return G;
+  }
+
+  function shell(G, r0, r1){
+    const p=new Path2D(), a0=-Math.PI/2-G.half, a1=-Math.PI/2+G.half;
+    p.arc(G.cx,G.cy,r1,a0,a1); p.arc(G.cx,G.cy,Math.max(1,r0),a1,a0,true); p.closePath();
+    return p;
+  }
+  function limbArc(G, r){
+    const p=new Path2D(); p.arc(G.cx,G.cy,r,-Math.PI/2-G.half,-Math.PI/2+G.half); return p;
+  }
+
+  // Latitude circles do not move as the planet spins, so they are one cached path.
+  function latPath(G){
+    const p=new Path2D();
+    for(let la=-75; la<=75; la+=15){
+      const cl=Math.cos(la*D2R), sl=Math.sin(la*D2R);
+      let on=false;
+      for(let k=0;k<=360;k++){
+        const lo=k*D2R, x=cl*Math.cos(lo), y=sl, z=cl*Math.sin(lo);
+        const y1=y*cT-z*sT, z1=y*sT+z*cT;
+        const X=G.cx+G.R*(x*cR-y1*sR), Y=G.cy-G.R*(x*sR+y1*cR);
+        if(z1>0 && Y<G.h+4){ if(on) p.lineTo(X,Y); else { p.moveTo(X,Y); on=true; } }
+        else on=false;
+      }
+    }
+    return p;
+  }
+
+  // For every ring of the land grid, the stretches of screen-fixed longitude
+  // that land on this band. Per frame only the cells turning through those
+  // stretches are projected.
+  function visibleRings(G){
+    const M=720, dA=TAU/M, out=[], w=G.w, h=G.h, R=G.R;
+    const vis=new Uint8Array(M);
+    for(let k=0;k<NRING;k++){
+      const la=-Math.PI/2+(k+0.5)*DSTEP, cl=Math.cos(la), y=Math.sin(la);
+      const yc=y*cT, ys=y*sT;
+      let any=0;
+      for(let s=0;s<M;s++){
+        const a=s*dA, x=cl*Math.cos(a), z=cl*Math.sin(a);
+        const y1=yc-z*sT, z1=ys+z*cT;
+        const X=G.cx+R*(x*cR-y1*sR), Y=G.cy-R*(x*sR+y1*cR);
+        vis[s]= z1>0.01 && Y<h+3 && X>-3 && X<w+3 ? 1 : 0; any|=vis[s];
+      }
+      if(!any) continue;
+      // runs of visible samples, walked from a hidden one so none wraps
+      let s0=0; while(s0<M && vis[s0]) s0++;
+      const iv=[];
+      if(s0===M) iv.push(0, TAU);
+      else for(let i=1;i<=M;i++){
+        const s=(s0+i)%M;
+        if(vis[s] && !vis[(s+M-1)%M]) iv.push((s0+i-1)*dA);
+        if(!vis[s] && vis[(s+M-1)%M]) iv.push((s0+i)*dA);
+      }
+      out.push({ k, yc, ys, iv });
+    }
+    return out;
+  }
+
+  // Everything that depends on the band's size or the palette.
+  function build(T){
+    const G=geometry(T), u=G.u, R=G.R;
+    G.disc=new Path2D(); G.disc.arc(G.cx,G.cy,R,0,TAU);
+    G.limb=limbArc(G,R);
+    G.air=limbArc(G,R+14*u);
+    G.atmoRing=shell(G,R-32*u,R+140*u);
+    G.hazeRing=shell(G,R-180*u,R+1);
+    G.lat=latPath(G);
+    G.rings=visibleRings(G);
+    // room for every cell a band can show, plus the ends of each stretch
+    G.cap=0; for(const V of G.rings) G.cap+=ring(V.k).n+V.iv.length;
+    const r=0.64*G.pw; G.inv2=1/(r*r);
+    G.dot=clamp(u,0.75,1.3);
+    paint(T,G);
+    T.orbital=G;
+    // hand the sky this planet in viewport coordinates
+    ST.geos.set(T.cv, { primary:G.primary, R, cx:G.cx+T.x, cy:G.cy+T.y, ax:G.ax+T.x, ay:G.ay+T.y,
+                        pw:G.pw, ph:G.ph, u });
+    ST.ver++;
+  }
+  function paint(T,G){
+    const ctx=T.ctx, c=tones(), u=G.u, R=G.R, h=c.h, s=c.s;
+    G.gen=PAL.gen;
+    const bg=bgHsl();
+    G.body=hslStr(bg[0], bg[1], bg[2]*0.55);
+    // one gradient across the limb: a little glow inside the edge, the bright
+    // shell on it, and a long soft tail out into space
+    const r0=R-32*u, r1=R+140*u, span=r1-r0, at=d=>clamp((R+d*u-r0)/span,0,1);
+    G.atmo=stops(ctx.createRadialGradient(G.cx,G.cy,r0,G.cx,G.cy,r1), h,s,c.glow,
+      [0,0, at(-14),0.10, at(-4),0.36, at(0),1, at(3),0.7, at(10),0.42, at(30),0.2, at(70),0.07, 1,0]);
+    // Erased out of the shell so it is thick under the sun and fades along the
+    // limb. This is the inverse of the share kept: destination-out only touches
+    // the ring it fills, where destination-in would repaint the whole canvas.
+    const m=ctx.createRadialGradient(G.ax,G.ay,0,G.ax,G.ay,0.62*G.pw);
+    [[0,0.78],[0.1,0.62],[0.3,0.34],[0.55,0.14],[0.8,0.055],[1,0.03]].forEach(([o,a])=>m.addColorStop(o,"rgba(0,0,0,"+(1-a).toFixed(3)+")"));
+    G.mask=m;
+    // haze near the limb: the grid and lights sink into the air at a grazing angle
+    const hz=ctx.createRadialGradient(G.cx,G.cy,R-180*u,G.cx,G.cy,R);
+    [[0,0],[0.45,0.28],[0.8,0.66],[1,0.92]].forEach(([o,a])=>hz.addColorStop(o,hslStr(bg[0],bg[1],bg[2]*0.55,a)));
+    G.haze=hz;
+    const fromSun=(rad,l,list)=>stops(ctx.createRadialGradient(G.ax,G.ay,0,G.ax,G.ay,rad),h,s,l,list);
+    G.grid=fromSun(0.66*G.pw, c.line, [0,0.22, 0.3,0.15, 0.65,0.065, 1,0.025]);
+    // unit glow under each big city, scaled per city
+    G.cityGlow=stops(ctx.createRadialGradient(0,0,0,0,0,1), h,s,c.glow, [0,0.16, 0.35,0.07, 1,0]);
+    G.rim =fromSun(0.60*G.pw, c.rim,  [0,0.95, 0.25,0.6, 0.5,0.22, 0.8,0.06, 1,0.03]);
+    G.airG=fromSun(0.50*G.pw, c.glow, [0,0.42, 0.4,0.17, 1,0.02]);
+    G.landSty=[]; G.citySty=[];
+    for(let k=0;k<LEV;k++){
+      G.landSty.push(hslStr(h, s, c.line, ((k+1)/LEV*0.42).toFixed(3)));
+      G.citySty.push(hslStr(h, clamp(s-10,0,100), c.city, ((k+1)/LEV*0.95).toFixed(3)));
+    }
+  }
+
+  // The meridians turn with the planet, so they are the one line path built
+  // per frame, every 15 degrees.
+  function meridians(ctx, G, spin){
+    const R=G.R, cx=G.cx, cy=G.cy, h=G.h;
+    ctx.beginPath();
+    for(let m=0;m<24;m++){
+      const lo=m*15*D2R+spin, cl=Math.cos(lo), sl=Math.sin(lo);
+      let on=false, lx=0, ly=0, lz=-1;
+      for(let i=0;i<MER_N;i++){
+        const x=MER_C[i]*cl, y=MER_S[i], z=MER_C[i]*sl;
+        const y1=y*cT-z*sT, z1=y*sT+z*cT;
+        const X=cx+R*(x*cR-y1*sR), Y=cy-R*(x*sR+y1*cR);
+        if(z1>0 && Y<h+4){
+          if(on) ctx.lineTo(X,Y);
+          else{
+            // coming round the limb: start the line on the edge itself
+            if(lz<=0 && i>0){ const f=lz/(lz-z1); ctx.moveTo(lx+(X-lx)*f, ly+(Y-ly)*f); ctx.lineTo(X,Y); }
+            else ctx.moveTo(X,Y);
+            on=true;
+          }
+        }else{
+          if(on && z1<=0){ const f=lz/(lz-z1); ctx.lineTo(lx+(X-lx)*f, ly+(Y-ly)*f); }
+          on=false;
+        }
+        lx=X; ly=Y; lz=z1;
+      }
+    }
+  }
+
+  // The land grid on the visible cap. Each cell's brightness falls away from
+  // the sun and toward the limb. Cells are counting-sorted into alpha buckets
+  // and drawn with fillRect, one style change per bucket: thousands of plain
+  // rects batch far better than one path holding thousands of contours.
+  const DB={ x:new Float32Array(0), y:new Float32Array(0), k:new Uint8Array(0), o:new Int32Array(0),
+             cnt:new Int32Array(LEV*2+1), at:new Int32Array(LEV*2) };
+  function dots(ctx, G, spin){
+    const R=G.R, cx=G.cx, cy=G.cy, ax=G.ax, ay=G.ay, h=G.h, inv2=G.inv2;
+    if(DB.x.length<G.cap){ const n=G.cap; DB.x=new Float32Array(n); DB.y=new Float32Array(n); DB.k=new Uint8Array(n); DB.o=new Int32Array(n); }
+    const BX=DB.x, BY=DB.y, BK=DB.k, cnt=DB.cnt;
+    cnt.fill(0);
+    let nv=0;
+    for(const V of G.rings){
+      const g=ring(V.k), n=g.n, dl=g.dl, cl=g.cl, C=g.c, cd=Math.cos(dl), sd=Math.sin(dl);
+      const iv=V.iv;
+      for(let q=0;q<iv.length;q+=2){
+        // cells whose turned longitude off+j*dl+spin falls inside this stretch
+        let j=Math.ceil((iv[q]-spin-g.off)/dl);
+        const j1=Math.floor((iv[q+1]-spin-g.off)/dl);
+        const a0=g.off+j*dl+spin;
+        let c=Math.cos(a0), s=Math.sin(a0);
+        for(;j<=j1;j++){
+          const v=C[((j%n)+n)%n];
+          if(v){
+            const x=cl*c, z=cl*s, y1=V.yc-z*sT, z1=V.ys+z*cT;
+            const X=cx+R*(x*cR-y1*sR), Y=cy-R*(x*sR+y1*cR);
+            if(Y<h+2 && z1>0){
+              const dx=X-ax, dy=(Y-ay)*1.5;
+              const f=(1-(dx*dx+dy*dy)*inv2)*Math.min(1,z1*3);
+              if(f>0.05){
+                // land buckets first, the shore a step brighter than inland so
+                // the coasts draw the map; city buckets after them
+                const b= v<3 ? Math.min(LEV-1,(f*(v===2?1:0.62)*LEV)|0)
+                             : LEV+Math.min(LEV-1,(f*(0.3+0.7*(v-2)/LEV)*LEV)|0);
+                BX[nv]=X; BY[nv]=Y; BK[nv]=b; cnt[b+1]++; nv++;
+              }
+            }
+          }
+          const t=c*cd-s*sd; s=s*cd+c*sd; c=t;
+        }
+      }
+    }
+    const O=DB.o, at=DB.at;
+    for(let k=1;k<=LEV*2;k++) cnt[k]+=cnt[k-1];
+    at.set(cnt.subarray(0,LEV*2));
+    for(let i=0;i<nv;i++) O[at[BK[i]]++]=i;
+    const ls=1.7*G.dot, cs=2.3*G.dot;
+    for(let k=0;k<LEV*2;k++){
+      const e=cnt[k+1]; let m=cnt[k]; if(m===e) continue;
+      const land=k<LEV, sz=land ? ls : cs, hs=sz/2;
+      ctx.fillStyle= land ? G.landSty[k] : G.citySty[k-LEV];
+      for(;m<e;m++){ const i=O[m]; ctx.fillRect(BX[i]-hs,BY[i]-hs,sz,sz); }
+    }
+  }
+
+  function drawBand(T, spin, b){
+    let G=T.orbital;
+    if(!G || G.w!==T.w || G.h!==T.h){ build(T); G=T.orbital; }
+    else if(G.gen!==PAL.gen) paint(T,G);
+    const ctx=T.ctx, R=G.R, cx=G.cx, cy=G.cy, w=T.w, h=T.h;
+    ctx.clearRect(0,0,w,h);
+
+    // 1. the atmosphere, then fade it along the limb away from the sun
+    ctx.globalAlpha=0.8+0.2*b; ctx.fillStyle=G.atmo; ctx.fill(G.atmoRing);
+    ctx.globalAlpha=1;
+    ctx.globalCompositeOperation="destination-out";
+    ctx.fillStyle=G.mask; ctx.fill(G.atmoRing);
+    // 2. everything on the surface goes UNDER what is already there, top layer first
+    ctx.globalCompositeOperation="destination-over";
+    ctx.fillStyle=G.haze; ctx.fill(G.hazeRing);
+
+    // graticule: cached latitudes plus the meridians, which turn
+    ctx.lineWidth=1;
+    ctx.strokeStyle=G.grid; ctx.stroke(G.lat); meridians(ctx,G,spin); ctx.stroke();
+
+    dots(ctx,G,spin);
+
+    // the glow over each big city, flattened as the surface turns away from us
+    const CI=metros(), cs=Math.cos(spin), ss=Math.sin(spin), inv2=G.inv2;
+    ctx.fillStyle=G.cityGlow;
+    for(let i=0;i<CI.length;i+=5){
+      const co=CI[i+2]*cs-CI[i+3]*ss, so=CI[i+3]*cs+CI[i+2]*ss;
+      const x=CI[i]*co, y=CI[i+1], z=CI[i]*so;
+      const z1=y*sT+z*cT; if(z1<0.05) continue;
+      const y1=y*cT-z*sT;
+      const X=cx+R*(x*cR-y1*sR), Y=cy-R*(x*sR+y1*cR);
+      const rr=(22+50*CI[i+4])*G.u;
+      if(Y-rr>h || X+rr<0 || X-rr>w) continue;
+      const dx=X-G.ax, dy=(Y-G.ay)*1.5, a=(1-(dx*dx+dy*dy)*inv2)*Math.min(1,z1*3);
+      if(a<0.05) continue;
+      ctx.globalAlpha=a;
+      ctx.save(); ctx.translate(X,Y); ctx.scale(rr, rr*Math.max(0.3,z1));
+      ctx.fillRect(-1,-1,2,2); ctx.restore();
+    }
+    ctx.globalAlpha=1;
+
+    // the planet body, opaque, which also hides the sky's stars and orbits behind it
+    ctx.fillStyle=G.body; ctx.fill(G.disc);
+    ctx.globalCompositeOperation="source-over";
+
+    // 3. on top: the lit edge and a detached airglow line just above it
+    ctx.strokeStyle=G.airG; ctx.globalAlpha=0.6+0.4*b; ctx.lineWidth=1; ctx.stroke(G.air);
+    ctx.strokeStyle=G.rim; ctx.globalAlpha=0.85+0.15*b;
+    ctx.lineWidth=Math.max(0.75,1.3*G.u); ctx.stroke(G.limb);
+    ctx.globalAlpha=1;
+  }
+
+  /* ---------------- sky ---------------- */
+  function skyBuild(K){
+    const ctx=K.ctx, c=tones(), h=c.h, s=c.s;
+    const tr=ctx.getTransform(), px=1/Math.max(0.1,tr.a);   // one device pixel, in CSS px
+    const geos=[]; let prim=null;
+    ST.geos.forEach((g,cv)=>{ if(!cv.isConnected){ ST.geos.delete(cv); return; } geos.push(g); if(g.primary && !prim) prim=g; });
+    if(!prim) prim=geos[0]||null;
+    const C={ w:K.w, h:K.h, gen:PAL.gen, ver:ST.ver, px, prim, halos:[], orbits:[], stars:[] };
+
+    // The sun's light above each limb, as ellipses drawn through a scale: a wide
+    // low halo, and a tight bloom where the sun is about to clear the edge. The
+    // planet body on the band covers the lower half of both.
+    geos.forEach(g=>{
+      let ry=0.24*g.ph, rx=0.64*g.pw;
+      C.halos.push({ x:g.ax, y:g.ay+0.02*g.ph, sx:rx/ry, r:ry,
+        g:stops(ctx.createRadialGradient(0,0,0,0,0,ry), h,s,c.glow,
+          [0,0.24, 0.15,0.16, 0.35,0.08, 0.6,0.028, 1,0]) });
+      ry=0.075*g.ph; rx=0.24*g.pw;
+      const b=ctx.createRadialGradient(0,0,0,0,0,ry);
+      b.addColorStop(0, hslStr(h,clamp(s-15,0,100),c.rim,0.42));
+      b.addColorStop(0.22, hslStr(h,s,c.glow,0.2));
+      b.addColorStop(0.55, hslStr(h,s,c.glow,0.06));
+      b.addColorStop(1, hslStr(h,s,c.glow,0));
+      C.halos.push({ x:g.ax, y:g.ay+0.012*g.ph, sx:rx/ry, r:ry, g:b });
+    });
+
+    // A faint band of the galaxy across the upper sky, over the primary. Three
+    // long ellipses, offset, so it thickens and thins instead of reading as a stripe.
+    const P=prim || { ax:K.w/2, ay:K.h*0.6, pw:K.w, ph:K.h };
+    const ang=-17*D2R, ca=Math.cos(ang), sa=Math.sin(ang);
+    const gx=P.ax+0.08*P.pw, gy=P.ay-0.40*P.ph;
+    C.milky=[];
+    [[0,0,0.70,0.085,0.03],[-0.20,0.03,0.40,0.045,0.024],[0.24,-0.02,0.34,0.035,0.02]].forEach(([ox,oy,rx,ry,a])=>{
+      const R0=ry*P.ph;
+      C.milky.push({ x:gx+ox*P.pw*ca-oy*P.ph*sa, y:gy+ox*P.pw*sa+oy*P.ph*ca, sx:rx*P.pw/R0, r:R0,
+        g:stops(ctx.createRadialGradient(0,0,0,0,0,R0), h,clamp(s*0.5,0,100),c.glow,
+          [0,a, 0.4,a*0.55, 1,0]) });
+    });
+    C.ang=ang;
+
+    // stars, only where the sky shows; three brightness classes x six twinkle
+    // phases. A share of them crowd along the galaxy band.
+    const r=rng(4242), N=Math.round(K.w*K.h/16000), lists=[];
+    for(let i=0;i<18;i++) lists.push([]);
+    for(let i=0;i<N;i++){
+      let x, y;
+      if(r()<0.35){
+        const t=(r()*2-1)*0.75*P.pw, o=gauss(r)*0.05*P.ph;
+        x=gx+t*ca-o*sa; y=gy+t*sa+o*ca;
+        if(x<0||x>K.w||y<0||y>K.h) continue;
+      }else{ x=r()*K.w; y=r()*K.h; }
+      const q=r();
+      let hid=false;
+      for(const g of geos){ const dx=x-g.cx, dy=y-g.cy; if(dx*dx+dy*dy<(g.R+3)*(g.R+3)){ hid=true; break; } }
+      if(hid) continue;
+      const cls= q<0.025 ? 2 : q<0.18 ? 1 : 0;
+      const sz=Math.max(px, cls===2 ? 1.9 : cls===1 ? 1.4 : 1.0+r()*0.25);
+      lists[cls*6+Math.floor(r()*6)].push(x,y,sz);
+    }
+    C.stars=lists.map(a=>Float32Array.from(a));
+    const sl=clamp(PAL.l+25,0,92), ss=clamp(s*0.45,0,100);
+    C.starSty=[]; for(let j=0;j<=40;j++) C.starSty.push(hslStr(h,ss,sl,(j/40).toFixed(3)));
+
+    // a handful of bright stars with a soft halo each, from one unit gradient
+    const su=prim ? prim.u : 1, nh=Math.max(3, Math.round(K.w*K.h/900000));
+    C.hero=[];
+    for(let i=0;i<nh*4 && C.hero.length<nh*4;i++){
+      const x=K.w*(0.04+0.92*r()), y=K.h*(0.04+0.84*r());
+      let hid=false;
+      for(const g of geos){ const dx=x-g.cx, dy=y-g.cy; if(dx*dx+dy*dy<(g.R+60)*(g.R+60)){ hid=true; break; } }
+      if(!hid) C.hero.push(x, y, (7+8*r())*su, r()*TAU);
+    }
+    C.heroG=stops(ctx.createRadialGradient(0,0,0,0,0,1), h,ss,sl, [0,0.6, 0.1,0.26, 0.3,0.07, 1,0]);
+    C.heroCore=C.starSty[36];
+
+    if(prim){
+      const g=prim;
+      C.orbitG=stops(ctx.createRadialGradient(g.ax,g.ay,0,g.ax,g.ay,1.0*g.pw), h,s,c.line,
+        [0,0.20, 0.35,0.13, 0.7,0.06, 1,0.03]);
+      ORBITS.forEach(o=>{
+        const A=o.a*g.R, B=o.b*g.R, rot=o.rot*D2R, p=new Path2D();
+        p.ellipse(g.cx,g.cy,A,B,rot,0,TAU);
+        C.orbits.push({ A, B, cr:Math.cos(rot), sr:Math.sin(rot), p,
+                        dash:o.dash ? o.dash.map(d=>d*g.u) : null, step:12*g.u/A });
+      });
+      const sp=Math.max(4,9*g.u);
+      C.sprite=stops(ctx.createRadialGradient(0,0,0,0,0,sp), h,s,c.rim, [0,0.55, 0.25,0.22, 1,0]);
+      C.spR=sp;
+      C.core=hslStr(h,clamp(s-20,0,100),clamp(PAL.l+30,70,97));
+      C.trail=[]; for(let j=0;j<6;j++) C.trail.push(hslStr(h,s,c.rim,(0.42*(1-j/6)).toFixed(3)));
+      C.brk=hslStr(h,s,c.line,0.38);
+    }
+    ST.sky=C;
+    return C;
+  }
+
+  function ellipses(ctx, list, rot){
+    for(const a of list){
+      ctx.save(); ctx.translate(a.x,a.y); if(rot) ctx.rotate(rot); ctx.scale(a.sx,1);
+      ctx.fillStyle=a.g; ctx.fillRect(-a.r,-a.r,2*a.r,2*a.r);
+      ctx.restore();
+    }
+  }
+
+  function drawSkyAll(K, t, b, still){
+    let C=ST.sky;
+    if(!C || C.w!==K.w || C.h!==K.h || C.gen!==PAL.gen || C.ver!==ST.ver) C=skyBuild(K);
+    const ctx=K.ctx;
+    ctx.clearRect(0,0,K.w,K.h);
+    ellipses(ctx, C.milky, C.ang);
+    // the halo only means something over a drawn planet
+    const planet=CFG.terrain && C.prim;
+    if(planet){
+      ctx.globalAlpha=0.7+0.3*b;
+      ellipses(ctx, C.halos, 0);
+      ctx.globalAlpha=1;
+    }
+    const base=[0.28,0.5,0.85];
+    for(let c=0;c<3;c++) for(let g=0;g<6;g++){
+      const a=C.stars[c*6+g]; if(!a.length) continue;
+      const tw= still ? 0.85 : 0.72+0.28*Math.sin(t*(0.35+g*0.07)+g*1.7);
+      ctx.fillStyle=C.starSty[Math.round(clamp(base[c]*tw,0,1)*40)];
+      ctx.beginPath();
+      for(let i=0;i<a.length;i+=3) ctx.rect(a[i],a[i+1],a[i+2],a[i+2]);
+      ctx.fill();
+    }
+    ctx.fillStyle=C.heroG;
+    for(let i=0;i<C.hero.length;i+=4){
+      ctx.globalAlpha= still ? 0.85 : 0.7+0.3*Math.sin(t*0.21+C.hero[i+3]);
+      ctx.save(); ctx.translate(C.hero[i],C.hero[i+1]); ctx.scale(C.hero[i+2],C.hero[i+2]);
+      ctx.fillRect(-1,-1,2,2); ctx.restore();
+    }
+    ctx.globalAlpha=1; ctx.fillStyle=C.heroCore; ctx.beginPath();
+    for(let i=0;i<C.hero.length;i+=4) ctx.rect(C.hero[i]-1,C.hero[i+1]-1,2,2);
+    ctx.fill();
+    if(!planet) return;
+
+    const g=C.prim;
+    ctx.strokeStyle=C.orbitG; ctx.lineWidth=C.px;
+    for(const o of C.orbits){
+      if(o.dash) ctx.setLineDash(o.dash);
+      ctx.stroke(o.p);
+      if(o.dash) ctx.setLineDash([]);
+    }
+    const R2=(g.R+2)*(g.R+2), bs=Math.max(3,6*g.u), bl=Math.max(2,3.5*g.u);
+    for(const sat of SATS){
+      const o=C.orbits[sat.orbit], ph=sat.phase+t*TAU/sat.period;
+      const pos=(p)=>{ const c=Math.cos(p), s=Math.sin(p);
+        return [g.cx+o.A*c*o.cr-o.B*s*o.sr, g.cy+o.A*c*o.sr+o.B*s*o.cr]; };
+      const [X,Y]=pos(ph), dx=X-g.cx, dy=Y-g.cy;
+      if(dx*dx+dy*dy<R2 || X<-30 || X>K.w+30 || Y<-30 || Y>K.h+30) continue;
+      // a short fading wake along the orbit
+      ctx.lineWidth=Math.max(C.px,1.2*g.u);
+      let [px,py]=[X,Y];
+      for(let j=0;j<6;j++){
+        const [qx,qy]=pos(ph-(j+1)*o.step);
+        ctx.strokeStyle=C.trail[j];
+        ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(qx,qy); ctx.stroke();
+        px=qx; py=qy;
+      }
+      ctx.save(); ctx.translate(X,Y); ctx.fillStyle=C.sprite;
+      ctx.fillRect(-C.spR,-C.spR,2*C.spR,2*C.spR); ctx.restore();
+      ctx.fillStyle=C.core; ctx.fillRect(X-1,Y-1,2,2);
+      // tracking brackets, the one bit of HUD in the scene
+      ctx.strokeStyle=C.brk; ctx.lineWidth=C.px;
+      ctx.beginPath();
+      for(const sx of [-1,1]) for(const sy of [-1,1]){
+        const x0=X+sx*bs, y0=Y+sy*bs;
+        ctx.moveTo(x0-sx*bl,y0); ctx.lineTo(x0,y0); ctx.lineTo(x0,y0-sy*bl);
+      }
+      ctx.stroke();
+    }
+  }
+
+  return {
+    label:"Orbital", band:BAND,
+    init(T){ build(T); },
+    frame(dt, S){
+      ST.acc+=dt;
+      ST.redraw=ST.acc>=REDRAW_MS;
+      if(ST.redraw) ST.acc=0;
+      // swell quickly on a kick, settle slowly, so bass reads as a breath and not a flicker
+      const e=S.energy, k=Math.min(1,(e>ST.energy?0.08:0.025)*dt/16);
+      ST.energy+=(e-ST.energy)*k;
+      ST.breath=clamp(ST.energy*1.4,0,1);
+      ST.spin=(STILL_SPIN+S.t*SPIN)%TAU;
+    },
+    draw(T){ if(ST.redraw || !T.orbital) drawBand(T, ST.spin, ST.breath); },
+    sky(K, S){ if(ST.redraw || !ST.sky) drawSkyAll(K, S.t, ST.breath, false); },
+    still(T){ drawBand(T, STILL_SPIN, 0.3); },
+    stillSky(K){ drawSkyAll(K, STILL_T, 0.3, true); }
+  };
+})();
+SCENES.orbital=ORBITAL;
+</script>
+<script data-style="circuit">
+/* =========================================================================
+   SCENE: CIRCUIT
+   A circuit board, laid out once per desktop: one processor, low in the
+   middle of the primary monitor, bus bundles fanning out from its pins with
+   proper 45-degree miters, small chips where a bus runs out, and passives
+   and a few longer traces filling the gaps near it. The copper fades with an
+   elliptical falloff around the processor, so the board thins out into the
+   black instead of stopping on an edge, and it keeps clear of every panel's
+   real box (read from the DOM, never per frame). On a span the processor's
+   east and west buses run on across the seams onto the side monitors, which
+   carry only those buses, the chips they end in and a few passives.
+
+   The board never moves, so it is drawn once into the band canvas and left
+   there: a canvas keeps its pixels, and a band that does not change costs the
+   compositor nothing per frame. Only the light moves: comets running along
+   the traces, vias flaring as they arrive, and the processor's glow and die
+   cells, which follow the music. All of it is drawn into the sky canvas,
+   which sits under the band, so every pulse reads as light under the copper.
+   A comet dims with the copper under its head, so none runs bright over a
+   trace that has already faded out.
+
+   The layout lives in viewport px and is seeded from the desktop geometry,
+   so a given desktop always gets the same board, and a band canvas (one
+   across the span, or one per monitor) draws its own window onto it.
+   Geometry lives in Path2D objects built once; a palette change only
+   restyles them.
+   ========================================================================= */
+(function(){
+"use strict";
+
+// y-down compass, index = direction: E, SE, S, SW, W, NW, N, NE
+const DX=[1,1,0,-1,-1,-1,0,1], DY=[0,1,1,1,0,-1,-1,-1];
+const RS=Math.SQRT1_2;
+const perpX=d=>-DY[d]*((d&1)?RS:1);
+const perpY=d=> DX[d]*((d&1)?RS:1);
+
+/* Copper alpha rises with the local board density from nothing at the rim,
+   so a trace fades out rather than ending on a line. `b` lifts the
+   processor's own buses, so they read as the spine of the board. Drawn in
+   NLV log-spaced levels, one path each: a trace is cut into short runs, each
+   at the level of its own density. */
+const NLV=18, A_LO=0.008, A_HI=0.36, LVK=Math.log(A_HI/A_LO)/(NLV-1);
+const LVA=Array.from({length:NLV},(_,i)=>A_LO*Math.exp(LVK*i));
+const cuA=(w,b)=>(0.26+0.09*Math.min(b,1))*Math.pow(clamp(w*(1+0.5*b),0,1),0.85);
+const lvOf=a=> a<A_LO*0.7 ? -1 : clamp(Math.round(Math.log(a/A_LO)/LVK),0,NLV-1);
+// small chips, passives and legends fade in four steps
+const PB=[0.25,0.5,0.75,1];
+const pfOf=w=>clamp(cuA(w,0.6)/0.3,0,1);
+const pbOf=w=>{ const f=pfOf(w); return f<0.12 ? -1 : clamp(Math.round(f*4)-1,0,3); };
+// comet tail, oldest step first: a long quadratic fade reads as the copper
+// still warm behind the packet rather than a dash sliding along
+const TAIL_A=[0.025,0.05,0.085,0.13,0.19,0.27,0.37,0.5,0.66,0.85];
+// comet strength classes, picked each frame from the copper under the head
+const CF=[0.16,0.3,0.5,0.75,1];
+const cfOf=f=> f<0.1?-1 : f<0.22?0 : f<0.4?1 : f<0.62?2 : f<0.87?3 : 4;
+const FLARE_LIFE=0.6;
+
+const ST={ frames:0, eSlow:0, burstAt:-9, kick:0, core:0.3,
+           gen:-1, sty:null, spr:null, glow:null, sprCtx:null, kw:-1, k:1, font:"", head:0.9,
+           L:null, dirty:true, rects:[], pend:null, rt:-9 };
+
+function rng(seed){
+  let a=(seed>>>0)||1;
+  return ()=>{ a=(a+0x6D2B79F5)>>>0; let t=a;
+    t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61);
+    return ((t^(t>>>14))>>>0)/4294967296; };
+}
+const ss=(a,b,x)=>{ const t=clamp((x-a)/(b-a),0,1); return t*t*(3-2*t); };
+
+/* ---------------- the panels ----------------
+   Every panel's box, padded by 1.5rem at its screen's zoom, in viewport px.
+   Reading a box forces a layout, so this runs once a second and when the
+   board is laid out, never per frame. */
+function readRects(){
+  const out=[], S=(LAY.screens && LAY.screens.length) ? LAY.screens : [{el:document, zoom:1}];
+  let rem=16;
+  try{ rem=parseFloat(getComputedStyle(document.documentElement).fontSize)||16; }catch(e){}
+  for(const s of S){
+    if(!s.el) continue;
+    const pad=1.5*rem*(s.zoom||1);
+    s.el.querySelectorAll(".win, #os-label").forEach(el=>{
+      const r=el.getBoundingClientRect();
+      if(r.width>1 && r.height>1) out.push({x0:r.left-pad, y0:r.top-pad, x1:r.right+pad, y1:r.bottom+pad});
+    });
+  }
+  return out;
+}
+function sameRects(A,B){
+  if(!A || !B || A.length!==B.length) return false;
+  for(let i=0;i<A.length;i++){
+    const a=A[i], b=B[i];
+    if(Math.abs(a.x0-b.x0)>6 || Math.abs(a.y0-b.y0)>6 || Math.abs(a.x1-b.x1)>6 || Math.abs(a.y1-b.y1)>6) return false;
+  }
+  return true;
+}
+/* A panel that moved or grew lays the board out again, but only once the
+   boxes have held still for a second, so a drag in edit mode does not
+   rebuild it every second. The first boxes to appear count at once. */
+function checkRects(t){
+  ST.rt=t;
+  const R=readRects();
+  if(sameRects(R,ST.rects)){ ST.pend=null; return; }
+  if(!ST.rects.length || sameRects(R,ST.pend)) ST.dirty=true;
+  else ST.pend=R;
+}
+
+/* ---------------- generation ---------------- */
+
+// the processor's falloff: 1 around it, 0 at the rim of an ellipse
+function ell(G,x,y){
+  const dx=(x-G.fx)/G.rx, dy=(y-G.fy)/(y<G.fy?G.ryU:G.ryD);
+  return 1-ss(G.e0,1,Math.sqrt(dx*dx+dy*dy));
+}
+// On a span: a corridor along the processor's row that carries its east and
+// west buses across the seams, fading out toward the far edge of the desktop.
+function cor(G,x,y){
+  const c = x<G.fx ? G.cxL : G.cxR;
+  if(!c) return 0;
+  const u=Math.abs(x-G.fx)/c, v=Math.abs(y-G.fy)/G.cy;
+  return (1-ss(0.5,1,u))*(1-ss(0.3,1,v));
+}
+function regionAt(G,x,y){
+  const R=G.R;
+  for(let i=0;i<R.length;i++){ const r=R[i]; if(x>=r.x0 && x<=r.x1 && y>=r.y0 && y<=r.y1) return r; }
+  return null;
+}
+// 0..1: what the rest leaves of the board here. Zero off the band, feathered
+// at the band's top and the desktop's outer edges, zero over every panel.
+function mask(G,x,y){
+  const r=regionAt(G,x,y); if(!r) return 0;
+  let w=ss(r.y0,r.y0+r.tf,y)*ss(G.ux0,G.ux0+G.m,x)*ss(G.ux1,G.ux1-G.m,x);
+  if(w<=0) return 0;
+  const P=G.rects;
+  for(let i=0;i<P.length;i++){
+    const R=P[i], ox=Math.max(R.x0-x,x-R.x1,0), oy=Math.max(R.y0-y,y-R.y1,0);
+    if(ox<G.fade && oy<G.fade){ w*=ss(0,G.fade,Math.sqrt(ox*ox+oy*oy)); if(w<=0) return 0; }
+  }
+  return w;
+}
+function dens(G,x,y){
+  const m=mask(G,x,y);
+  return m>0 ? m*Math.max(ell(G,x,y), G.cmax*cor(G,x,y)) : 0;
+}
+// the filler follows the processor's falloff only, never the span corridor
+function densFill(G,x,y){ const m=mask(G,x,y); return m>0 ? m*ell(G,x,y) : 0; }
+// filler thins by 40% past 1.5 chip widths from the processor's edge
+function cut(G,x,y){
+  const e=Math.max(Math.abs(x-G.fx),Math.abs(y-G.fy))-G.H;
+  return 1-0.4*ss(0.8,1.2,e/(3*G.H));
+}
+const inside=(G,x,y)=> regionAt(G,x,y)!==null;
+function cellAt(G,x,y){
+  const i=Math.round((x-G.fx)/G.p)-G.i0, j=Math.round((y-G.fy)/G.p)-G.j0;
+  return (i<0||j<0||i>=G.cols||j>=G.rows) ? -1 : j*G.cols+i;
+}
+// A 3x3 neighborhood check keeps different buses at least one empty lane apart.
+function blocked(G,x,y,id,par){
+  const i=Math.round((x-G.fx)/G.p)-G.i0, j=Math.round((y-G.fy)/G.p)-G.j0;
+  for(let b=j-1;b<=j+1;b++){ if(b<0||b>=G.rows) continue;
+    for(let a=i-1;a<=i+1;a++){ if(a<0||a>=G.cols) continue;
+      const v=G.occ[b*G.cols+a]; if(v!==0 && v!==id && v!==par) return true; } }
+  return false;
+}
+function markSeg(G,ax,ay,bx,by,id){
+  const n=Math.max(1,Math.ceil(Math.hypot(bx-ax,by-ay)/(G.p*0.5)));
+  for(let t=0;t<=n;t++){
+    const c=cellAt(G,ax+(bx-ax)*t/n, ay+(by-ay)*t/n);
+    if(c>=0 && G.occ[c]===0) G.occ[c]=id;
+  }
+}
+// lattice rects, in node units relative to the processor
+function markNodes(G,i0,j0,i1,j1,id){
+  for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
+    const a=i-G.i0, b=j-G.j0;
+    if(a>=0 && b>=0 && a<G.cols && b<G.rows) G.occ[b*G.cols+a]=id;
+  }
+}
+function nodesFree(G,i0,j0,i1,j1){
+  for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
+    const a=i-G.i0, b=j-G.j0;
+    if(a<0 || b<0 || a>=G.cols || b>=G.rows || G.occ[b*G.cols+a]!==0) return false;
+    if(!inside(G,G.fx+i*G.p,G.fy+j*G.p)) return false;
+  }
+  return true;
+}
+function stepFree(G,x,y,c,k,id,par,from){
+  const p=G.p, nx=perpX(c)*p, ny=perpY(c)*p, sx=DX[c]*p, sy=DY[c]*p;
+  for(let m=0;m<k;m++){
+    const o=m-(k-1)/2, bx=x+nx*o, by=y+ny*o;
+    for(let t=from;t<=3;t++) if(blocked(G,bx+sx*t/3,by+sy*t/3,id,par)) return false;
+  }
+  return true;
+}
+
+/* Walk a bus centerline across the lattice. A fanout bus takes a stub, a
+   45-degree diagonal and turns back outward; any bus may drift by 45 degrees
+   later, but never more than 90 off its first heading, so it cannot loop.
+   A bus with a `home` row (the span corridor) only jogs: a short diagonal,
+   toward home when it has strayed, then straight on again. */
+function route(G,sx,sy,d0,k,o){
+  const p=G.p, V=[sx,sy], D=[];
+  let x=sx,y=sy,d=d0,seg=0,steps=0,turn=0,phase=o.bend?0:2,end="via";
+  const minSeg=Math.max(2,Math.ceil(k*0.5)+1), jog=o.home!==undefined;
+  if(!o.par && !stepFree(G,x,y,d,k,o.id,0,0)) return null;
+  while(steps<o.max){
+    let want=d;
+    if(phase===0 && seg>=o.stub){ want=(d+o.bend+8)&7; phase=1; }
+    else if(phase===1 && seg>=o.diag){ want=(d-o.bend+8)&7; phase=2; }
+    else if(phase===2 && jog && d!==d0 && seg>=minSeg+1) want=d0;
+    else if(phase===2 && seg>=minSeg && steps>=o.calm && G.rnd()<o.turn){
+      const c=(d+1)&7;
+      if(jog && Math.abs(y-o.home)>3*p) want=((DY[c]>0)===(y<o.home)) ? c : (d+7)&7;
+      else want=G.rnd()<0.5 ? c : (d+7)&7;
+    }
+    let nd=-1;
+    const tries = want!==d ? [want,d] : (seg>=minSeg ? [d,(d+1)&7,(d+7)&7] : [d]);
+    for(let q=0;q<tries.length;q++){
+      const c=tries[q], dt=((c-d+12)%8)-4;
+      if(c!==d && (seg<1 || Math.abs(turn+dt)>2)) continue;
+      if(stepFree(G,x,y,c,k,o.id,o.par,1)){ nd=c; break; }
+    }
+    if(nd<0) break;
+    const nx=x+DX[nd]*p, ny=y+DY[nd]*p;
+    if(!inside(G,nx,ny)){
+      const r=regionAt(G,x,y);
+      if(o.run && r && ny>r.y1 && nd===d){ x=nx; y=ny+p; steps++; end="run"; }
+      break;
+    }
+    if(dens(G,nx,ny)<o.thr){ end="fade"; break; }
+    if(nd!==d){ V.push(x,y); D.push(d); turn+=((nd-d+12)%8)-4; d=nd; seg=0; }
+    x=nx; y=ny; seg++; steps++;
+  }
+  if(steps<1) return null;
+  V.push(x,y); D.push(d);
+  return {V,D,end,k,steps,id:o.id,d};
+}
+
+// Offset every trace of a bus from its centerline, mitered at the bends so
+// the bundle keeps its pitch through a 45-degree turn.
+function busTraces(B,p){
+  const V=B.V, D=B.D, nv=V.length/2, out=[];
+  for(let m=0;m<B.k;m++){
+    const off=(m-(B.k-1)/2)*p, pts=new Float32Array(nv*2);
+    for(let j=0;j<nv;j++){
+      let px,py;
+      if(j===0){ px=perpX(D[0]); py=perpY(D[0]); }
+      else if(j===nv-1){ px=perpX(D[D.length-1]); py=perpY(D[D.length-1]); }
+      else{
+        const ax=perpX(D[j-1]), ay=perpY(D[j-1]), bx=perpX(D[j]), by=perpY(D[j]);
+        const q=1+ax*bx+ay*by; px=(ax+bx)/q; py=(ay+by)/q;
+      }
+      pts[2*j]=V[2*j]+px*off; pts[2*j+1]=V[2*j+1]+py*off;
+    }
+    out.push(pts);
+  }
+  return out;
+}
+function cumOf(pts){
+  const n=pts.length/2, c=new Float32Array(n);
+  for(let i=1;i<n;i++) c[i]=c[i-1]+Math.hypot(pts[2*i]-pts[2*i-2], pts[2*i+1]-pts[2*i-1]);
+  return c;
+}
+function trimEnd(pts,e){
+  if(e<=0) return pts;
+  const c=cumOf(pts), n=c.length, L=c[n-1]-e;
+  if(L<=0) return pts;
+  let i=0; while(i<n-2 && c[i+1]<L) i++;
+  const t=(L-c[i])/((c[i+1]-c[i])||1), out=new Float32Array((i+2)*2);
+  out.set(pts.subarray(0,(i+1)*2));
+  out[2*i+2]=pts[2*i]+(pts[2*i+2]-pts[2*i])*t;
+  out[2*i+3]=pts[2*i+1]+(pts[2*i+3]-pts[2*i+1])*t;
+  return out;
+}
+function pointAt(tr,a,out){
+  const P=tr.pts, C=tr.cum, n=C.length;
+  let i=0; while(i<n-2 && C[i+1]<a) i++;
+  const t=clamp((a-C[i])/((C[i+1]-C[i])||1),0,1);
+  out[0]=P[2*i]+(P[2*i+2]-P[2*i])*t; out[1]=P[2*i+1]+(P[2*i+3]-P[2*i+1])*t;
+}
+const PT=[0,0];
+// how bright a comet may be at arc a: its copper's alpha against a bright trace's
+const fadeAt=(tr,a)=>tr.fa[clamp(Math.round(a/tr.fs),0,tr.fa.length-1)];
+
+function addVia(G,x,y,r){
+  G.sg.vias.push(x,y,r,dens(G,x,y));
+  const c=cellAt(G,x,y); if(c>=0 && G.occ[c]===0) G.occ[c]=-1;
+}
+function addTrace(G,pts,o){
+  const cum=cumOf(pts), len=cum[cum.length-1];
+  if(len<G.p*0.8) return null;
+  for(let i=1;i<pts.length/2;i++) markSeg(G,pts[2*i-2],pts[2*i-1],pts[2*i],pts[2*i+1],o.id);
+  const n=pts.length/2, boost=o.boost||0;
+  const tr={ pts, cum, len, boost, chip:!!o.chip, bus:o.bus||null, sg:G.sg, nodes:[] };
+  // the comet fade, sampled every two cells; vis0 is how far the trace stays
+  // bright from its start, eff its length weighted by that brightness
+  const fs=G.p*2, nf=Math.max(2,Math.ceil(len/fs)+1), fa=new Float32Array(nf);
+  let eff=0, vis0=-1;
+  for(let i=0;i<nf;i++){
+    pointAt(tr,Math.min(len,i*fs),PT);
+    fa[i]=Math.min(1,cuA(dens(G,PT[0],PT[1]),boost)/0.2);
+    eff+=fa[i]; if(vis0<0 && fa[i]<0.5) vis0=i*fs;
+  }
+  tr.fa=fa; tr.fs=fs; tr.eff=eff/nf*len; tr.vis0=vis0<0 ? len : vis0;
+  if(o.n0) tr.nodes.push(0, pts[0], pts[1], o.n0*fa[0]);
+  if(o.n1) tr.nodes.push(len, pts[2*n-2], pts[2*n-1], o.n1*fa[nf-1]);
+  let wsum=0;
+  for(let i=0;i<n;i++) wsum+=dens(G,pts[2*i],pts[2*i+1]);
+  tr.w=wsum/n;
+  G.sg.traces.push(tr);
+  return tr;
+}
+
+/* Turn a routed bus into traces. `end` decides the far end: staggered vias,
+   a small chip, or nothing when the bus runs off the bottom of the monitor. */
+function finishBus(G,B,o){
+  const p=G.p, rv=p*0.3;
+  let pts=busTraces(B,p);
+  let ic=null;
+  if((B.end==="fade" || B.end==="via") && o.ic && B.k>=2 && !(B.d&1) && G.rnd()<o.ic) ic=tryIC(G,B);
+  const stag=(!ic && B.end!=="run") ? (G.rnd()<0.5?1:-1) : 0;
+  const group=[];
+  for(let m=0;m<B.k;m++){
+    let q=pts[m];
+    if(stag) q=trimEnd(q, (stag>0? m : B.k-1-m)*p*0.7);
+    const n=q.length/2, ex=q[2*n-2], ey=q[2*n-1];
+    const tr=addTrace(G,q,{id:B.id, boost:o.boost, chip:o.chip, n0:o.n0||(o.startVia?1:0),
+                            n1: B.end==="run" ? 0 : (ic? 0.9 : 1)});
+    if(!tr) continue;
+    tr.bus=group; group.push(tr);
+    if(o.startVia) addVia(G,q[0],q[1],rv);
+    if(B.end!=="run" && !ic){
+      if(o.pads && G.rnd()<o.pads) G.sg.pads.push(ex-p*0.3,ey-p*0.3,p*0.6,p*0.6,dens(G,ex,ey));
+      else addVia(G,ex,ey,rv);
+    }
+  }
+  if(ic) icBack(G,ic,o);
+  return group;
+}
+
+/* A small chip where a straight bus ends, its front pins taking the bus.
+   Some pass the bus on out of the back; the rest leave the back pins bare. */
+function tryIC(G,B){
+  const p=G.p, k=B.k, d=B.D[B.D.length-1], nv=B.V.length/2;
+  const ex=B.V[2*nv-2], ey=B.V[2*nv-1];
+  const depth=clamp(Math.round(k*0.6)+1,2,4), half=(k+1)/2;
+  const ax=DX[d], ay=DY[d], cx=perpX(d), cy=perpY(d);
+  const span=Math.ceil(half)+1;
+  for(let u=1;u<=depth+3;u++) for(let v=-span;v<=span;v++){
+    const x=ex+(ax*u+cx*v)*p, y=ey+(ay*u+cy*v)*p;
+    if(!inside(G,x,y) || dens(G,x,y)<0.1) return null;
+    const c=cellAt(G,x,y); if(c<0 || (G.occ[c]!==0 && G.occ[c]!==B.id)) return null;
+  }
+  const id=++G.id;
+  for(let u=1;u<=depth+2;u++) for(let v=-span+1;v<=span-1;v++){
+    const c=cellAt(G,ex+(ax*u+cx*v)*p, ey+(ay*u+cy*v)*p); if(c>=0) G.occ[c]=id;
+  }
+  // body corners along/across, in px from the bus end
+  const a0=0.75*p, a1=(depth+1.25)*p, h=half*p;
+  const P=(a,c)=>[ex+ax*a+cx*c, ey+ay*a+cy*c];
+  const ic={ d, k, id, ex, ey, depth, body:[P(a0,-h),P(a1,-h),P(a1,h),P(a0,h)], pins:[], w:dens(G,ex,ey) };
+  for(let m=0;m<k;m++){
+    const off=(m-(k-1)/2)*p;
+    ic.pins.push(P(0.4*p,off), P((depth+1.6)*p,off));
+  }
+  ic.notch=P(a0,0);
+  ic.label=P((a0+a1)/2, h+0.85*p);
+  ic.n=++G.sg.nIC+1;
+  G.sg.ics.push(ic);
+  return ic;
+}
+function icBack(G,ic,o){
+  const p=G.p, d=ic.d, k=ic.k;
+  const bx=ic.ex+DX[d]*(ic.depth+2)*p, by=ic.ey+DY[d]*(ic.depth+2)*p;
+  if(!(dens(G,bx,by)>0.12 && G.rnd()<0.6)) return;
+  // on the span corridor the bus runs on out toward the far edge
+  const far = d===0 ? G.cxR : d===4 ? G.cxL : 0;
+  const B=route(G,bx,by,d,k,{id:++G.id, par:ic.id, bend:0, max:far?Math.ceil(far/p):40,
+                             thr:0.03+G.rnd()*0.06, turn:far?0.02:0.12, calm:2, run:true,
+                             home:far?G.fy:undefined});
+  if(B && B.steps>=4) finishBus(G,B,{boost:o.boost*0.5, n0:0.8, ic:0.25, pads:0.2});
+}
+
+/* The processor: a package on the lattice with pin groups on every side.
+   Each group leaves as a bus; the few pins between groups escape through a
+   short "dog-bone" stub to a via, the way a real fanout does. */
+function addChip(G,ci,cj,main){
+  const p=G.p, h=main?9:6, cx=G.fx+ci*p, cy=G.fy+cj*p, id=++G.id;
+  if(!nodesFree(G,ci-h-2,cj-h-2,ci+h+2,cj+h+2)) return false;
+  markNodes(G,ci-h-1,cj-h-1,ci+h+1,cj+h+1,id);
+  const groups = main ? [[-2,2],[-7,-4],[4,7]] : [[-4,-2],[2,4]];
+  const bones  = main ? [-8,-3,3,8] : [-5,0,5];
+  const chip={ x:cx, y:cy, H:(h+0.5)*p, pins:[], main, id };
+  G.H=chip.H;
+  G.sg.chips.push(chip);
+  const busList=[];
+  for(const g of groups) for(let side=0;side<4;side++) busList.push([side,g]);
+  for(const [side,g] of busList){
+    const out=side*2, ax=-DY[out], ay=DX[out];            // along the side
+    const k=g[1]-g[0]+1, c=(g[0]+g[1])/2;
+    const sx=cx+DX[out]*(h+1)*p+ax*c*p, sy=cy+DY[out]*(h+1)*p+ay*c*p;
+    const bend = c===0 ? 0 : (c>0?1:-1);
+    const far = out===0 ? G.cxR : out===4 ? G.cxL : 0;
+    const B=route(G,sx,sy,out,k,{ id:++G.id, par:id, bend, stub:1+(G.rnd()*2|0),
+      diag:2+(G.rnd()*(main?6:4)|0), max:far ? Math.ceil(far/p)+20 : (main?140:70),
+      thr:0.025+G.rnd()*0.07, turn:far?0.02:0.07, calm:bend?0:10, run:true,
+      home:far?G.fy:undefined });
+    if(!B) continue;
+    finishBus(G,B,{boost:main?0.9:0.6, chip:true, n0:0.7, ic:main?0.55:0.35, pads:0.1});
+  }
+  for(let side=0;side<4;side++) for(const b of bones){
+    const out=side*2, ax=-DY[out], ay=DX[out];
+    const x=cx+DX[out]*(h+1)*p+ax*b*p, y=cy+DY[out]*(h+1)*p+ay*b*p;
+    const tw = b===0 ? out : (b>0 ? (out+1)&7 : (out+7)&7);
+    const x1=x+DX[out]*p, y1=y+DY[out]*p, x2=x1+DX[tw]*p*(b===0?1.5:1), y2=y1+DY[tw]*p*(b===0?1.5:1);
+    const bid=++G.id;
+    if(blocked(G,x2,y2,bid,id)) continue;
+    const tr=addTrace(G,new Float32Array([x,y,x1,y1,x2,y2]),{id:bid, boost:0.6, chip:true, n0:0.7, n1:1});
+    if(tr) addVia(G,x2,y2,p*0.3);
+  }
+  // pin pads for every group and bone
+  const all=[]; for(const g of groups) for(let i=g[0];i<=g[1];i++) all.push(i);
+  for(const b of bones) all.push(b);
+  for(let side=0;side<4;side++){
+    const out=side*2, ax=-DY[out], ay=DX[out];
+    for(const i of all){
+      const px=cx+DX[out]*(chip.H+0.2*p)+ax*i*p, py=cy+DY[out]*(chip.H+0.2*p)+ay*i*p;
+      const lw=0.42*p, ll=0.8*p;
+      if(DX[out]) chip.pins.push(px-ll/2,py-lw/2,ll,lw); else chip.pins.push(px-lw/2,py-ll/2,lw,ll);
+    }
+  }
+  return true;
+}
+
+// A two-pad passive (a decoupling cap or a resistor) with its silkscreen box.
+function addPassive(G,i,j,horiz,label){
+  const i1=horiz?i+1:i, j1=horiz?j:j+1;
+  if(!nodesFree(G,i-1,j-1,i1+1,j1+1)) return false;
+  const id=++G.id; markNodes(G,i-1,j-1,i1+1,j1+1,id);
+  const p=G.p, x0=G.fx+i*p, y0=G.fy+j*p, x1=G.fx+i1*p, y1=G.fy+j1*p, w=dens(G,(x0+x1)/2,(y0+y1)/2);
+  const pw=horiz?0.55*p:0.8*p, ph=horiz?0.8*p:0.55*p;
+  G.sg.pads.push(x0-pw/2,y0-ph/2,pw,ph,w, x1-pw/2,y1-ph/2,pw,ph,w);
+  const m=0.55*p, n=0.6*p;
+  G.sg.boxes.push(horiz ? [x0-m,y0-n,x1-x0+2*m,2*n,w] : [x0-n,y0-m,2*n,y1-y0+2*m,w]);
+  if(label && G.sg.text.length<14)
+    G.sg.text.push(horiz ? [label,(x0+x1)/2,y0-n-0.55*p,w] : [label,x1+n+0.3*p,(y0+y1)/2,w,"left"]);
+  return true;
+}
+// is there copper two nodes out from (i,j)? A passive placed there sits beside it
+function nearCopper(G,i,j){
+  for(let b=j-2;b<=j+2;b++) for(let a=i-2;a<=i+2;a++){
+    if(Math.max(Math.abs(a-i),Math.abs(b-j))!==2) continue;
+    const u=a-G.i0, v=b-G.j0;
+    if(u>=0 && v>=0 && u<G.cols && v<G.rows && G.occ[v*G.cols+u]>0) return true;
+  }
+  return false;
+}
+
+/* Where the board can go: for every monitor, the part of it that a band
+   canvas covers (the band with the most overlap). The primary gets the
+   processor; the others only what its buses carry out to them. */
+function regions(){
+  if(typeof TERS==="undefined" || !TERS.length) return null;
+  const B=TERS.map(T=>({x0:T.x, y0:T.y, x1:T.x+T.w, y1:T.y+T.h}));
+  let S=(LAY.screens||[]).filter(s=>s.w>0 && s.h>0), pi=LAY.primary|0;
+  if(!S.length){
+    const T=TERS[0], lh=T.h/SCENES.circuit.band;
+    S=[{x:T.x, y:T.y+T.h-lh, w:T.w, h:lh}]; pi=0;
+  }
+  const R=[]; let prim=null;
+  S.forEach((s,i)=>{
+    let best=null, ba=0;
+    for(const b of B){
+      const x0=Math.max(b.x0,s.x), x1=Math.min(b.x1,s.x+s.w), y0=Math.max(b.y0,s.y), y1=Math.min(b.y1,s.y+s.h);
+      if(x1>x0 && y1>y0 && (x1-x0)*(y1-y0)>ba){ ba=(x1-x0)*(y1-y0); best={x0,x1,y0,y1,s}; }
+    }
+    if(!best || best.x1-best.x0<240 || best.y1-best.y0<160) return;
+    best.tf=(best.y1-best.y0)*0.18;
+    R.push(best); if(i===pi) prim=best;
+  });
+  if(!R.length) return null;
+  if(!prim) prim=R.reduce((a,b)=>(b.x1-b.x0)*(b.y1-b.y0)>(a.x1-a.x0)*(a.y1-a.y0) ? b : a);
+  return {R, prim, pi};
+}
+
+function genBoard(L,geo){
+  const {R,prim}=geo, s=prim.s;
+  const rem=clamp(0.013*Math.min(s.w,s.h),9,30), remU=rem*clamp(+CFG.uiScale||1,0.5,2);
+  const p=Math.max(6,Math.round(rem*0.58));
+  const sg={ p, lw:p>=22?1.5:1, traces:[], vias:[], pads:[], chips:[], ics:[], boxes:[], text:[], nIC:1, paths:null };
+  const ux0=Math.min(...R.map(r=>r.x0)), ux1=Math.max(...R.map(r=>r.x1));
+  const uy0=Math.min(...R.map(r=>r.y0)), uy1=Math.max(...R.map(r=>r.y1));
+  const seed=(Math.round(s.w)*73856093) ^ (Math.round(s.h)*19349663) ^ (geo.pi*83492791) ^ Math.round(ux1-ux0);
+  const G={ L, sg, p, rnd:rng(seed), id:0, R, prim, ux0, ux1, uy0, uy1, rects:ST.rects,
+            fade:3.5*remU, m:p*2, e0:0.3, cmax:0.4, nc:1, H:p*9.5 };
+  G.fx=Math.round(s.x+s.w/2)+0.5;
+  G.fy=Math.round(clamp(s.y+s.h*0.6, prim.y0+(prim.y1-prim.y0)*0.38, prim.y1-(prim.y1-prim.y0)*0.22))+0.5;
+  // The ellipse reaches its rim near the inside edge of the corner stacks
+  // (the layout engine's own rules: 25rem columns, the 2:1 ultrawide guard)
+  // and at the top of the band, so the panels only ever trim its faint rim.
+  const edge=Math.max(0.022,(1-2*s.h/s.w)/2)*s.w;
+  const colW=Math.min(25*remU,(s.w/s.h<1.3?0.46:0.34)*s.w);
+  G.rx=clamp(s.w/2-edge-0.8*colW, 0.4*Math.min(s.w,s.h), 0.5*s.w);
+  G.ryU=Math.max(p*8, G.fy-prim.y0);
+  G.ryD=0.5*Math.min(s.h,1.2*s.w);
+  // a monitor beside the primary opens the corridor on that side
+  G.cxL=R.some(r=>r!==prim && r.x1<=prim.x0+1) ? G.fx-ux0 : 0;
+  G.cxR=R.some(r=>r!==prim && r.x0>=prim.x1-1) ? ux1-G.fx : 0;
+  G.cy=0.3*s.h;
+  G.i0=Math.floor((ux0-G.fx)/p)-1; G.j0=Math.floor((uy0-G.fy)/p)-1;
+  G.cols=Math.ceil((ux1-G.fx)/p)+2-G.i0; G.rows=Math.ceil((uy1-G.fy)/p)+2-G.j0;
+  G.occ=new Int32Array(G.cols*G.rows);
+
+  if(!addChip(G,0,0,true)) addChip(G,0,0,false);
+  const h=9;
+  // decoupling caps hug the processor's corners
+  for(const [sx,sy] of [[1,1],[-1,1],[1,-1],[-1,-1]]){
+    if(addPassive(G, sx>0?h+3:-h-4, sy*(h+3), true, "C"+G.nc)) G.nc++;
+    if(addPassive(G, sx*(h+3), sy>0?h+5:-h-6, false, null)) G.nc++;
+  }
+  /* Fill, on the primary only: passives, a few stitching via fields close
+     to the processor, and short buses. A filler bus must run at least four
+     cells on every lane, or it is a stub that routes nowhere. */
+  const pi0=Math.floor((prim.x0-G.fx)/p), pj0=Math.floor((prim.y0-G.fy)/p);
+  const pc=Math.ceil((prim.x1-G.fx)/p)-pi0+1, pr=Math.ceil((prim.y1-G.fy)/p)-pj0+1, Rn=G.rnd;
+  for(let a=0;a<pc*pr*0.5;a++){
+    const i=pi0+(Rn()*pc|0), j=pj0+(Rn()*pr|0), x=G.fx+i*p, y=G.fy+j*p;
+    const w=densFill(G,x,y), c=cut(G,x,y);
+    if(Rn()>w*w*1.15*c) continue;
+    const roll=Rn();
+    if(roll<0.035){ addPassive(G,i,j,Rn()<0.6, Rn()<0.3?(Rn()<0.5?"R":"C")+(G.nc++):null); continue; }
+    if(roll<0.05){
+      if(c<0.99) continue;
+      const aw=2+(Rn()*2|0), ah=2+(Rn()*3|0);
+      if(!nodesFree(G,i-1,j-1,i+aw,j+ah)) continue;
+      markNodes(G,i-1,j-1,i+aw,j+ah,-1);
+      for(let v=0;v<ah;v++) for(let u=0;u<aw;u++) G.sg.vias.push(x+u*p,y+v*p,p*0.24,w);
+      continue;
+    }
+    const d=Rn()<0.7 ? (Rn()*4|0)*2 : (Rn()*4|0)*2+1;
+    const kr=Rn(), k=kr<0.45?1:kr<0.75?2:kr<0.92?3:4;
+    const B=route(G,x,y,d,k,{ id:++G.id, par:0, bend:0, max:4+(Rn()*(8+16*w)|0), thr:0.03,
+                              turn:0.2, calm:0, run:true });
+    if(!B || B.steps<4+Math.ceil((k-1)*0.7)) continue;
+    finishBus(G,B,{boost:0, startVia:true, ic:0.08, pads:0.22});
+  }
+  // a few passives on each side monitor, each set beside the copper there
+  for(const r of R){
+    if(r===prim) continue;
+    let n=3+(Rn()*2|0);
+    for(let a=0;a<600 && n>0;a++){
+      const i=Math.round((r.x0+Rn()*(r.x1-r.x0)-G.fx)/p), j=Math.round((r.y0+Rn()*(r.y1-r.y0)-G.fy)/p);
+      if(dens(G,G.fx+i*p,G.fy+j*p)<0.15 || !nearCopper(G,i,j)) continue;
+      if(addPassive(G,i,j,Rn()<0.7, Rn()<0.5?(Rn()<0.5?"R":"C")+(G.nc++):null)) n--;
+    }
+  }
+  buildPaths(sg,G);
+  L.sgs.push(sg);
+}
+
+function buildPaths(sg,G){
+  const mk=n=>Array.from({length:n},()=>new Path2D());
+  const P={ tr:mk(NLV), via:mk(NLV), pad:mk(NLV), silk:mk(4), icBody:mk(4), icPins:mk(4),
+            body:new Path2D(), pins:new Path2D(), csilk:new Path2D(), inner:new Path2D(),
+            die:new Path2D(), dieGrid:new Path2D() };
+  const run=sg.p*3;
+  for(const tr of sg.traces){
+    const q=tr.pts, n=q.length/2, b=tr.boost;
+    // a run's level comes from the density a little ahead of where it starts
+    const lvAt=(x,y,i)=>{ const j=Math.min(i,n-1); return lvOf(cuA(dens(G,(x+q[2*j])/2,(y+q[2*j+1])/2),b)); };
+    let px=q[0], py=q[1], acc=0, lv=lvAt(px,py,1), cur=lv<0?null:P.tr[lv];
+    if(cur) cur.moveTo(px,py);
+    for(let i=1;i<n;i++){
+      const x=q[2*i], y=q[2*i+1], L=Math.hypot(x-px,y-py);
+      let t0=0;
+      while(L>0 && acc+L*(1-t0)>run){
+        const t=t0+(run-acc)/L, mx=px+(x-px)*t, my=py+(y-py)*t;
+        if(cur) cur.lineTo(mx,my);
+        lv=lvAt(mx,my,i); cur=lv<0?null:P.tr[lv];
+        if(cur) cur.moveTo(mx,my);
+        acc=0; t0=t;
+      }
+      acc+=L*(1-t0);
+      if(cur) cur.lineTo(x,y);
+      px=x; py=y;
+    }
+  }
+  const V=sg.vias;
+  for(let i=0;i<V.length;i+=4){
+    const lv=lvOf(cuA(V[i+3],0.7)); if(lv<0) continue;
+    const x=V[i], y=V[i+1], r=V[i+2], path=P.via[lv];
+    path.moveTo(x+r,y); path.arc(x,y,r,0,Math.PI*2);
+    path.moveTo(x+r*0.45,y); path.arc(x,y,r*0.45,0,Math.PI*2,true);   // the drill hole
+  }
+  const D=sg.pads;
+  for(let i=0;i<D.length;i+=5){ const lv=lvOf(cuA(D[i+4],0.8)); if(lv>=0) P.pad[lv].rect(D[i],D[i+1],D[i+2],D[i+3]); }
+  for(const b of sg.boxes){ const k=pbOf(b[4]); if(k>=0) P.silk[k].rect(b[0],b[1],b[2],b[3]); }
+  const p=sg.p;
+  for(const c of sg.chips){
+    const H=c.H, x=c.x, y=c.y, ch=1.4*p;
+    P.body.moveTo(x-H+ch,y-H); P.body.lineTo(x+H,y-H); P.body.lineTo(x+H,y+H);
+    P.body.lineTo(x-H,y+H); P.body.lineTo(x-H,y-H+ch); P.body.closePath();
+    const I=H-0.6*p; P.inner.rect(x-I,y-I,2*I,2*I);
+    // a coarse die: its cells must stay a readable size at 4K
+    const Dh=H*0.42; P.die.rect(x-Dh,y-Dh,2*Dh,2*Dh);
+    const n=c.main?6:5, cell=2*Dh/n, g=cell*0.2;
+    for(let a=0;a<n;a++) for(let b=0;b<n;b++) P.dieGrid.rect(x-Dh+a*cell+g,y-Dh+b*cell+g,cell-2*g,cell-2*g);
+    c.die={ x0:x-Dh+g, y0:y-Dh+g, cell, sz:cell-2*g, n, v:new Float32Array(n*n), dh:Dh };
+    const pr=0.28*p; P.csilk.moveTo(x-H+ch+0.5*p+pr,y-H+ch+0.5*p); P.csilk.arc(x-H+ch+0.5*p,y-H+ch+0.5*p,pr,0,Math.PI*2);
+    const pn=c.pins; for(let i=0;i<pn.length;i+=4) P.pins.rect(pn[i],pn[i+1],pn[i+2],pn[i+3]);
+    sg.text.push([c.main?"U1":"U"+(sg.nIC+1), x-H, y-H-1.3*p, 1, "left"]);
+    c.lab=[c.main?"CYBERCORE":"IO-"+(sg.p|0), x, y+Dh+(H-Dh)*0.5];
+  }
+  for(const ic of sg.ics){
+    const k=pbOf(ic.w); if(k<0) continue;
+    const b=ic.body, B=P.icBody[k], N=P.icPins[k];
+    B.moveTo(b[0][0],b[0][1]); for(let i=1;i<4;i++) B.lineTo(b[i][0],b[i][1]); B.closePath();
+    const pw=0.4*p, pl=0.7*p, hor=!(ic.d%4===2);
+    for(const [x,y] of ic.pins){ if(hor) N.rect(x-pl/2,y-pw/2,pl,pw); else N.rect(x-pw/2,y-pl/2,pw,pl); }
+    const r=0.3*p, a=Math.atan2(DY[ic.d],DX[ic.d]);
+    P.silk[k].moveTo(ic.notch[0]+r*Math.cos(a-Math.PI/2),ic.notch[1]+r*Math.sin(a-Math.PI/2));
+    P.silk[k].arc(ic.notch[0],ic.notch[1],r,a-Math.PI/2,a+Math.PI/2);
+    sg.text.push(["U"+ic.n, ic.label[0], ic.label[1], ic.w]);
+  }
+  sg.paths=P;
+}
+
+function genLayout(){
+  const L={ sgs:[], pulses:[], flares:[], cdf:null, pick:[], rate:0, acc:0 };
+  const geo=regions();
+  if(geo) genBoard(L,geo);
+  // pulses favor the processor's buses and the copper that is actually lit
+  let acc=0; const w=[];
+  for(const sg of L.sgs) for(const tr of sg.traces){
+    if(tr.len<sg.p*4 || tr.eff<sg.p*3) continue;
+    acc+=tr.eff*(tr.chip?2.4:1)*(0.25+tr.w);
+    L.pick.push(tr); w.push(acc);
+    L.rate+=tr.eff/sg.p/300;
+  }
+  L.cdf=Float64Array.from(w);
+  return L;
+}
+// the board, laid out again whenever a band was resized or a panel moved
+function ensure(){
+  if(ST.L && !ST.dirty) return ST.L;
+  ST.dirty=false; ST.pend=null;
+  ST.rects=readRects();
+  const L=ST.L=genLayout();
+  // a few seconds of traffic up front, so a fresh board is never empty
+  for(let i=0;i<60;i++) stepLayout(L,0.05,0.6,false);
+  return L;
+}
+
+/* ---------------- light ---------------- */
+
+function pickTrace(L){
+  const n=L.pick.length; if(!n) return null;
+  const r=Math.random()*L.cdf[n-1];
+  let lo=0, hi=n-1;
+  while(lo<hi){ const m=(lo+hi)>>1; if(L.cdf[m]<r) lo=m+1; else hi=m; }
+  return L.pick[lo];
+}
+function flare(L,x,y,r,str){
+  if(L.flares.length>=90 || str<0.03) return;
+  L.flares.push({x,y,r,str,age:0});
+}
+function launch(L,tr,dir,delay,v,tail){
+  const p=tr.sg.p;
+  L.pulses.push({ tr, dir, s:-delay, v:v||p*(12+Math.random()*6), tail:tail||p*(9+Math.random()*6), c:-1, f:0 });
+}
+function spawn(L,burst){
+  let tr=pickTrace(L); if(!tr) return;
+  if(burst){ for(let i=0;i<6 && !(tr.chip && tr.bus && tr.bus.length>2);i++) tr=pickTrace(L); }
+  const dir = tr.chip ? (Math.random()<(burst?0.9:0.6)?1:-1) : (Math.random()<0.5?1:-1);
+  const p=tr.sg.p;
+  // a packet: every lane of the bus fires together, a little ragged
+  if(tr.bus && tr.bus.length>1 && (burst || Math.random()<(tr.chip?0.45:0.25))){
+    const v=p*(14+Math.random()*5), tail=p*(10+Math.random()*5);
+    for(const t of tr.bus) launch(L,t,dir,Math.random()*p*1.5,v,tail);
+  }else launch(L,tr,dir,0);
+}
+// head position in the trace's own direction (0 = its first point)
+const headA=(P)=>{ const s=Math.min(P.s,P.tr.len); return P.dir>0 ? s : P.tr.len-s; };
+
+function stepLayout(L,dt,rate,burst){
+  L.acc+=dt*L.rate*rate;
+  let n=0;
+  while(L.acc>=1 && n<6){ L.acc-=1; n++; if(L.pulses.length<160) spawn(L,false); }
+  if(L.acc>1) L.acc=1;
+  if(burst) for(let b=0;b<2 && L.pulses.length<160;b++) spawn(L,true);
+  const P=L.pulses;
+  for(let i=P.length-1;i>=0;i--){
+    const q=P[i], tr=q.tr, s0=q.s;
+    q.s+=q.v*dt;
+    // a node lights when the head crosses it
+    const N=tr.nodes;
+    for(let j=0;j<N.length;j+=4){
+      const a = q.dir>0 ? N[j] : tr.len-N[j];
+      if(a===0 ? (s0<=0 && q.s>0) : (a>s0 && a<=q.s)){
+        const p=tr.sg.p;
+        flare(L,N[j+1],N[j+2],p*(a>0?1.5:1.0),N[j+3]*(a>0?1:0.5));
+        if(a>0 && tr.chip && q.dir<0) ST.kick=Math.min(1,ST.kick+0.05);
+      }
+    }
+    if(q.s-q.tail>tr.len){ P[i]=P[P.length-1]; P.pop(); }
+  }
+  const F=L.flares;
+  for(let i=F.length-1;i>=0;i--){ F[i].age+=dt; if(F[i].age>FLARE_LIFE){ F[i]=F[F.length-1]; F.pop(); } }
+  // the die computes: cells light at the pulse rate and cool off over ~0.7 s
+  const cool=Math.exp(-dt/0.7);
+  for(const sg of L.sgs) for(const c of sg.chips){
+    const D=c.die, V=D.v;
+    for(let i=0;i<V.length;i++) V[i]*=cool;
+    D.acc=(D.acc||0)+dt*rate*(c.main?4:2);
+    let m=burst?3:0;
+    while(D.acc>=1){ D.acc-=1; m++; }
+    while(m-->0) V[Math.random()*V.length|0]=0.6+0.4*Math.random();
+  }
+}
+
+function styles(ctx){
+  if(ST.gen===PAL.gen && ST.sprCtx===ctx) return;
+  ST.gen=PAL.gen; ST.sprCtx=ctx;
+  const h=PAL.h, s=PAL.s, lit=clamp(PAL.l+8,0,80), hot=clamp(PAL.l+32,62,94);
+  // on OLED black a pale accent's heads come close to white: take the
+  // bright front of every comet down a fifth
+  const om=CFG.oledMode?0.8:1;
+  ST.head=0.9*om;
+  ST.sty={ tail:TAIL_A.map(a=>hslStr(h,s,hot,a>=0.5?a*om:a)), halo:hslStr(h,s,lit,0.045), body:hslStr(h,s,hot,0.13),
+           cell:Array.from({length:8},(_,j)=>hslStr(h,s,hot,0.06*j)) };
+  // one unit sprite per look, scaled by the transform: heads and flares...
+  const g=ctx.createRadialGradient(0,0,0,0,0,1);
+  g.addColorStop(0,   hslStr(h,clamp(s-40,0,100),97,0.95));
+  g.addColorStop(0.12,hslStr(h,s,hot,0.55));
+  g.addColorStop(0.4, hslStr(h,s,lit,0.14));
+  g.addColorStop(1,   hslStr(h,s,lit,0));
+  ST.spr=g;
+  // ...and the processor's core glow, which has no hot center
+  const c=ctx.createRadialGradient(0,0,0,0,0,1);
+  c.addColorStop(0,  hslStr(h,s,lit,0.55));
+  c.addColorStop(0.45,hslStr(h,s,lit,0.18));
+  c.addColorStop(1,  hslStr(h,s,lit,0));
+  ST.glow=c;
+}
+
+function emitRange(ctx,tr,a,b){
+  if(a<0) a=0; if(b>tr.len) b=tr.len; if(b-a<0.5) return;
+  const P=tr.pts, C=tr.cum, n=C.length;
+  let i=0; while(i<n-2 && C[i+1]<=a) i++;
+  let t=(a-C[i])/((C[i+1]-C[i])||1);
+  ctx.moveTo(P[2*i]+(P[2*i+2]-P[2*i])*t, P[2*i+1]+(P[2*i+3]-P[2*i+1])*t);
+  while(i<n-2 && C[i+1]<b){ i++; ctx.lineTo(P[2*i],P[2*i+1]); }
+  t=(b-C[i])/((C[i+1]-C[i])||1);
+  ctx.lineTo(P[2*i]+(P[2*i+2]-P[2*i])*t, P[2*i+1]+(P[2*i+3]-P[2*i+1])*t);
+}
+
+function sprite(ctx,g,x,y,r,a){
+  const k=ST.k;
+  ctx.globalAlpha=a; ctx.fillStyle=g;
+  ctx.setTransform(k*r,0,0,k*r,k*x,k*y);
+  ctx.fillRect(-1,-1,2,2);
+}
+
+/* Everything that glows, in viewport px on the sky: the core glow under the
+   processor, flares, then tails (one path per alpha step and strength class,
+   all pulses at once), then heads. */
+function drawLight(K,L){
+  const ctx=K.ctx;
+  styles(ctx);
+  if(ctx.canvas.width!==ST.kw){ ST.kw=ctx.canvas.width; ST.k=ctx.getTransform().a||1; }
+  const k=ST.k, sty=ST.sty;
+  ctx.setTransform(k,0,0,k,0,0);
+  ctx.clearRect(0,0,K.w,K.h);
+  if(!L || !L.sgs.length) return;
+  const core=clamp(ST.core,0,1), lw=L.sgs[0].p;
+  // the processor lights the board around it: a wide pool and a tighter core
+  for(const sg of L.sgs) for(const c of sg.chips){
+    sprite(ctx,ST.glow,c.x,c.y,c.H*(c.main?3.6:2.6),core*(c.main?0.30:0.16));
+    sprite(ctx,ST.glow,c.x,c.y,c.H*1.35,core*(c.main?0.6:0.35));
+    const D=c.die, V=D.v;
+    ctx.globalAlpha=1; ctx.setTransform(k,0,0,k,0,0);
+    for(let i=0;i<V.length;i++){
+      const j=Math.round(V[i]*7); if(!j) continue;
+      ctx.fillStyle=sty.cell[j];
+      ctx.fillRect(D.x0+(i%D.n)*D.cell, D.y0+((i/D.n)|0)*D.cell, D.sz, D.sz);
+    }
+  }
+  for(const f of L.flares){
+    const u=1-f.age/FLARE_LIFE, a=f.str*u*u*(f.age<0.06?f.age/0.06:1);
+    if(a>0.01) sprite(ctx,ST.spr,f.x,f.y,f.r*(1.2+0.6*(1-u)),a*0.8);
+  }
+  // grade every live pulse by the copper under its head
+  const P=L.pulses;
+  for(const q of P){
+    if(q.s<=0){ q.c=-1; continue; }
+    q.f=fadeAt(q.tr,headA(q)); q.c=cfOf(q.f);
+  }
+  ctx.setTransform(k,0,0,k,0,0);
+  ctx.lineJoin="round";
+  for(let c=0;c<CF.length;c++){
+    ctx.globalAlpha=CF[c];
+    // soft body along the front of each tail: one path, stroked wide then narrow
+    ctx.lineCap="round"; ctx.beginPath();
+    let any=false;
+    for(const q of P){
+      if(q.c!==c) continue;
+      const h=headA(q), t=q.tail*0.35;
+      if(q.dir>0) emitRange(ctx,q.tr,h-t,h); else emitRange(ctx,q.tr,h,h+t);
+      any=true;
+    }
+    if(!any) continue;
+    ctx.strokeStyle=sty.halo; ctx.lineWidth=Math.max(5,lw*0.62); ctx.stroke();
+    ctx.strokeStyle=sty.body; ctx.lineWidth=Math.max(2.5,lw*0.24); ctx.stroke();
+    ctx.lineCap="butt"; ctx.lineWidth=Math.max(1.25,lw*0.1);
+    for(let j=0;j<TAIL_A.length;j++){
+      ctx.strokeStyle=sty.tail[j]; ctx.beginPath();
+      for(const q of P){
+        if(q.c!==c) continue;
+        const seg=q.tail/TAIL_A.length, a0=q.s-q.tail+j*seg, a1=a0+seg;
+        if(a1<=0) continue;
+        // tail steps in travel distance, mapped onto the trace's own direction
+        if(q.dir>0) emitRange(ctx,q.tr,a0,Math.min(a1,q.s));
+        else emitRange(ctx,q.tr,q.tr.len-Math.min(a1,q.s),q.tr.len-a0);
+      }
+      ctx.stroke();
+    }
+  }
+  for(const q of P){
+    if(q.c<0 || q.s>q.tr.len) continue;
+    pointAt(q.tr,headA(q),PT);
+    sprite(ctx,ST.spr,PT[0],PT[1],lw*1.05,ST.head*q.f);
+  }
+  ctx.globalAlpha=1;
+  ctx.setTransform(k,0,0,k,0,0);
+}
+
+/* ---------------- the board ---------------- */
+
+// one band's window onto the board, which lives in viewport px
+function drawBoard(T,L){
+  const ctx=T.ctx;
+  ctx.clearRect(0,0,T.w,T.h);
+  T.cbGen=PAL.gen; T.cbL=L;
+  if(!L.sgs.length) return;
+  const h=PAL.h, s=PAL.s, lit=clamp(PAL.l+8,0,80);
+  const col=a=>hslStr(h,s,lit,a);
+  if(!ST.font){
+    try{ ST.font=getComputedStyle(document.body).fontFamily; }catch(e){}
+    ST.font=ST.font||"Consolas, monospace";
+  }
+  ctx.save(); ctx.translate(-T.x,-T.y);
+  for(const sg of L.sgs){
+    const P=sg.paths, p=sg.p;
+    ctx.lineWidth=sg.lw; ctx.lineJoin="round"; ctx.lineCap="butt";
+    for(let v=0;v<NLV;v++){ ctx.strokeStyle=col(LVA[v]); ctx.stroke(P.tr[v]); }
+    for(let v=0;v<NLV;v++){ ctx.fillStyle=col(Math.min(0.39,LVA[v]*1.5)); ctx.fill(P.via[v]); ctx.fill(P.pad[v]); }
+    // small chips and silkscreen, dimmed with the board around them
+    for(let b=0;b<4;b++){
+      const f=PB[b];
+      ctx.fillStyle=col(0.025*f); ctx.fill(P.icBody[b]);
+      ctx.strokeStyle=col(0.34*f); ctx.stroke(P.icBody[b]);
+      ctx.fillStyle=col(0.36*f); ctx.fill(P.icPins[b]);
+      ctx.strokeStyle=col(0.16*f); ctx.stroke(P.silk[b]);
+    }
+    // the processor: a whisper of fill, a crisp outline, the die and its cells
+    ctx.fillStyle=col(0.025); ctx.fill(P.body);
+    ctx.strokeStyle=col(0.34); ctx.stroke(P.body);
+    ctx.strokeStyle=col(0.10); ctx.stroke(P.inner);
+    ctx.fillStyle=col(0.04); ctx.fill(P.die);
+    ctx.fillStyle=col(0.07); ctx.fill(P.dieGrid);
+    ctx.strokeStyle=col(0.28); ctx.stroke(P.die);
+    ctx.fillStyle=col(0.36); ctx.fill(P.pins);
+    ctx.strokeStyle=col(0.16); ctx.stroke(P.csilk);
+    // silkscreen legends, never under 12 px at 4K
+    const fs=Math.max(8,Math.round(p*0.8));
+    ctx.font=`${fs}px ${ST.font}`; ctx.textBaseline="middle";
+    try{ ctx.letterSpacing=(fs*0.12).toFixed(1)+"px"; }catch(e){}
+    for(const t of sg.text){
+      const f=pfOf(t[3]); if(f<0.12) continue;
+      ctx.textAlign=t[4]||"center";
+      ctx.fillStyle=col(0.28*f);
+      ctx.fillText(t[0],t[1],t[2]);
+    }
+    for(const c of sg.chips){
+      ctx.textAlign="center"; ctx.fillStyle=col(0.26);
+      ctx.font=`${Math.max(9,Math.round(p*(c.main?0.95:0.8)))}px ${ST.font}`;
+      try{ ctx.letterSpacing=(p*0.22).toFixed(1)+"px"; }catch(e){}
+      ctx.fillText(c.lab[0],c.lab[1],c.lab[2]);
+    }
+    try{ ctx.letterSpacing="0px"; }catch(e){}
+  }
+  ctx.restore();
+}
+
+/* A composed frame for game mode: packets caught mid-flight on some of the
+   processor's buses, a few lone comets out on the board, the vias they just
+   reached still lit, and a calm core. Seeded, so every still is the same. */
+function stillLight(L){
+  const r=rng(0x51ED+L.pick.length);
+  const seen=new Set(), buses=[], lone=[], pulses=[], flares=[];
+  for(const tr of L.pick){
+    if(tr.chip && tr.bus && tr.bus.length>1){ if(!seen.has(tr.bus)){ seen.add(tr.bus); buses.push(tr.bus); } }
+    else if(tr.eff>tr.sg.p*6) lone.push(tr);
+  }
+  const take=(A,n)=>{ const out=[]; A=A.slice();
+    while(out.length<n && A.length){ const i=r()*A.length|0; out.push(A[i]); A[i]=A[A.length-1]; A.pop(); }
+    return out; };
+  const nb=Math.max(4,Math.round(2+buses.length*0.3));
+  // packets sit on the lit stretch of a bus, not out where it has faded
+  for(const B of take(buses,nb)){
+    let m=Infinity; for(const t of B) m=Math.min(m,t.vis0);
+    const p=B[0].sg.p, s=m*(0.3+0.45*r()), tail=p*(10+r()*4);
+    for(const t of B) pulses.push({tr:t,dir:1,s:s+r()*p*1.2,v:0,tail,c:-1,f:0});
+  }
+  for(const tr of take(lone,Math.round(nb*1.3))){
+    const p=tr.sg.p, dir=r()<0.5?1:-1, arrive=r()<0.4;
+    pulses.push({tr,dir,s:tr.len*(arrive?0.97:0.35+0.45*r()),v:0,tail:p*(9+r()*6),c:-1,f:0});
+    if(!arrive) continue;
+    const N=tr.nodes, want=dir>0?tr.len:0;
+    for(let j=0;j<N.length;j+=4) if(N[j]===want && N[j+3]>0.03) flares.push({x:N[j+1],y:N[j+2],r:p*1.5,str:N[j+3],age:0.1});
+  }
+  // a still die: a scatter of cells at rest, the same one every time
+  for(const sg of L.sgs) for(const c of sg.chips){
+    const V=c.die.v; for(let i=0;i<V.length;i++) V[i]=r()<0.2 ? 0.25+0.6*r() : 0;
+  }
+  return {sgs:L.sgs, pulses, flares};
+}
+
+SCENES.circuit={
+  label:"Circuit",
+  band:0.7,
+  // a band was (re)sized: lay the board out again once every band is known
+  init(){ ST.dirty=true; },
+  frame(dt,S){
+    ST.frames++;
+    if(!(S.t>=ST.rt && S.t-ST.rt<1)) checkRects(S.t);
+    const L=ensure();
+    const sec=Math.min(dt,64)*0.001;
+    // kicks: the low band jumping above its own recent level fires the processor
+    const e=S.energy||0;
+    ST.eSlow+= (e-ST.eSlow)*(1-Math.exp(-sec/0.5));
+    const burst = e-ST.eSlow>0.06 && e>0.1 && S.t-ST.burstAt>0.28;
+    if(burst){ ST.burstAt=S.t; ST.kick=Math.min(1,ST.kick+0.35); }
+    ST.kick*=Math.exp(-sec/0.5);
+    ST.core+= ((0.25+0.9*e+ST.kick)-ST.core)*(1-Math.exp(-sec/0.25));
+    stepLayout(L,sec,0.45+2.2*e,burst);
+  },
+  draw(T){
+    const L=ensure();
+    // redraw on a new palette or layout, or when a frame went by without us
+    // (the band was cleared while the scene was hidden)
+    if(T.cbGen!==PAL.gen || T.cbL!==L || T.cbF!==ST.frames-1) drawBoard(T,L);
+    T.cbF=ST.frames;
+  },
+  // light with no board under it would be comets crossing empty black
+  sky(K){ if(CFG.terrain) drawLight(K,ensure()); else K.ctx.clearRect(0,0,K.w,K.h); },
+  still(T){ drawBoard(T,ensure()); T.cbF=-9; },
+  stillSky(K){
+    if(!CFG.terrain){ K.ctx.clearRect(0,0,K.w,K.h); return; }
+    ST.core=0.45; drawLight(K,stillLight(ensure()));
+  }
+};
+})();
+</script>
+<script data-style="outrun">
+/* =========================================================================
+   SCENE: OUTRUN ("Horizon Sun")
+   The synthwave horizon, in the accent color: a sliced sun resting on the
+   primary monitor's horizon, three ranges of rim-lit crags in front of it,
+   and a perspective grid floor rolling toward the viewer. Every color is a
+   lightness or small hue shift of the accent, so pale ice and cyan both read
+   as one palette.
+
+   Almost all of it is static, so almost all of it is cached, and the band is
+   never repainted whole once it is up:
+     * band: the floor (vertical grid lines, the fade under the side panels,
+       the opaque ground), the mountains, the haze and the horizon line are one
+       offscreen image. The canvas keeps its pixels between frames, so a frame
+       only restores the thin strips a horizontal grid row left or entered from
+       that image and blits the row sprite there. Rows that have not moved a
+       fifth of a pixel are left alone, which spares the dense rows at the
+       horizon most frames. Stroking the full-width grid every frame held a
+       span to about 39 fps.
+     * sky: the disk is one sprite and its slices are sub-rect blits of it, so
+       no clip is ever built. The sky redraws at ~20 Hz, since nothing on it
+       moves fast.
+   Caches rebuild when PAL.gen, a canvas size or the monitor geometry change.
+   ========================================================================= */
+SCENES.outrun=(function(){
+  const HZ=0.60;          // horizon, as a share of its monitor's height
+  const BAND=0.60;        // band share of its layer: room above the horizon for the peaks
+  const SUN_R=0.19, SUN_RW=0.22;   // sun radius: share of monitor height, capped by width
+  const SUN_UP=0.62;      // sun center, in radii above the horizon
+  const SLICES=6;         // gaps in the lower disk
+  const SLICE_RATE=1/6;   // gap periods per second: the slices sink slowly
+  const GAP_GLOW=0.4;     // share of the halo and horizon glow left showing in the gaps
+  const SUN_C0=1.6, SUN_C1=2.4;    // disk chroma cap, in multiples of the accent's own: crown, horizon
+  const OLED_PEAK=0.5;    // oled_mode: alpha of the disk's brightest stop
+  const DRIFT_X=5, DRIFT_Y=3;       // px the sun wanders over minutes (OLED wear)
+  const DEPTH=0.25;       // grid row spacing; depth 1 is the monitor's bottom edge
+  const SPEED=0.30;       // grid rows per second toward the viewer
+  const CELL=1.3;         // cell width over cell depth, near the viewer
+  const GRID_A=0.55;      // grid alpha at the bottom edge
+  const GRID_GA=0.86;     // grid brightness baked into the cached vertical lines
+  const ROW_K=1.15;       // a row sprite's hairline covers its glow pass instead of adding to it
+  const ROW_MIN=0.004;    // rows fainter than this are left to the horizon haze
+  const EPS_Y=0.2, EPS_A=0.05;      // repaint a row once it moves this far (device px) or this much alpha
+  const SKY_MS=45;        // sky redraw interval
+  const TAU=Math.PI*2;
+
+  const E={ e:0, n:0 };             // eased bass (0 unless music is playing), frame count
+  const SKY={ g:null, last:-1 };
+  const C={ gen:-1, star:null };
+
+  const hue=h=>((h%360)+360)%360;
+  const smooth=(a,b,x)=>{ const t=clamp((x-a)/(b-a),0,1); return t*t*(3-2*t); };
+  function surface(w,h){
+    w=Math.max(1,Math.ceil(w)); h=Math.max(1,Math.ceil(h));
+    if(typeof OffscreenCanvas==="function") return new OffscreenCanvas(w,h);
+    const c=document.createElement("canvas"); c.width=w; c.height=h; return c;
+  }
+  function pal(){
+    if(C.gen===PAL.gen) return C;
+    C.gen=PAL.gen;
+    const l=clamp(PAL.l+20,0,92), s=clamp(PAL.s-20,0,100);
+    C.star=Array.from({length:41},(_,j)=>hslStr(PAL.h, s, l, (j/40).toFixed(3)));
+    return C;
+  }
+
+  /* ---- deterministic noise, so a rebuild never reshuffles the skyline ---- */
+  function hash(i){
+    let x=Math.imul(i|0,0x27d4eb2d)^0x165667b1;
+    x=Math.imul(x^(x>>>15),0x85ebca6b); x^=x>>>13;
+    return (x>>>0)/4294967296;
+  }
+  // Linear value noise summed over octaves: straight runs between kinks read
+  // as rock. Smooth interpolation here gave rounded dunes.
+  function lnoise(x){ const i=Math.floor(x); return lerp(hash(i),hash(i+1),x-i); }
+  function crag(x){
+    let s=0,a=1,n=0,f=1;
+    for(let o=0;o<7;o++){ s+=a*lnoise(x*f+o*37.1); n+=a; a*=0.56; f*=2.07; }
+    return Math.pow(clamp((s/n-0.24)/0.56,0,1),1.45);
+  }
+  function rng(seed){
+    let a=seed>>>0;
+    return ()=>{ a=(a+0x6D2B79F5)>>>0; let t=a;
+      t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61);
+      return ((t^(t>>>14))>>>0)/4294967296; };
+  }
+  /* Three ranges, back to front. Heights are shares of M, the monitor's short
+     side (so portrait does not grow alps), sampled at u = (x - vanishing x) / M.
+     The envelope runs on v, the same distance in sun radii: the back two stay
+     low under the sun so it keeps its slices, and the front one stays high
+     enough to bite into the lower disk. Aerial perspective sets them apart:
+     the farther a range, the more accent haze in its body.
+       f, off   noise frequency and seed offset
+       h, lo    tallest peak, and the envelope's floor under the sun
+       v0, v1   where the envelope starts and finishes rising
+       fill     accent haze in the range's body; line: crest alpha */
+  const RANGES=[
+    {f:1.7, off:5.1,  h:0.110, lo:0.10, v0:0.9, v1:2.6, fill:0.075, line:0.16},
+    {f:3.0, off:11.3, h:0.075, lo:0.06, v0:1.2, v1:3.0, fill:0.032, line:0.30},
+    {f:5.2, off:47.1, h:0.068, lo:0.62, v0:1.2, v1:3.4, fill:0,     line:0.55},
+  ];
+  const RANGE_TOP=Math.max(...RANGES.map(r=>r.h))+0.008;   // headroom the strip keeps above the horizon
+  function rangeH(r, u, v){
+    return 0.003 + r.h*(r.lo+(1-r.lo)*smooth(r.v0,r.v1,Math.abs(v)))*crag(u*r.f+r.off);
+  }
+
+  /* ---- where the sun and the horizon go ----
+     SC.screens is only filled once the loop runs, and game mode set to Always
+     never runs it, so fall back to the layout engine's list. */
+  function primaryIdx(){ return SC.screens.length ? SC.primary : (LAY.primary|0); }
+  function viewPrimary(w,h){
+    const S=SC.screens.length ? SC.screens : (LAY.screens||[]);
+    return S[primaryIdx()] || {x:0,y:0,w:w,h:h};
+  }
+  function sunOf(P){
+    const R=Math.min(P.h*SUN_R, P.w*SUN_RW), hz=P.y+P.h*HZ;
+    return {cx:P.x+P.w/2, hz:hz, R:R, cy:hz-R*SUN_UP};
+  }
+  // The monitor a band belongs to: the primary when its center is on the band
+  // (a span, or the primary's own layer), else the monitor this per-monitor
+  // layer was cut for.
+  function home(T){
+    const S=T.screens||[], P=S[primaryIdx()];
+    if(P && P.x+P.w/2>0 && P.x+P.w/2<T.w) return {r:P, main:true};
+    for(const s of S) if(Math.abs(s.x)<2 && Math.abs(s.w-T.w)<2) return {r:s, main:false};
+    const lh=T.h/BAND;
+    return {r:{x:0,y:T.h-lh,w:T.w,h:lh}, main:false};
+  }
+  // The sun wanders a few px on two slow incommensurate sines, keyed to the
+  // wall clock so a reload or a game-mode still lands somewhere new.
+  function drift(){
+    const t=Date.now()/1000;
+    return {x:DRIFT_X*Math.sin(t*TAU/437+0.9), y:DRIFT_Y*Math.sin(t*TAU/661+2.3)};
+  }
+
+  /* =============================== BAND =============================== */
+  function bandGeo(T){
+    const H=home(T), P=H.r, G=T.outrun, op=!BGMED.kind;
+    if(G && G.gen===PAL.gen && G.w===T.w && G.h===T.h && G.dpr===T.dpr && G.cx===T.cx && G.op===op &&
+       G.px===P.x && G.py===P.y && G.pw===P.w && G.ph===P.h){
+      if(!G.base){ buildBase(T,G); T.orRows=null; }
+      return G;
+    }
+    const g={gen:PAL.gen, w:T.w, h:T.h, dpr:T.dpr, cx:T.cx, op:op, px:P.x, py:P.y, pw:P.w, ph:P.h,
+             P:{x:P.x, y:P.y, w:P.w, h:P.h}, main:H.main, Wd:T.cv.width, Hd:T.cv.height};
+    g.hz=P.y+P.h*HZ;
+    g.A=Math.max(8, P.y+P.h-g.hz);            // screen px from horizon to depth 1
+    g.zFar=Math.sqrt(g.A*DEPTH/0.5);          // rows past this merge into the horizon haze
+    g.u0=1/g.zFar;
+    g.kMax=Math.ceil(g.zFar/DEPTH)+1;
+    buildRow(T,g);
+    buildBase(T,g);
+    T.outrun=g; T.orRows=null;
+    return g;
+  }
+
+  // the erase that keeps the floor calm under the corner panels, as a
+  // horizontal gradient over [0, x1] in the target's own units
+  function edge(c, x1, T, g){
+    const eg=c.createLinearGradient(0,0,x1,0);
+    for(let i=0;i<=48;i++){
+      const d=Math.abs(i/48*T.w-g.cx)/g.P.w;
+      eg.addColorStop(i/48, "rgba(0,0,0,"+(0.72*smooth(0.16,0.62,d)).toFixed(3)+")");
+    }
+    return eg;
+  }
+
+  /* One horizontal grid row at full alpha, in device px: a wide faint pass
+     that stands in for the glow the economy surface drops, the hairline, and
+     the side fade. A frame blits it once per row at that row's alpha. */
+  function buildRow(T, g){
+    const d=T.dpr, lw=3.2*d, sh=Math.ceil(lw)+4;
+    const yc=Math.floor(sh/2)+(Math.round(d)%2 ? 0.5 : 0);
+    const cv=surface(g.Wd, sh), c=cv.getContext("2d");
+    c.strokeStyle=hslStr(PAL.h, PAL.s, clamp(PAL.l+8,0,80));
+    c.beginPath(); c.moveTo(0,yc); c.lineTo(g.Wd,yc);
+    c.lineWidth=lw; c.globalAlpha=0.2; c.stroke();
+    c.lineWidth=d;  c.globalAlpha=1;   c.stroke();
+    c.globalCompositeOperation="destination-out";
+    c.fillStyle=edge(c, g.Wd, T, g); c.fillRect(0,0,g.Wd,sh);
+    g.row=cv; g.rowC=yc; g.rowH=sh;
+  }
+
+  /* Everything static on the band, drawn once into an image that covers it
+     from the tallest peak down: the floor's vertical lines, faded under the
+     panels and laid on an opaque ground, then the sun's glow on the floor,
+     three ranges with haze pooled between them, the horizon line. Each range
+     is filled with the background first, which is what hides the sun and the
+     ranges behind it. */
+  function buildBase(T, g){
+    const P=g.P, h=PAL.h, s=PAL.s, lit=clamp(PAL.l+8,0,80), cx=g.cx, hz=g.hz, W=T.w, d=T.dpr;
+    const sun=sunOf(P), glowR=g.main ? sun.R*2.3 : 0;
+    // the band's top edge is the ceiling: a span's primary leaves less room
+    const M=Math.min(P.h, P.w*0.75), mk=Math.min(1, (hz-6)/(M*RANGE_TOP));
+    // envelope unit: the sun radius, squeezed on a narrow monitor so its
+    // edges still reach the peaks
+    const vr=Math.min(sun.R, P.w/5.6);
+    const top=Math.max(0, hz-M*RANGE_TOP*mk-4), y0=Math.floor(top*d);
+    const cv=surface(g.Wd, Math.max(1,g.Hd-y0)), c=cv.getContext("2d");
+    c.setTransform(d,0,0,d,0,-y0);
+    g.base=cv; g.baseY=y0;
+
+    // vertical lines never move (the camera only travels forward)
+    const floor=Math.max(1, T.h-hz);
+    const cw=CELL*DEPTH*g.A, zN=g.A/(floor+1), zV=g.zFar, yF=hz+g.A/zV;
+    const jMax=Math.ceil(Math.max(cx, W-cx)*zV/cw)+1;
+    c.beginPath();
+    for(let j=-jMax;j<=jMax;j++){ c.moveTo(cx+j*cw/zV, yF); c.lineTo(cx+j*cw/zN, T.h+1); }
+    // one vertical gradient fades them into the horizon; they fade in from
+    // nothing where they start, so the grid grows out of the haze
+    const gg=c.createLinearGradient(0,hz,0,T.h);
+    const u0=g.u0, U=[0,u0,u0*1.5,u0*2.2,u0*3.2,0.18,0.3,0.45,0.65,0.85,1];
+    for(const u of U){
+      const y=u*g.A; if(y>floor) break;
+      const a=smooth(u0,u0*3.2,u)*(0.1+0.9*Math.pow(u,1.15));
+      gg.addColorStop(y/floor, hslStr(h,s,lit,(GRID_A*a).toFixed(3)));
+    }
+    if(floor>g.A) gg.addColorStop(1, hslStr(h,s,lit,GRID_A));
+    c.strokeStyle=gg;
+    c.lineWidth=3.2; c.globalAlpha=GRID_GA*0.2; c.stroke();
+    c.lineWidth=1;   c.globalAlpha=GRID_GA;     c.stroke();
+    c.globalAlpha=1;
+    c.globalCompositeOperation="destination-out";
+    c.fillStyle=edge(c, W, T, g); c.fillRect(0,hz,W,floor);
+    // an opaque floor slid in underneath, so the flat graph-paper grid of the
+    // vignette layer does not show through between the perspective lines.
+    // A photo kept under the scene has no such grid, and it should show.
+    if(g.op){
+      c.globalCompositeOperation="destination-over";
+      c.fillStyle=PAL.bg; c.fillRect(0,hz,W,floor);
+    }
+    c.globalCompositeOperation="source-over";
+
+    if(glowR){
+      const bot=hz+glowR*0.3+2;
+      c.save();
+      c.beginPath(); c.rect(0,hz,W,bot-hz); c.clip();
+      c.translate(cx,hz); c.scale(1,0.3);
+      const rg=c.createRadialGradient(0,0,0,0,0,glowR);
+      rg.addColorStop(0,   hslStr(hue(h+14),s,lit,0.22));
+      rg.addColorStop(0.3, hslStr(hue(h+14),s,lit,0.08));
+      rg.addColorStop(0.7, hslStr(hue(h+14),s,lit,0.02));
+      rg.addColorStop(1,   hslStr(hue(h+14),s,lit,0));
+      c.fillStyle=rg; c.fillRect(-glowR,-glowR,glowR*2,glowR*2);
+      c.restore();
+    }
+
+    // crest lines are rim light from the sun behind them: brightest near it
+    const rim=a=>{
+      const lg=c.createLinearGradient(0,0,W,0);
+      for(let i=0;i<=48;i++){
+        const v=(i/48*W-cx)/sun.R;
+        lg.addColorStop(i/48, hslStr(h,s,lit,(a*(0.3+0.7*Math.exp(-v*v/10))).toFixed(3)));
+      }
+      return lg;
+    };
+    // haze pooled on the horizon over a range's feet, a little less each time
+    // it is laid down, so every range in front reads nearer and darker
+    const haze=(depth,a)=>{
+      const hy=hz-M*depth*mk, hg=c.createLinearGradient(0,hy,0,hz);
+      hg.addColorStop(0,   hslStr(hue(h-6),s,lit,0));
+      hg.addColorStop(0.65,hslStr(hue(h-6),s,lit,(a*0.35).toFixed(3)));
+      hg.addColorStop(1,   hslStr(hue(h-6),s,lit,a));
+      c.fillStyle=hg; c.fillRect(0,hy,W,hz-hy);
+    };
+    const step=3;
+    c.lineWidth=1; c.lineJoin="round";
+    RANGES.forEach((r,i)=>{
+      const line=new Path2D();
+      for(let x=-step;x<=W+step;x+=step){
+        const y=hz-rangeH(r,(x-cx)/M,(x-cx)/vr)*M*mk;
+        x===-step ? line.moveTo(x,y) : line.lineTo(x,y);
+      }
+      const body=new Path2D(line);
+      body.lineTo(W+step,hz+1); body.lineTo(-step,hz+1); body.closePath();
+      c.fillStyle=PAL.bg; c.fill(body);
+      if(r.fill){
+        const fg=c.createLinearGradient(0,hz-M*r.h*mk,0,hz);
+        fg.addColorStop(0, hslStr(h,s,lit,(r.fill*0.3).toFixed(3)));
+        fg.addColorStop(1, hslStr(h,s,lit,r.fill));
+        c.fillStyle=fg; c.fill(body);
+      }
+      c.strokeStyle=rim(r.line); c.stroke(line);
+      if(i<RANGES.length-1) haze(i ? 0.035 : 0.06, i ? 0.10 : 0.07);
+    });
+
+    // the floor's own haze, where the rows grow too dense to tell apart
+    const fl=c.createLinearGradient(0,hz,0,hz+g.A*0.14);
+    fl.addColorStop(0,   hslStr(h,s,lit,0.10));
+    fl.addColorStop(0.4, hslStr(h,s,lit,0.035));
+    fl.addColorStop(1,   hslStr(h,s,lit,0));
+    c.fillStyle=fl; c.fillRect(0,hz,W,g.A*0.14);
+
+    // the horizon line, brightest under the sun
+    const lg=c.createLinearGradient(0,0,W,0);
+    for(let i=0;i<=48;i++){
+      const dd=Math.abs(i/48*W-cx)/P.w;
+      lg.addColorStop(i/48, hslStr(h,s,clamp(lit+10,0,88),(0.14+0.8*Math.exp(-dd*dd*9)).toFixed(3)));
+    }
+    c.fillStyle=lg;
+    c.globalAlpha=0.22; c.fillRect(0,hz-3,W,6);
+    c.globalAlpha=1;    c.fillRect(0,hz-0.75,W,1.5);
+  }
+
+  // The horizontal rows at scene position v (rows travelled), in device px.
+  // w is a row's identity: it stays the same while the row rolls forward.
+  function rowsAt(g, v, ga){
+    const n=Math.floor(v), ph=v-n, out=[], d=g.dpr, lim=g.Hd+g.rowC;
+    for(let k=1;k<=g.kMax;k++){
+      const z=(k-ph)*DEPTH; if(z<=0 || z>g.zFar) continue;
+      const y=(g.hz+g.A/z)*d; if(y>lim) continue;
+      const u=1/z, a=Math.min(1, GRID_A*ROW_K*ga*smooth(g.u0,g.u0*3.2,u)*(0.1+0.9*Math.pow(Math.min(u,1),1.15)));
+      if(a>=ROW_MIN) out.push({w:k+n, y:y, a:a});
+    }
+    return out;
+  }
+  function blitRow(ctx, g, r){ ctx.globalAlpha=r.a; ctx.drawImage(g.row, 0, r.y-g.rowC); }
+  function restore(ctx, g, a, b){
+    const y0=Math.max(g.baseY, Math.floor(a)), y1=Math.min(g.Hd, Math.ceil(b));
+    if(y1<=y0) return;
+    ctx.clearRect(0,y0,g.Wd,y1-y0);
+    ctx.drawImage(g.base, 0,y0-g.baseY,g.Wd,y1-y0, 0,y0,g.Wd,y1-y0);
+  }
+  /* Rows whose strips chain-overlap form a cluster. A cluster with any row
+     that moved, appeared or left is restored from the base image and redrawn
+     whole; a still cluster keeps the pixels it already has. Restoring a
+     cluster never touches another one, since their strips do not overlap. */
+  function update(ctx, g, T, rows){
+    const prev=new Map(), ext=[], top=g.rowC+1, bot=g.rowH-g.rowC+1;
+    for(const p of T.orRows) prev.set(p.w,p);
+    for(const r of rows){
+      const p=prev.get(r.w);
+      if(p){
+        prev.delete(r.w);
+        const m=Math.abs(r.y-p.y)>EPS_Y || Math.abs(r.a-p.a)>p.a*EPS_A;
+        ext.push({y0:Math.min(r.y,p.y)-top, y1:Math.max(r.y,p.y)+bot, r:r, p:p, m:m});
+      }else ext.push({y0:r.y-top, y1:r.y+bot, r:r, p:null, m:true});
+    }
+    for(const p of prev.values()) ext.push({y0:p.y-top, y1:p.y+bot, r:null, p:p, m:true});
+    ext.sort((a,b)=>a.y0-b.y0);
+    const kept=[];
+    for(let i=0;i<ext.length;){
+      let j=i, y1=ext[i].y1, m=ext[i].m;
+      while(j+1<ext.length && ext[j+1].y0<=y1){ j++; y1=Math.max(y1,ext[j].y1); m=m||ext[j].m; }
+      if(m){
+        restore(ctx, g, ext[i].y0, y1);
+        for(let q=i;q<=j;q++) if(ext[q].r){ blitRow(ctx, g, ext[q].r); kept.push(ext[q].r); }
+      }else for(let q=i;q<=j;q++) kept.push(ext[q].p);
+      i=j+1;
+    }
+    T.orRows=kept;
+  }
+
+  function paint(T, v, ga){
+    const g=bandGeo(T), ctx=T.ctx, rows=rowsAt(g, v, ga);
+    ctx.setTransform(1,0,0,1,0,0);
+    if(T.orRows && T.orSeen===E.n-1) update(ctx, g, T, rows);
+    else{
+      // first frame, or the canvas may have been cleared behind our back
+      ctx.clearRect(0,0,g.Wd,g.Hd);
+      ctx.drawImage(g.base, 0, g.baseY);
+      for(const r of rows) blitRow(ctx, g, r);
+      T.orRows=rows;
+    }
+    ctx.globalAlpha=1;
+    ctx.setTransform(T.dpr,0,0,T.dpr,0,0);
+    T.orSeen=E.n;
+  }
+
+  /* ================================ SKY ================================ */
+  function skyGeo(K){
+    const k=K.ctx.canvas.width/Math.max(1,K.w), P=viewPrimary(K.w,K.h), per=!!CFG.bgPerMonitor;
+    const oled=!!CFG.oledMode, G=SKY.g;
+    if(G && G.gen===PAL.gen && G.w===K.w && G.h===K.h && G.k===k && G.per===per && G.oled===oled &&
+       G.px===P.x && G.py===P.y && G.pw===P.w && G.ph===P.h) return G;
+    const g={gen:PAL.gen, w:K.w, h:K.h, k:k, per:per, oled:oled, px:P.x, py:P.y, pw:P.w, ph:P.h};
+    const ctx=K.ctx, h=PAL.h, s=PAL.s, lit=clamp(PAL.l+8,0,80);
+    Object.assign(g, sunOf(P));
+    const R=g.R;
+
+    // horizon glow: one across a span, one per monitor when each has its own horizon
+    const S=SC.screens.length ? SC.screens : (LAY.screens||[]);
+    const rows=(per && S.length) ? S.map(r=>({x:r.x, w:r.w, hz:r.y+r.h*HZ, h:r.h}))
+                                 : [{x:0, w:K.w, hz:g.hz, h:P.h}];
+    g.clearH=0;
+    g.haze=rows.map(r=>{
+      const y0=r.hz-r.h*0.5, gr=ctx.createLinearGradient(0,y0,0,r.hz);
+      gr.addColorStop(0,   hslStr(hue(h+18),s,lit,0));
+      gr.addColorStop(0.55,hslStr(hue(h+8), s,lit,0.018));
+      gr.addColorStop(0.85,hslStr(hue(h-4), s,lit,0.045));
+      gr.addColorStop(1,   hslStr(hue(h-8), s,lit,0.09));
+      g.clearH=Math.max(g.clearH, r.hz+2);
+      return {x:r.x, w:r.w, y0:y0, y1:r.hz, g:gr};
+    });
+    g.clearH=Math.min(K.h, g.clearH);
+
+    // the glow the sun throws along the horizon: a circle squashed into a wide
+    // ellipse by a scale at draw time, so it can reach past the primary's edges
+    g.gr=P.h*0.24; g.gsx=(P.w*1.05)/g.gr;
+    const eg=ctx.createRadialGradient(0,0,0,0,0,g.gr);
+    eg.addColorStop(0,   hslStr(hue(h-4),s,lit,0.13));
+    eg.addColorStop(0.25,hslStr(hue(h-2),s,lit,0.08));
+    eg.addColorStop(0.6, hslStr(hue(h+10),s,lit,0.025));
+    eg.addColorStop(1,   hslStr(hue(h+18),s,lit,0));
+    g.glow=eg;
+
+    // halo: a wide soft bloom that sells the disk as a light source. Inside
+    // its inner circle it paints its first stop, which the disk then takes
+    // out again: all of it behind the disk, most of it in the gaps. A dimmed
+    // disk on an OLED panel gets a dimmed halo, or the bloom outshines it.
+    g.hr=R*2.7;
+    const hk=oled ? 0.7 : 1;
+    const hg=ctx.createRadialGradient(g.cx,g.cy,R,g.cx,g.cy,g.hr);
+    hg.addColorStop(0,    hslStr(hue(h+2),s,lit,(0.26*hk).toFixed(3)));
+    hg.addColorStop(0.03, hslStr(hue(h+2),s,lit,(0.15*hk).toFixed(3)));
+    hg.addColorStop(0.12, hslStr(hue(h+4),s,lit,(0.075*hk).toFixed(3)));
+    hg.addColorStop(0.32, hslStr(hue(h+6),s,lit,(0.03*hk).toFixed(3)));
+    hg.addColorStop(0.62, hslStr(hue(h+8),s,lit,(0.009*hk).toFixed(3)));
+    hg.addColorStop(1,    hslStr(hue(h+8),s,lit,0));
+    g.halo=hg;
+
+    /* The disk, at device resolution: pale light on the crown sinking into
+       deep accent at the horizon. Below the crown the lightness stays in the
+       middle, since a pale color under alpha reads as gray, and the fade is
+       carried by alpha, which also keeps the biggest object on screen dim.
+       At mid lightness full saturation would turn a pale accent into cobalt,
+       so each stop's chroma is capped at a multiple of the accent's own,
+       rising toward the horizon the way ice deepens: pale ice stays ice, cyan
+       keeps all of its color. oled_mode also caps the peak alpha, since this
+       is the largest bright shape on the screen. */
+    const c0=(1-Math.abs(PAL.l/50-1))*s/100;
+    const sat=l=>Math.min(s, lerp(SUN_C0,SUN_C1,clamp((84-l)/38,0,1))*c0*100/Math.max(0.05,1-Math.abs(l/50-1))).toFixed(1);
+    const pk=a=>(oled ? OLED_PEAK*Math.pow(a/0.9,0.6) : a).toFixed(3);
+    const col=(dh,l,a)=>hslStr(hue(h+dh), sat(l), l, pk(a));
+    const pad=3, sz=2*R+pad*2, cv=surface(sz*k, sz*k), c=cv.getContext("2d");
+    c.setTransform(k,0,0,k,0,0);
+    const dg=c.createLinearGradient(0,pad,0,pad+2*R);
+    dg.addColorStop(0,    col(-8, clamp(lit+6,72,84),  0.90));
+    dg.addColorStop(0.2,  col(-4, clamp(lit-8,60,72),  0.78));
+    dg.addColorStop(0.48, col(0,  clamp(lit-20,52,60), 0.62));
+    dg.addColorStop(0.76, col(6,  clamp(lit-28,48,52), 0.48));
+    dg.addColorStop(1,    col(14, clamp(lit-34,42,46), 0.36));
+    c.fillStyle=dg;
+    c.beginPath(); c.arc(pad+R,pad+R,R,0,TAU); c.fill();
+    // a touch of limb darkening, so it reads as a lit body and not a sticker
+    const lg=c.createRadialGradient(pad+R,pad+R*0.8,R*0.55,pad+R,pad+R,R);
+    lg.addColorStop(0,"rgba(0,0,0,0)"); lg.addColorStop(0.75,"rgba(0,0,0,0.05)"); lg.addColorStop(1,"rgba(0,0,0,0.2)");
+    c.globalCompositeOperation="source-atop"; c.fillStyle=lg; c.fillRect(0,0,sz,sz);
+    c.globalCompositeOperation="source-over";
+    // and a crisp rim, bright on the crown and gone by the equator
+    const rl=clamp(lit+6,0,88), rg=c.createLinearGradient(0,pad,0,pad+R*1.1);
+    rg.addColorStop(0, hslStr(hue(h-6),sat(rl),rl,oled ? 0.3 : 0.55));
+    rg.addColorStop(1, hslStr(hue(h-6),sat(rl),rl,0));
+    c.strokeStyle=rg; c.lineWidth=1.25;
+    c.beginPath(); c.arc(pad+R,pad+R,R-0.6,0,TAU); c.stroke();
+    g.sun=cv; g.pad=pad; g.sunW=cv.width/k; g.sunH=cv.height/k;
+    // the disk's silhouette, for taking the glow out from under it
+    const mv=surface(cv.width, cv.height), mc=mv.getContext("2d");
+    mc.setTransform(k,0,0,k,0,0); mc.fillStyle="#fff";
+    mc.beginPath(); mc.arc(pad+R,pad+R,R,0,TAU); mc.fill();
+    g.mask=mv;
+
+    // sparse stars, thinning toward the horizon and kept off the sun's halo.
+    // Grouped by tier and twinkle phase, so each group shares one fill style.
+    // Plain rects, not one Path2D per group: a sparse path as wide as the sky
+    // can fall off the GPU's fast path.
+    const r=rng(0x5eed), lim=g.hz-P.h*0.08;
+    const n=clamp(Math.round(K.w*Math.max(0,lim)/20000),60,900);
+    const grp=Array.from({length:18},()=>[]);
+    for(let i=0;i<n;i++){
+      const x=r()*K.w, y=lim*Math.pow(r(),1.35), t=r(), ph=(r()*6)|0;
+      if(Math.hypot(x-g.cx,y-g.cy)<R*1.5) continue;
+      const low=y/lim;
+      const tier=(t<0.06 && low<0.6) ? 2 : (t<0.32 && low<0.8) ? 1 : 0;
+      grp[tier*6+ph].push(x,y,[1.1,1.6,2.2][tier]);
+    }
+    g.stars=grp.map(a=>Float32Array.from(a));
+    SKY.g=g;
+    return g;
+  }
+
+  // the disk's horizontal bands (or its mask's), as sub-rect blits: no clip
+  function bands(ctx, img, g, B, sx, sy){
+    const q=img.height/g.sunH;
+    for(let i=0;i<B.length;i+=2){
+      const y=B[i], bh=B[i+1]-y; if(bh<0.05) continue;
+      ctx.drawImage(img, 0,(y-sy)*q,img.width,bh*q, sx,y,g.sunW,bh);
+    }
+  }
+
+  function paintSky(K, t, sph, e, D){
+    const g=skyGeo(K), ctx=K.ctx, c=pal(), R=g.R, cx=g.cx+D.x, cy=g.cy+D.y;
+    ctx.clearRect(0,0,K.w,g.clearH);
+    ctx.save();
+    ctx.globalAlpha=clamp(0.85+0.5*e,0,1);
+    ctx.translate(D.x,D.y);
+    const hy=g.cy-g.hr;
+    ctx.fillStyle=g.halo; ctx.fillRect(g.cx-g.hr, hy, g.hr*2, g.hz-D.y-hy);
+    ctx.restore();
+    ctx.save();
+    ctx.translate(g.cx,g.hz); ctx.scale(g.gsx,1);
+    ctx.fillStyle=g.glow; ctx.fillRect(-g.gr,-g.gr,g.gr*2,g.gr);
+    ctx.restore();
+
+    // the slices: gaps born as hairlines below the middle, widening as they sink
+    const top=cy-R, bot=Math.min(g.hz, cy+R), ys=cy-0.08*R, span=bot-ys, pd=span/SLICES;
+    const B=[];
+    let y=top;
+    for(let i=0;i<SLICES;i++){
+      const m=ys+(i+sph)*pd, p=(m-ys)/span, gh=pd*0.62*Math.pow(p,1.15);
+      if(m-gh/2>y) B.push(y, m-gh/2);
+      y=Math.max(y,m+gh/2);
+    }
+    if(bot>y) B.push(y, bot);
+    // take the glow out behind the disk, and most of it in the gaps: some
+    // bloom left there is what makes them read as cuts in a light, not bars
+    const sx=cx-R-g.pad, sy=cy-R-g.pad;
+    ctx.globalCompositeOperation="destination-out";
+    ctx.globalAlpha=1-GAP_GLOW;
+    ctx.drawImage(g.mask, sx, sy, g.sunW, g.sunH);
+    ctx.globalAlpha=1;
+    bands(ctx, g.mask, g, B, sx, sy);
+    ctx.globalCompositeOperation="source-over";
+
+    for(const z of g.haze){ ctx.fillStyle=z.g; ctx.fillRect(z.x,z.y0,z.w,z.y1-z.y0); }
+    const base=[0.26,0.42,0.66];
+    for(let i=0;i<18;i++){
+      const grp=i%6, a=base[(i/6)|0]*(0.62+0.38*Math.sin(t*(0.35+grp*0.11)+grp*1.7)), S=g.stars[i];
+      ctx.fillStyle=c.star[clamp(Math.round(a*40),0,40)];
+      for(let j=0;j<S.length;j+=3) ctx.fillRect(S[j],S[j+1],S[j+2],S[j+2]);
+    }
+
+    ctx.globalAlpha=clamp(0.92+0.1*e,0,1);
+    bands(ctx, g.sun, g, B, sx, sy);
+    ctx.globalAlpha=1;
+  }
+
+  const bass=S=>(AUD.live && CFG.audio) ? clamp(S.energy*2,0,1) : 0;
+
+  return {
+    label:"Horizon Sun", band:BAND,
+    init(T){ SKY.g=null; SKY.last=-1; if(T) T.orRows=null; },
+    frame(dt, S){ E.n++; E.e=lerp(E.e, bass(S), 1-Math.exp(-dt/180)); },
+    draw(T, S){ paint(T, S.t*SPEED, 0.86+0.14*E.e); },
+    sky(K, S){
+      const now=S.t*1000;
+      if(SKY.g && SKY.last>=0 && now-SKY.last<SKY_MS && now>=SKY.last) return;
+      SKY.last=now;
+      paintSky(K, S.t, (S.t*SLICE_RATE)%1, E.e, drift());
+    },
+    // game mode holds this frame, so the band's cache is let go until the loop resumes
+    still(T){ paint(T, 0.4, 0.9); if(T.outrun) T.outrun.base=null; T.orRows=null; },
+    stillSky(K){ paintSky(K, 2.1, 0.45, 0, drift()); SKY.last=-1; }
+  };
+})();
 </script>
 <script data-style="blade">
 /* =========================================================================

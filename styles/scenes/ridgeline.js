@@ -12,9 +12,20 @@
    the whole range is one fill under its own silhouette, and every line of
    one light tier and brightness goes into one stroke. A row enters at the
    far plane at zero alpha and rises out of the haze as it nears, and leaves
-   through the foreground fade, so nothing pops. */
+   through the foreground fade, so nothing pops.
+   Every line takes its level from a light grid as well: it dims behind the
+   panels (their boxes are read from the DOM once a second, never per frame)
+   and toward the lower corners, so the bottom panels sit over near-black. */
 SCENES.ridgeline=(function(){
   "use strict";
+  const BAND=0.61;       // band canvas height as a share of its layer
+  const FRAME=0.52;      // the composed view: this share of its monitor's height, on its bottom edge
+  const CELL=8;          // px per cell of the light grid
+  const PANEL_A=0.25;    // what a line keeps behind a panel, reached 3rem outside its box
+  // the foreground fade: from FL_V0 to FL_V1 of the way from the horizon to
+  // the bottom edge, down to FL_MID at the valley's center line and FL_EDGE
+  // toward the sides (FL_U0..FL_U1 of the monitor's half width)
+  const FL_V0=0.14, FL_V1=0.64, FL_MID=0.28, FL_EDGE=0.03, FL_U0=0.18, FL_U1=0.8;
   const SP=0.6;          // world depth between rows
   const DX=0.3;          // world width between columns
   const CAM_Y=1.7;       // camera altitude; the valley floor sits near 0
@@ -38,7 +49,7 @@ SCENES.ridgeline=(function(){
   // alpha (l/LQ)^2, fine steps near zero where a far row is fading in
   const LQ=40, LV=46, LA=new Float32Array(LV);
   for(let l=0;l<LV;l++) LA[l]=(l/LQ)*(l/LQ);
-  const level=(a)=>{ const l=Math.round(Math.sqrt(a)*LQ); return l<LV? l : LV-1; };
+  const VIS_A=0.002;     // under this alpha a line adds under half a step of 8-bit color
 
   // the flight starts from game mode's composed view
   const S={ camZ:STILL_Z, e:0, cmax:0, ring:[], ringK:[] };
@@ -117,6 +128,115 @@ SCENES.ridgeline=(function(){
     const k=SN[b], A=grow(SB, b, k+4); A[k]=x0; A[k+1]=y0; A[k+2]=x1; A[k+3]=y1; SN[b]=k+4;
   }
 
+  /* ---- the light grid ----
+     One cell per CELL px of the band holds sqrt of the share of its alpha a
+     line keeps there, times LQ, so a line's level is one multiply by the
+     sqrt of its own alpha. It holds the panels and the whole foreground
+     fade, so the fade costs no full-width fill per frame. LG is the grid of
+     the canvas being worked on. */
+  let LG=null, LGW=1, LGH=1;
+  function useGrid(r){ LG=r.fg; LGW=r.gw; LGH=r.gh; }
+  function cellAt(x, y){
+    let gx=(x*(1/CELL))|0, gy=(y*(1/CELL))|0;
+    if(gx<0) gx=0; else if(gx>=LGW) gx=LGW-1;
+    if(gy<0) gy=0; else if(gy>=LGH) gy=LGH-1;
+    return LG[gy*LGW+gx];
+  }
+  function lit(s, x, y){ const l=(s*cellAt(x, y)+0.5)|0; return l<LV? l : LV-1; }
+  // a slope line: b is its bucket, or -1 when its ends sit in different light
+  // (a panel's edge, the foreground fade), which cuts it into cell-long
+  // pieces at their own levels
+  function seg(b, b3, s, x0, y0, x1, y1){
+    if(b>=0){ sSeg(b, x0, y0, x1, y1); return; }
+    const dx=x1-x0, dy=y1-y0, m=Math.ceil(Math.max(dx<0? -dx : dx, dy<0? -dy : dy)/CELL)||1;
+    let sx=x0, sy=y0, cl=lit(s, x0+dx*0.5/m, y0+dy*0.5/m);
+    for(let q=1;q<m;q++){
+      const l=lit(s, x0+dx*(q+0.5)/m, y0+dy*(q+0.5)/m);
+      if(l===cl) continue;
+      const x=x0+dx*q/m, y=y0+dy*q/m;
+      if(cl) sSeg(b3+cl, sx, sy, x, y);
+      sx=x; sy=y; cl=l;
+    }
+    if(cl) sSeg(b3+cl, sx, sy, x1, y1);
+  }
+
+  /* ---- the panels ----
+     Every panel's box in viewport px, with its 3rem falloff at its screen's
+     zoom, as [x0,y0,x1,y1,fall]. Reading a box forces a layout, so this runs
+     at most once a second, and a canvas rebuilds its grid only when a box
+     has moved. */
+  const PR={ r:[], t:-1e9, v:0 };
+  function readPanels(){
+    const out=[], L=(LAY.screens && LAY.screens.length) ? LAY.screens : [{el:document, zoom:1}];
+    let rem=16;
+    try{ rem=parseFloat(getComputedStyle(document.documentElement).fontSize)||16; }catch(e){}
+    for(const s of L){
+      if(!s.el) continue;
+      const fall=3*rem*(s.zoom||1);
+      s.el.querySelectorAll(".win, #os-label").forEach(el=>{
+        const b=el.getBoundingClientRect();
+        if(b.width>1 && b.height>1) out.push(b.left, b.top, b.right, b.bottom, fall);
+      });
+    }
+    return out;
+  }
+  function panels(now){
+    PR.t=now;
+    const R=readPanels(), O=PR.r;
+    let same=R.length===O.length;
+    for(let i=0;same && i<R.length;i++) if(Math.abs(R[i]-O[i])>1) same=false;
+    if(!same){ PR.r=R; PR.v++; }
+  }
+  function shade(T, r){
+    const GW=r.gw, GH=r.gh, g=r.fg, pq=r.pq, R=PR.r;
+    pq.fill(1);
+    for(let i=0;i<R.length;i+=5){
+      const x0=R[i]-T.x, y0=R[i+1]-T.y, x1=R[i+2]-T.x, y1=R[i+3]-T.y, fl=R[i+4];
+      const gx0=Math.max(0, Math.floor((x0-fl)/CELL)), gx1=Math.min(GW-1, Math.floor((x1+fl)/CELL));
+      const gy0=Math.max(0, Math.floor((y0-fl)/CELL)), gy1=Math.min(GH-1, Math.floor((y1+fl)/CELL));
+      for(let gy=gy0;gy<=gy1;gy++){
+        const y=(gy+0.5)*CELL, dy= y<y0? y0-y : y>y1? y-y1 : 0;
+        for(let gx=gx0;gx<=gx1;gx++){
+          const x=(gx+0.5)*CELL, dx= x<x0? x0-x : x>x1? x-x1 : 0;
+          const d=Math.sqrt(dx*dx+dy*dy); if(d>=fl) continue;
+          const p=PANEL_A+(1-PANEL_A)*sstep(0, fl, d), k=gy*GW+gx;
+          if(p<pq[k]) pq[k]=p;
+        }
+      }
+    }
+    // the floor darkens below the pass, most toward the lower corners, and
+    // then sinks into the background for good down to the frame's bottom
+    // edge (and stays gone below it, where the primary monitor ends)
+    const hz=r.hz, dv=1/Math.max(1, r.hd-hz), du=1/r.half;
+    const f0=r.y0+r.dh*0.58, f1=r.y0+r.dh*0.985;
+    for(let gy=0;gy<GH;gy++){
+      const y=(gy+0.5)*CELL, t=sstep(FL_V0, FL_V1, (y-hz)*dv);
+      const fp=(y-f0)/(f1-f0);
+      const foot= fp<=0? 1 : fp>=1? 0 : 1-(fp<0.35? fp/0.35*0.2 : fp<0.7? 0.2+(fp-0.35)/0.35*0.42 : 0.62+(fp-0.7)/0.3*0.38);
+      for(let gx=0;gx<GW;gx++){
+        const k=gy*GW+gx;
+        let f=pq[k]*foot;
+        if(t>0) f*=1-t*(1-lerp(FL_MID, FL_EDGE, sstep(FL_U0, FL_U1, Math.abs((gx+0.5)*CELL-T.cx)*du)));
+        g[k]=Math.sqrt(f)*LQ;
+      }
+    }
+    // the far range's outline, cut into runs of one light step each
+    useGrid(r);
+    for(const f of r.far){
+      const P=f.pts, B=new Map(); let cur=-1, path=null;
+      for(let i=0;i+3<P.length;i+=2){
+        const c=cellAt((P[i]+P[i+2])*0.5, (P[i+1]+P[i+3])*0.5)/LQ, q=Math.round(c*c*8);
+        if(q!==cur){
+          cur=q;
+          if(q){ path=B.get(q); if(!path){ path=new Path2D(); B.set(q, path); } path.moveTo(P[i], P[i+1]); }
+        }
+        if(q) path.lineTo(P[i+2], P[i+3]);
+      }
+      f.lines=[...B].map(([q,p])=>({p, a:q/8}));
+    }
+    r.pv=PR.v;
+  }
+
   // one row's screen points and visibility, and the row in front of it. Sized
   // to the shared column count, which a wider canvas set up later can raise
   function rowArrays(r){
@@ -125,9 +245,12 @@ SCENES.ridgeline=(function(){
     r.bx=new Float32Array(m); r.by=new Float32Array(m); r.bv=new Uint8Array(m);
   }
 
-  /* Per-canvas geometry. The vertical framing follows the band as the
-     PRIMARY monitor sees it, so a span frames the primary the way a single
-     screen would, and the other monitors extend the same world sideways. A
+  /* Per-canvas geometry. The view is composed in a frame FRAME of the
+     PRIMARY monitor's height tall, standing on its bottom edge, so a span
+     frames the primary the way a single screen would, and the other
+     monitors extend the same world sideways. The band is taller than the
+     frame because on a span its layer is the bounding box, which is taller
+     than the primary; on a single screen the band's top stays empty. A
      canvas of its own on another monitor is framed on that monitor. */
   function setup(T){
     const r=T.rl||(T.rl={});
@@ -136,15 +259,29 @@ SCENES.ridgeline=(function(){
     const SS=T.screens||[], holds=(s)=> s && T.cx>=s.x && T.cx<=s.x+s.w;
     let P=SS[LAY.primary||0];
     if(!holds(P)) P=SS.find(holds)||P;
-    let hd=T.h, half=T.w/2;
-    if(P){ const b=P.y+P.h; if(b>T.h*0.3 && b<T.h-0.5) hd=b; half=P.w/2; }
-    r.hd=hd; r.hz=Math.round(hd*HORIZON)+0.5;
+    let hd=T.h, dh=T.h*FRAME/BAND, half=T.w/2;
+    if(P){ const b=P.y+P.h; if(b>T.h*0.3 && b<T.h-0.5) hd=b; dh=P.h*FRAME; half=P.w/2; }
+    // a band too short for the whole frame keeps what fits
+    dh=Math.min(dh, hd);
+    const y0=hd-dh;
+    r.hd=hd; r.y0=y0; r.dh=dh; r.half=half;
+    r.hz=Math.round(y0+dh*HORIZON)+0.5;
     // a portrait monitor would see only the valley floor at this focal
     // length, so cap it to keep a usable field of view
-    r.F=Math.min(hd*3.2, half/0.35);
+    r.F=Math.min(dh*3.2, half/0.35);
     r.uL=T.cx/r.F; r.uR=(T.w-T.cx)/r.F;
-    r.eTop=(r.hz-hd*0.07)/r.F;            // highest angle that stays inside the band
+    r.eTop=(r.hz-y0-dh*0.07)/r.F;         // highest angle that stays inside the frame
     r.zBot=CAM_Y*r.F/(hd-r.hz);           // flat ground meets the design bottom here
+    // the ground stops at the frame's bottom edge; under it only the monitors
+    // that reach lower are painted, since the rest of the box is on no screen
+    r.gb=T.h+2; r.below=[];
+    if(hd<T.h-1){
+      r.gb=hd+2;
+      SS.forEach(s=>{
+        const x0=Math.max(0, s.x), x1=Math.min(T.w, s.x+s.w), y1=Math.min(T.h, s.y+s.h);
+        if(x1>x0 && y1>hd+1) r.below.push([x0, hd, x1-x0, y1-hd]);
+      });
+    }
     const n=Math.ceil(Math.max(r.uL,r.uR)*(Z_FAR+2*SP)/DX)+3;
     ensureCols(n);
     rowArrays(r);
@@ -153,7 +290,9 @@ SCENES.ridgeline=(function(){
     // the solid one it only rises into as it nears
     r.ns=Math.ceil(T.w/RES)+1;
     r.hh=new Float32Array(r.ns); r.hs=new Float32Array(r.ns); r.hm=new Float32Array(r.ns);
-    r.gen=-1;
+    r.gw=Math.ceil(T.w/CELL)+1; r.gh=Math.ceil(T.h/CELL)+1;
+    r.fg=new Float32Array(r.gw*r.gh); r.pq=new Float32Array(r.gw*r.gh);
+    r.gen=-1; r.pv=-1;
     buildRange(T, r);
   }
 
@@ -172,17 +311,24 @@ SCENES.ridgeline=(function(){
     const step=6/r.F, u0=-r.uL-step, u1=r.uR+step;
     const gapA=CAM_Y/Z_FAR;                    // far plane's floor, as an angle below the horizon
     r.far=[]; r.lowY=r.hz;
+    // the outline is kept as points: shade() cuts it by the light grid
     [[3.1, 0.10, 0.034, gapA*0.30], [11.7, 0.22, 0.050, gapA*0.62]].forEach(([seed,notch,amp,base])=>{
-      const line=new Path2D(), fill=new Path2D();
-      let first=true, lastX=0, firstX=0;
+      const pts=[];
       for(let u=u0; u<=u1+step*0.5; u+=step){
-        const x=T.cx+u*r.F, y=r.hz-rangeElev(u,seed,notch,amp,base)*r.F;
-        if(first){ line.moveTo(x,y); fill.moveTo(x,y); firstX=x; first=false; }
-        else{ line.lineTo(x,y); fill.lineTo(x,y); }
-        lastX=x; if(y>r.lowY) r.lowY=y;
+        const y=r.hz-rangeElev(u,seed,notch,amp,base)*r.F;
+        pts.push(T.cx+u*r.F, y);
+        if(y>r.lowY) r.lowY=y;
       }
-      fill.lineTo(lastX, T.h+2); fill.lineTo(firstX, T.h+2); fill.closePath();
-      r.far.push({line, fill});
+      r.far.push({pts:new Float32Array(pts), lines:[]});
+    });
+    // each fill only has to reach the ground line: the ground covers the rest
+    const fb=Math.max(r.lowY, r.hz+gapA*r.F*1.35)+3;
+    r.far.forEach(f=>{
+      const P=f.pts, fill=new Path2D();
+      fill.moveTo(P[0], P[1]);
+      for(let i=2;i<P.length;i+=2) fill.lineTo(P[i], P[i+1]);
+      fill.lineTo(P[P.length-2], fb); fill.lineTo(P[0], fb); fill.closePath();
+      f.fill=fill;
     });
   }
 
@@ -231,17 +377,6 @@ SCENES.ridgeline=(function(){
     hg.addColorStop(1, hslStr(H, Sa, L, 0));
     r.hzLine=hg;
     r.farLine=col(1);
-    // the foreground sinks into the background color toward the bottom edge.
-    // The canvas hands back any opaque color as #rrggbb, which gives the
-    // channels to build an alpha ramp from, whatever form PAL.bg is in.
-    ctx.fillStyle=PAL.bg;
-    const hx=String(ctx.fillStyle), ok=/^#[0-9a-f]{6}$/i.test(hx);
-    const ch=(i)=> ok? parseInt(hx.slice(i,i+2),16) : 0;
-    const bgA=(a)=>`rgba(${ch(1)},${ch(3)},${ch(5)},${a})`;
-    r.footY=Math.round(r.hd*0.58);
-    const ft=ctx.createLinearGradient(0, r.footY, 0, r.hd*0.985);
-    [[0,0],[0.35,0.2],[0.7,0.62],[1,1]].forEach(([f,a])=>ft.addColorStop(f, bgA(a)));
-    r.foot=ft;
     r.gen=PAL.gen;
   }
 
@@ -270,7 +405,7 @@ SCENES.ridgeline=(function(){
       const c1=Math.min( n, Math.ceil ( r.uR*(d+SP)/DX)+1);
       const aFar=sstep(Z_FAR, Z_FAR-FADE_FAR, d);
       // only the very nearest rows fade by depth, since their facets are
-      // coarse; the rest leave through the foreground fade drawn last
+      // coarse; the rest leave through the light grid's foreground fade
       const aNear=sstep(r.zBot*0.45, r.zBot*0.95, d);
       const depth=clamp(1-(d-r.zBot)/span, 0, 1);
       const a=aFar*aNear*(0.32+0.68*depth)*lift;
@@ -288,20 +423,24 @@ SCENES.ridgeline=(function(){
         if(y<minY) minY=y;
       }
       if(minY>r.hd){
-        // under the solid foot: nothing here shows, but the next row's
+        // under the frame's bottom edge: nothing here shows, but the next row's
         // slope lines still run down to it
         for(let c=c0;c<=c1;c++) av[c+n]=1;
       }else{
         // slope lines from this row forward to the one in front
         if(ph){
           const lo=Math.max(c0,pc0), hi=Math.min(c1,pc1), split=podd<0.999;
+          const sE=Math.sqrt(paS), sO=Math.sqrt(paS*podd);
           for(let c=lo;c<=hi;c++){
-            const odd=split && (c&1), sa=odd? paS*podd : paS;
-            const lv=level(sa); if(!lv) continue;
+            const sq=split && (c&1) ? sO : sE;
+            if(sq*LQ<0.5) continue;                 // under the first level even in full light
             const j=c+n, bxj=ax[j], byj=ay[j];
             let ib=Math.round(bxj*iR); if(ib<0) ib=0; else if(ib>=NS) ib=NS-1;
             if(byj>=H[ib]+EPS) continue;            // the far end is behind nearer ground
-            const b=band3(h[j]+ph[j])*LV+lv, fx=px[j], fy=py[j], dx=fx-bxj, dy=fy-byj;
+            const fx=px[j], fy=py[j], dx=fx-bxj, dy=fy-byj;
+            const la=lit(sq, bxj, byj), lb=lit(sq, fx, fy), b3=band3(h[j]+ph[j])*LV;
+            let b=-1;
+            if(la-lb<=1 && lb-la<=1){ const l=la>lb? la : lb; if(!l) continue; b=b3+l; }
             if(dx<-2*RES || dx>2*RES){
               // a long one, out at the sides: nearer ground can rise between
               // its ends, so it is walked unless three points along it clear
@@ -311,7 +450,7 @@ SCENES.ridgeline=(function(){
                   let ii=Math.round((bxj+dx*q)*iR); if(ii<0) ii=0; else if(ii>=NS) ii=NS-1;
                   clear= byj+dy*q < H[ii]+EPS;
                 }
-                if(clear){ sSeg(b, bxj, byj, fx, fy); continue; }
+                if(clear){ seg(b, b3, sq, bxj, byj, fx, fy); continue; }
               }
               const st=Math.ceil((dx<0? -dx : dx)*iR);
               let on=true, sx=bxj, sy=byj;
@@ -321,32 +460,41 @@ SCENES.ridgeline=(function(){
                 const v= q===st? pv[j]===1 : y<H[ii]+EPS;
                 if(v!==on){
                   const tm=(q-0.5)/st, xm=bxj+dx*tm, ym=byj+dy*tm;
-                  if(on) sSeg(b, sx, sy, xm, ym); else{ sx=xm; sy=ym; }
+                  if(on) seg(b, b3, sq, sx, sy, xm, ym); else{ sx=xm; sy=ym; }
                   on=v;
                 }
               }
-              if(on) sSeg(b, sx, sy, fx, fy);
+              if(on) seg(b, b3, sq, sx, sy, fx, fy);
               continue;
             }
-            if(pv[j]){ sSeg(b, bxj, byj, fx, fy); continue; }
+            if(pv[j]){ seg(b, b3, sq, bxj, byj, fx, fy); continue; }
             // the near end is hidden: stop where the line meets the ground in front
             let jf=Math.round(fx*iR); if(jf<0) jf=0; else if(jf>=NS) jf=NS-1;
             if(dy<=0.01) continue;
             let t=(H[jf]-byj)/dy; if(t<=0) continue; if(t>1) t=1;
-            sSeg(b, bxj, byj, bxj+dx*t, byj+dy*t);
+            seg(b, b3, sq, bxj, byj, bxj+dx*t, byj+dy*t);
           }
         }
         // the ridge line, walked sample by sample against the horizon. A row
         // fading in rises out of the ground line into each silhouette, so
         // neither ever gains a whole peak in one frame
-        const lvR=a>0.004? level(a) : 0;
+        const sR=a>0.004? Math.sqrt(a) : 0;
         const sol=sstep(Z_FAR-4, Z_FAR-FADE_FAR, d), haze=sol<1, shz=sstep(Z_FAR, Z_FAR-5, d);
         let i=Math.round(ax[c0+n]*iR); if(i<0) i=0; else if(i>=NS) i=NS-1;
         let pd=ay[c0+n]-H[i]-EPS, pxs=ax[c0+n], vis=pd<0, open=-1;
         av[c0+n]=vis?1:0;
         for(let c=c0;c<c1;c++){
           const j=c+n, x0=ax[j], y0=ay[j], x1=ax[j+1], y1=ay[j+1];
-          const bk=lvR? band3(h[j]+h[j+1])*LV+lvR : -1;
+          // a segment whose ends sit in different light changes level at the
+          // samples where its light does, so a panel's edge stays soft
+          let bk=-1, b3=0, grad=false;
+          if(sR){
+            b3=band3(h[j]+h[j+1])*LV;
+            const la=lit(sR, x0, y0), lb=lit(sR, x1, y1);
+            grad= la-lb>1 || lb-la>1;
+            const l= grad || la>lb ? la : lb;
+            if(l) bk=b3+l;
+          }
           if(vis && bk!==open){ if(open>=0) rEnd(open); open=bk; if(bk>=0) rPt(bk, x0, y0); }
           const sl=(y1-y0)/(x1-x0);
           let i0=Math.floor(x0*iR)+1, i1=Math.floor(x1*iR);
@@ -360,6 +508,13 @@ SCENES.ridgeline=(function(){
               if(!vis){ open=bk; if(bk>=0) rPt(bk, xc, yc); }
               else{ if(open>=0){ rPt(open, xc, yc); rEnd(open); } open=-1; }
               vis=!vis;
+            }
+            if(grad){
+              const l=lit(sR, xs, ys), nb= l? b3+l : -1;
+              if(nb!==bk){
+                bk=nb;
+                if(vis){ if(open>=0){ rPt(open, xs, ys); rEnd(open); } open=bk; if(bk>=0) rPt(bk, xs, ys); }
+              }
             }
             if(ys<hv) H[s]=ys;
             const yl=lowY0+(ys-lowY0)*sol;
@@ -401,11 +556,16 @@ SCENES.ridgeline=(function(){
     if(r.gen!==PAL.gen) styles(T, r);
     const ctx=T.ctx, F=r.F, cx=T.cx, hz=r.hz, dpr=T.dpr;
     const gap=CAM_Y/Z_FAR*F, lowY0=Math.max(r.lowY, hz+gap*1.35);
+    if(r.pv!==PR.v) shade(T, r);
+    useGrid(r);
     march(T, r, camZ, e, lowY0);
-    ctx.clearRect(0,0,T.w,T.h);
+    // nothing is ever drawn above the frame, and everything under the ground
+    // line is repainted opaque below, so only the air between needs clearing
+    const top=Math.max(0, Math.floor(r.y0)-2);
+    ctx.clearRect(0, top, T.w, Math.min(T.h, lowY0+3)-top);
 
     // 1. glow behind the pass
-    const RX=Math.min(F*0.62, T.w), RY=hz*0.78;
+    const RX=Math.min(F*0.62, T.w), RY=(hz-r.y0)*0.78;
     ctx.globalAlpha=clamp(0.85+0.5*e, 0, 1);
     ctx.setTransform(dpr*RX,0,0,dpr*RY,dpr*cx,dpr*hz);
     ctx.fillStyle=r.glow; ctx.fillRect(-1,-1,2,2);
@@ -420,9 +580,9 @@ SCENES.ridgeline=(function(){
     // 3. the far range, two layers of it
     ctx.fillStyle=PAL.bg; ctx.strokeStyle=r.farLine;
     for(let i=0;i<r.far.length;i++){
-      const f=r.far[i];
+      const f=r.far[i], fa=(i? 0.20 : 0.11)*(1+0.3*e);
       ctx.globalAlpha=1; ctx.fill(f.fill);
-      ctx.globalAlpha=(i? 0.20 : 0.11)*(1+0.3*e); ctx.stroke(f.line);
+      for(let q=0;q<f.lines.length;q++){ ctx.globalAlpha=fa*f.lines[q].a; ctx.stroke(f.lines[q].p); }
     }
     // 4. mist lying in the far valley
     ctx.globalAlpha=clamp(0.9+0.3*e, 0, 1);
@@ -448,16 +608,18 @@ SCENES.ridgeline=(function(){
     ctx.globalAlpha=1;
     ctx.beginPath(); ctx.moveTo(0, HS[0]);
     for(let i=1;i<NS;i++) ctx.lineTo(i*RES, HS[i]);
-    ctx.lineTo((NS-1)*RES, T.h+2); ctx.lineTo(0, T.h+2); ctx.closePath();
+    ctx.lineTo((NS-1)*RES, r.gb); ctx.lineTo(0, r.gb); ctx.closePath();
     ctx.fill();
+    for(let i=0;i<r.below.length;i++){ const b=r.below[i]; ctx.fillRect(b[0], b[1], b[2], b[3]); }
 
     // 6. the lines. The economy surface drops the CSS glow on .terrain, so
     // the crests carry their own: faint copies a pixel above and below, which
     // stay cheap hairlines where a wide stroke would rasterize as a mask
+    // A level whose alpha rounds to nothing on an 8-bit surface is skipped.
     ctx.strokeStyle=r.line;
     if(document.body.classList.contains("economy")){
       for(let l=1;l<LV;l++){
-        const b=2*LV+l; if(!RN[b]) continue;
+        const b=2*LV+l; if(!RN[b] || LA[l]*0.3<VIS_A) continue;
         ctx.globalAlpha=clamp(LA[l]*0.3,0,1);
         ctx.beginPath(); strokeRidges(ctx, b, -1.25); strokeRidges(ctx, b, 1.25); ctx.stroke();
       }
@@ -465,22 +627,20 @@ SCENES.ridgeline=(function(){
     for(let t=0;t<3;t++){
       for(let l=1;l<LV;l++){
         const b=t*LV+l;
-        if(SN[b]){
+        if(SN[b] && LA[l]*SLOPE_A[t]>=VIS_A){
           const A=SB[b], m=SN[b];
           ctx.globalAlpha=clamp(LA[l]*SLOPE_A[t],0,1);
           ctx.beginPath();
           for(let k=0;k<m;k+=4){ ctx.moveTo(A[k],A[k+1]); ctx.lineTo(A[k+2],A[k+3]); }
           ctx.stroke();
         }
-        if(RN[b]){
+        if(RN[b] && LA[l]*RIDGE_A[t]>=VIS_A){
           ctx.globalAlpha=clamp(LA[l]*RIDGE_A[t],0,1);
           ctx.beginPath(); strokeRidges(ctx, b, 0); ctx.stroke();
         }
       }
     }
     ctx.globalAlpha=1;
-    // 7. the foreground fade, solid below the primary monitor's bottom edge
-    ctx.fillStyle=r.foot; ctx.fillRect(0, r.footY, T.w, T.h-r.footY+1);
   }
 
   /* The sky: stars at infinity do not move when the camera flies forward, so
@@ -516,9 +676,11 @@ SCENES.ridgeline=(function(){
   }
 
   return {
-    label:"Ridgeline", band:0.52,
+    label:"Ridgeline", band:BAND,
     init(T){ setup(T); },
     frame(dt, SCx){
+      const now=performance.now();
+      if(!(now>=PR.t && now-PR.t<1000)) panels(now);
       // only real music moves it: the idle visualizer wave would otherwise
       // make the range breathe with no sound playing
       const want=(AUD.live && CFG.audio) ? SCx.energy : 0;
@@ -533,7 +695,11 @@ SCENES.ridgeline=(function(){
     },
     // game mode shows one composed view, and the flight resumes from it, so
     // the cut happens on entry, while a game has the screen, never on exit
-    still(T){ S.camZ=STILL_Z; paint(T, STILL_Z, 0); },
+    still(T){
+      const now=performance.now();
+      if(!(now>=PR.t && now-PR.t<100)) panels(now);
+      S.camZ=STILL_Z; paint(T, STILL_Z, 0);
+    },
     stillSky(K, SCx){ skyPaint(K, SCx.t); }
   };
 })();

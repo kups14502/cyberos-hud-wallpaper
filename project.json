@@ -1,6 +1,6 @@
 {
 	"contentrating" : "Everyone",
-	"description" : "A retro-futuristic terminal HUD wallpaper with live, audio-reactive metrics: glowing diagnostic gauges, a sparkline system monitor, process list, animated wireframe terrain, clock and weather.\n\nScales cleanly to any resolution and aspect ratio. On ultrawide (21:9) and super-ultrawide (32:9) the HUD stays a centered, cohesive unit while the starfield and terrain fill the full screen behind it.\n\nUse your own picture as the background: point the wallpaper at any image, GIF or WebM video and the HUD sits on top of it. Blur and dim sliders keep the panels readable over busy footage, and you can leave the starfield and terrain running over it if you want both.\n\nRecolor the entire scheme from a single accent swatch. OLED true-black mode included, plus toggles for every panel, scanlines, glow, and more.\n\nNew in v0.3.0: pick a scene and a panel style. The scenes are Waves (the original), Data Stream, Solar System and Galaxy. Solar System is a live orrery: the planets and moons sit at their real positions for today's date, and the Moon is labeled with its current phase. The new Blade panel style has cut corners, tick-ring gauges and an LED spectrum visualizer.\n\nGame mode: while a game runs fullscreen, the scene holds still and the visualizer parks, but the stats stay live, so a side monitor still shows your CPU and GPU load. It needs the companion app, and Wallpaper Engine's \"Other application fullscreen\" setting on \"Keep running\".\n\nMetrics: by default they are physically realistic simulations, so it looks alive on any PC with zero setup. A few values are always real: clock, date, audio spectrum, screen resolution, CPU core count, and RAM. Want your actual CPU, RAM, GPU, disk, network, and process stats? Run the optional companion app (link below). The wallpaper auto-detects it within a second and falls back to simulation if it is not running.\n\nCompanion download and setup: https://github.com/kups14502/cyberos-hud-wallpaper",
+	"description" : "A retro-futuristic terminal HUD wallpaper with live, audio-reactive metrics: glowing diagnostic gauges, a sparkline system monitor, process list, animated wireframe terrain, clock and weather.\n\nScales cleanly to any resolution and aspect ratio. On ultrawide (21:9) and super-ultrawide (32:9) the HUD stays a centered, cohesive unit while the starfield and terrain fill the full screen behind it.\n\nUse your own picture as the background: point the wallpaper at any image, GIF or WebM video and the HUD sits on top of it. Blur and dim sliders keep the panels readable over busy footage, and you can leave the starfield and terrain running over it if you want both.\n\nRecolor the entire scheme from a single accent swatch. OLED true-black mode included, plus toggles for every panel, scanlines, glow, and more.\n\nPick a scene and a panel style. There are nine scenes: Waves (the original), Data Stream, Solar System, Galaxy, Ridgeline, Topographic, Orbital, Circuit and Horizon Sun. Solar System is a live orrery: the planets and moons sit at their real positions for today's date, and the Moon is labeled with its current phase. The Blade panel style has cut corners, tick-ring gauges and an LED spectrum visualizer.\n\nGame mode: while a game runs fullscreen, the scene holds still and the visualizer parks, but the stats stay live, so a side monitor still shows your CPU and GPU load. It needs the companion app, and Wallpaper Engine's \"Other application fullscreen\" setting on \"Keep running\".\n\nMetrics: by default they are physically realistic simulations, so it looks alive on any PC with zero setup. A few values are always real: clock, date, audio spectrum, screen resolution, CPU core count, and RAM. Want your actual CPU, RAM, GPU, disk, network, and process stats? Run the optional companion app (link below). The wallpaper auto-detects it within a second and falls back to simulation if it is not running.\n\nCompanion download and setup: https://github.com/kups14502/cyberos-hud-wallpaper",
 	"file" : "index.html",
 	"general" : 
 	{
@@ -1214,6 +1214,26 @@
 					{
 						"label" : "Galaxy",
 						"value" : "galaxy"
+					},
+					{
+						"label" : "Ridgeline",
+						"value" : "ridgeline"
+					},
+					{
+						"label" : "Topographic",
+						"value" : "topo"
+					},
+					{
+						"label" : "Orbital",
+						"value" : "orbital"
+					},
+					{
+						"label" : "Circuit",
+						"value" : "circuit"
+					},
+					{
+						"label" : "Horizon Sun",
+						"value" : "outrun"
 					}
 				],
 				"order" : 101,
@@ -1390,7 +1410,7 @@
 	"ratingsex" : "none",
 	"ratingviolence" : "none",
 	"tags" : [ "Abstract" ],
-	"title" : "CyberOS HUD v0.3.0",
+	"title" : "CyberOS HUD v0.3.1",
 	"type" : "web",
 	"version" : 25,
 	"visibility" : "public",

@@ -56,6 +56,15 @@ process list, system monitor, audio visualizer, time/location.
   real speed, so they look still. The Moon is labeled with its current phase.
   Orbit sizes are spaced to fit the screen, not drawn to scale.
 - **Galaxy**: a tilted spiral galaxy that turns once every 18 minutes.
+- **Ridgeline**: a slow flyover of a wireframe mountain range toward a glowing
+  pass.
+- **Topographic**: a live contour map of slowly shifting terrain, with index
+  contours and summit markers.
+- **Orbital**: the view from orbit, a dark planet curving up from the bottom of
+  the screen under a thin glowing atmosphere.
+- **Circuit**: a circuit board with light pulses running along its traces.
+- **Horizon Sun**: a synthwave sun on the horizon behind layered crags, over a
+  perspective grid.
 
 **Background particles** and **Wireframe terrain** switch off the scene's two
 layers, and audio reactivity and metric animation speed sit here too.
