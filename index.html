@@ -1930,7 +1930,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "3.2";
+const VERSION = "3.3";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -3508,10 +3508,15 @@ window.wallpaperPropertyListener = {
       // WE can deliver properties before DOMContentLoaded; CFG is stored
       // above either way and applied once the DOM exists.
       if(domReady){
+        const wasGame=GAME.on;
         applyConfig();
         // a few things need rebuilding when their inputs change
         buildTerminal();
         if(wxChanged) refreshLocation();
+        // Game mode has stopped the loop, so a scene property changed now (the
+        // galaxy's size, the palette) would only show once game mode ends, as a
+        // jump. Redraw the still instead. Entering game mode drew it already.
+        if(wasGame && GAME.on && LAY_BUILT) gameStill();
       }
     }catch(e){ console.error("prop apply error", e); }
   },
