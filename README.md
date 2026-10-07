@@ -53,6 +53,10 @@ a browser tab. The line dims while the track is paused and goes away when playba
 stops. Switch it off with the **Now playing** toggle under Panels. It needs
 **Media integration** turned on in Wallpaper Engine's own settings.
 
+**Audio sensitivity** (under Metrics): scales the audio level before the
+visualizer and the scenes react to it. If your system plays quietly and the bars
+barely move, raise it. 1 is the original response.
+
 **Scene**: pick the animated background.
 - **Waves**: the original flowing wireframe terrain.
 - **Data Stream**: sparse columns of hex glyphs falling onto a glass floor. In
@@ -313,7 +317,8 @@ The waveform reacts to whatever is playing **only when Wallpaper Engine feeds it
 audio**. Check Wallpaper Engine → **Settings → General → Audio input** and make
 sure it is set to your active playback device (e.g. "Default playback device"),
 and that the wallpaper's **Audio-reactive visualizer** property is on. With no
-audio feed (or during silence) it falls back to the idle wave by design.
+audio feed (or during silence) it falls back to the idle wave by design. If the
+bars do react but only a little, raise **Audio sensitivity**.
 
 ### Auto-start the companion on login (Windows)
 
