@@ -18,7 +18,7 @@
 			{
 				"condition" : "audio_react.value == true",
 				"index" : 24,
-				"max" : 5,
+				"max" : 20,
 				"min" : 0.5,
 				"order" : 124,
 				"step" : 0.1,
@@ -1442,7 +1442,7 @@
 	"ratingsex" : "none",
 	"ratingviolence" : "none",
 	"tags" : [ "Abstract" ],
-	"title" : "CyberOS HUD v0.3.4",
+	"title" : "CyberOS HUD v0.3.5",
 	"type" : "web",
 	"version" : 29,
 	"visibility" : "public",

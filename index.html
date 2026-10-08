@@ -1931,7 +1931,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "3.4";
+const VERSION = "3.5";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -3438,7 +3438,7 @@ window.wallpaperPropertyListener = {
       if(p.bgcolor)       CFG.bg     = p.bgcolor.value;
       if(p.alertcolor)    CFG.alert  = p.alertcolor.value;
       if(p.audio_react)   CFG.audio  = asBool(p.audio_react);
-      if(p.audio_gain)    CFG.audioGain = clamp(+p.audio_gain.value || 1, 0.1, 10);
+      if(p.audio_gain)    CFG.audioGain = clamp(+p.audio_gain.value || 1, 0.1, 20);
       if(p.now_playing!==undefined) CFG.nowPlaying = asBool(p.now_playing);
       if(p.show_terrain)  CFG.terrain= asBool(p.show_terrain);
       if(p.show_starfield)CFG.starfield=asBool(p.show_starfield);
