@@ -970,6 +970,10 @@ SAMPLER = Sampler()
 #
 # Off unless --we-audio-watchdog is passed. A stats app that restarts another
 # program is intrusive, and a misfire costs a visible wallpaper reload.
+#
+# Even a correct restart is a visible reload, and headset and VR switching can
+# kill capture several times a day. So a confirmed fault is only queued, and the
+# restart waits until nobody has touched the keyboard or mouse for a while.
 # ---------------------------------------------------------------------------
 WE_DIR_DEFAULT = r"C:\Program Files (x86)\Steam\steamapps\common\wallpaper_engine"
 
@@ -1183,6 +1187,22 @@ def _stacked_view_count():
     return best
 
 
+class _LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint32), ("dwTime", ctypes.c_uint32)]
+
+
+def _input_idle_seconds():
+    """Seconds since the last keyboard or mouse input in this session. 0.0 if it
+    cannot be read, which keeps a queued restart waiting rather than firing."""
+    info = _LASTINPUTINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+        return 0.0
+    # Both are 32-bit tick counts, so masking keeps this right across the
+    # 49.7-day wrap.
+    return ((ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0
+
+
 def _default_watchdog_log():
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     return os.path.join(base, "CyberOS-HUD", "we-watchdog.log")
@@ -1201,6 +1221,7 @@ class WeAudioWatchdog(threading.Thread):
     MAX_FAILED_FIXES = 3
     BACKOFF = 4.0            # cooldown multiplier per attempt that did not stick
     RECOVERED_AFTER = 900.0  # quiet for this long = the last fix worked
+    IDLE_BEFORE_FIX = 300.0  # no keyboard/mouse input for this long = nobody watching
 
     def __init__(self, we_dir=WE_DIR_DEFAULT, wallpaper_path="", verbose=False,
                  log_path=None):
@@ -1214,6 +1235,7 @@ class WeAudioWatchdog(threading.Thread):
         self._last_device = None
         self._failed_fixes = 0
         self._gave_up = False
+        self._pending = False
 
     def _log(self, msg):
         print("[we-watchdog] " + msg)
@@ -1326,7 +1348,7 @@ class WeAudioWatchdog(threading.Thread):
         self._log("reapplied wallpaper on monitor 0 to clear the stacked view")
 
     def _remediate(self):
-        self._log("remediating: audio is playing but the wallpaper reports silence")
+        self._log("remediating: PC is idle, restarting WE to reattach audio capture")
         # Stamp the cooldown up front: if the restart fails (WE not installed
         # where we think, permissions, whatever) we must not retry every poll.
         self._last_fix = time.time()
@@ -1363,6 +1385,27 @@ class WeAudioWatchdog(threading.Thread):
                 # No fresh report means no wallpaper is talking to us (or it is a
                 # remote setup, or an older build): nothing to diagnose.
                 fresh = state is not None and age < self.REPORT_MAX_AGE
+
+                if self._pending:
+                    # WE's own "reload audio" setting sometimes reattaches
+                    # capture by itself; live samples mean the restart is moot.
+                    if fresh and state == "1":
+                        self._pending = False
+                        self._log("audio capture came back on its own, restart canceled")
+                    elif (_input_idle_seconds() >= self.IDLE_BEFORE_FIX
+                          and not _fullscreen_app()):
+                        self._pending = False
+                        if self._last_fix:
+                            self._failed_fixes += 1
+                        if self._failed_fixes > self.MAX_FAILED_FIXES:
+                            self._gave_up = True
+                            self._log("restarting WE %d times did not restore audio capture; "
+                                      "giving up until it recovers on its own"
+                                      % self.MAX_FAILED_FIXES)
+                        else:
+                            self._remediate()
+                    continue
+
                 starved = fresh and state == "0" and peak > self.PEAK_MIN
                 # Never restart WE under a fullscreen game: a deaf visualizer
                 # nobody can see beats a desktop flash in the middle of a match.
@@ -1392,15 +1435,11 @@ class WeAudioWatchdog(threading.Thread):
                 cooldown = self.COOLDOWN * (self.BACKOFF ** self._failed_fixes)
                 if (now - self._starved_since >= self.STARVE_SECONDS
                         and now - self._last_fix >= cooldown):
-                    if self._last_fix:
-                        self._failed_fixes += 1
-                    if self._failed_fixes > self.MAX_FAILED_FIXES:
-                        self._gave_up = True
-                        self._log("restarting WE %d times did not restore audio capture; "
-                                  "giving up until it recovers on its own"
-                                  % self.MAX_FAILED_FIXES)
-                        continue
-                    self._remediate()
+                    self._pending = True
+                    self._starved_since = None
+                    self._log("audio is playing but the wallpaper reports silence; "
+                              "restarting WE after %.0fs without input"
+                              % self.IDLE_BEFORE_FIX)
             except Exception as exc:
                 self._log("error: %s" % exc)
 
