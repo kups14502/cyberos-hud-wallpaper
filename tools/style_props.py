@@ -9,7 +9,7 @@ import sys
 LABELS = {
     "waves": "Waves (flowing wireframe)", "datastream": "Data Stream", "solar": "Solar System",
     "galaxy": "Galaxy", "ridgeline": "Ridgeline", "topo": "Topographic", "orbital": "Orbital",
-    "circuit": "Circuit", "outrun": "Horizon Sun",
+    "circuit": "Circuit", "outrun": "Horizon Sun", "starship": "Starship (Star Trek)",
     "classic": "Classic", "blade": "Blade", "glass": "Glass",
 }
 

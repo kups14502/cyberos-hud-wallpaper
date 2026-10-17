@@ -77,6 +77,11 @@ barely move, raise it. 1 is the original response.
 - **Circuit**: a circuit board with light pulses running along its traces.
 - **Horizon Sun**: a synthwave sun on the horizon behind layered crags, over a
   perspective grid.
+- **Starship**: a 3D Star Trek ship turning slowly over your main screen.
+  **Ship** picks the Enterprise-D, the Enterprise-A, Voyager or the Defiant.
+  **Ship look** shows it as a lit studio model, or as a hologram in your accent
+  color with its main parts labeled. **Ship motion** chooses slow full turns or
+  a gentle sway around a three-quarter view, and **Ship size** scales it.
 
 **Background particles** and **Wireframe terrain** switch off the scene's two
 layers, and audio reactivity and metric animation speed sit here too.
@@ -437,6 +442,9 @@ project.json        Wallpaper Engine manifest + property definitions
 metrics_server.py   optional real-metrics server (psutil)
 styles/             source of each scene and panel style; tools/inline_styles.py
                     builds the ones project.json offers into index.html
+styles/starship/    the Starship scene in parts (geometry, one file per ship,
+                    renderer, scene); tools/build_starship.py joins them into
+                    styles/scenes/starship.js
 preview.jpg         Wallpaper Engine thumbnail
 README.md           this file
 ```
