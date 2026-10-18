@@ -12963,8 +12963,11 @@ SHIPS.defiant={
       fp(false,-1.8,21.6,v=>BT(v)-0.35,v=>BB(v)+0.35,0.06,2.6,"dark");
       fp(false,-1.4,21.2,BT,BB,0.15,2.3,"grille");
       fp(false,7.6,10,v=>BT(v)+0.3,v=>BB(v)-0.3,0.3,0.3,"hull2");
-      const bar=(a,b)=>{ const dv=b[0]-a[0], dd=b[1]-a[1], L=Math.hypot(dv,dd), nv=-dd/L*0.07, nd=dv/L*0.07;
-        loft([a,b].map(([v,D])=>({ p:[[0.2,1],[0.27,1],[0.27,-1],[0.2,-1]].map(([pr,s])=>Q(endsB(v)[0]-pr,v+s*nv,D+s*nd)) })),{ mat:"dark" }); };
+      // a strand of the mesh, stepped every meter so it follows the face where it curves toward the outboard tip
+      // (a straight chord would sink into the glow plate there)
+      const bar=(a,b)=>{ const dv=b[0]-a[0], dd=b[1]-a[1], L=Math.hypot(dv,dd), nv=-dd/L*0.07, nd=dv/L*0.07, n=Math.max(1,Math.ceil(L));
+        const pts=[]; for(let i=0;i<=n;i++) pts.push([a[0]+dv*i/n, a[1]+dd*i/n]);
+        loft(pts.map(([v,D])=>({ p:[[0.22,1],[0.3,1],[0.3,-1],[0.22,-1]].map(([pr,s])=>Q(endsB(v)[0]-pr,v+s*nv,D+s*nd)) })),{ mat:"dark" }); };
       // the two bays either side of the strut, edge to edge of the glow
       [[-1.2,7.55],[10.05,21.0]].forEach(([va,vb])=>{
         const ok=(v,D)=>D>BT(v)+0.18 && D<BB(v)-0.18, s=0.84, p=1.05, da=BT((va+vb)/2), db=BB((va+vb)/2);
