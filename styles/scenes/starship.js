@@ -1873,7 +1873,7 @@ SHIPS.defiant={
   len:170.68, beam:134.11, height:30.1,
   hull:[0.54,0.56,0.59], defl:[0.36,0.64,1.0], deck:3,
   callouts:[
-    { text:"MAIN BRIDGE", at:[0.5,13.7,0] },
+    { text:"MAIN BRIDGE", at:[34.7,7.45,0] },
     { text:"WARP NACELLE", at:[-15.92,5.6,48.17] },
     { text:"PULSE PHASER CANNON", at:[8.46,-4.97,53.75] },
     { text:"MAIN DEFLECTOR", at:[83.77,-7.72,0] },
@@ -2187,17 +2187,18 @@ SHIPS.defiant={
       fp(true,1,21.6,v=>0,v=>99,0.06,2,"dark");
       fp(true,5.5,18.5,GT,GB,0.21,1.2,"bussard");
       [[17.9,0.28],[20.4,0.25]].forEach(([d,s])=>fp(true,5.9,18.1,v=>d-s*(v-12.2)-0.2,v=>d-s*(v-12.2)+0.2,0.3,0.2,"dark"));
-      // rear: the warp grille bay, a dark recess with the blue glow, a strut and a diamond mesh
+      // rear: the warp grille bay, a dark recess with the blue glow, a strut and a fine diamond mesh over all of the glow
       fp(false,-1.8,21.6,v=>BT(v)-0.35,v=>BB(v)+0.35,0.06,2.6,"dark");
       fp(false,-1.4,21.2,BT,BB,0.15,2.3,"grille");
       fp(false,7.6,10,v=>BT(v)+0.3,v=>BB(v)-0.3,0.3,0.3,"hull2");
-      const bar=(a,b)=>{ const dv=b[0]-a[0], dd=b[1]-a[1], L=Math.hypot(dv,dd), nv=-dd/L*0.13, nd=dv/L*0.13;
+      const bar=(a,b)=>{ const dv=b[0]-a[0], dd=b[1]-a[1], L=Math.hypot(dv,dd), nv=-dd/L*0.07, nd=dv/L*0.07;
         loft([a,b].map(([v,D])=>({ p:[[0.2,1],[0.27,1],[0.27,-1],[0.2,-1]].map(([pr,s])=>Q(endsB(v)[0]-pr,v+s*nv,D+s*nd)) })),{ mat:"dark" }); };
-      [[1.5,7.0,10.6,21.6],[10.6,18.4,12.1,21.8]].forEach(([va,vb,da,db])=>{
-        const ok=(v,D)=>D>Math.max(da,BT(v)+0.6) && D<Math.min(db,BB(v)-0.6), s=0.84, p=1.7;
-        [s,-s].forEach(sl=>{ for(let k=-12;k<=12;k++){
+      // the two bays either side of the strut, edge to edge of the glow
+      [[-1.2,7.55],[10.05,21.0]].forEach(([va,vb])=>{
+        const ok=(v,D)=>D>BT(v)+0.18 && D<BB(v)-0.18, s=0.84, p=1.05, da=BT((va+vb)/2), db=BB((va+vb)/2);
+        [s,-s].forEach(sl=>{ for(let k=-24;k<=24;k++){
           const Dl=v=>(da+db)/2+sl*(v-(va+vb)/2)+k*p; let run=null;
-          for(let i=0;i<=40;i++){ const v=va+(vb-va)*i/40; if(ok(v,Dl(v))){ if(!run) run=[v,v]; else run[1]=v; } else if(run) break; }
+          for(let i=0;i<=80;i++){ const v=va+(vb-va)*i/80; if(ok(v,Dl(v))){ if(!run) run=[v,v]; else run[1]=v; } else if(run) break; }
           if(run && run[1]-run[0]>0.2) bar([run[0],Dl(run[0])],[run[1],Dl(run[1])]);
         } });
       });
