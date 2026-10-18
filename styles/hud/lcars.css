@@ -1,0 +1,463 @@
+/* =========================================================================
+   HUD STYLE: LCARS
+   The TNG-era Starfleet console (Michael Okuda's LCARS). Every panel hangs
+   off a thick colored elbow: a sidebar of stacked blocks down the outer edge
+   that sweeps round a large outer radius into the header bar, with a small
+   radius on the inside of the bend, and a thinner one closing the bottom.
+   Headers are runs of flat segments with the title on black and a rounded
+   cap; small labels are black on rounded "buttons". The frame palette is
+   the classic one and does not follow the accent; the Alert color still
+   marks high readings. Right-hand stacks mirror, so the elbows sit on the
+   screen edges.
+   Geometry: the panel fill is clipped by its own border-radius (the outer
+   sweep), and the frame is one ::before of flat gradient layers, flipped
+   with scaleX(-1) for the mirrored side. Every rule is scoped under
+   body.hud-lcars.
+   ========================================================================= */
+
+body.hud-lcars{
+  --lc-font: "Bahnschrift Condensed","Bahnschrift SemiCondensed",Bahnschrift,"Arial Narrow",sans-serif;
+  --lc-or:#FF9900; --lc-tan:#FFCC99; --lc-pch:#FF9966; --lc-lil:#CC99CC;
+  --lc-per:#9999FF; --lc-bv:#9999CC; --lc-gold:#FFCC66; --lc-red:#CC6666;
+  --lc-or-d:rgba(255,153,0,0.2);    --lc-tan-d:rgba(255,204,153,0.18);
+  --lc-pch-d:rgba(255,153,102,0.2); --lc-lil-d:rgba(204,153,204,0.2);
+  --lc-per-d:rgba(153,153,255,0.2); --lc-bv-d:rgba(153,153,204,0.2);
+  --lc-gold-d:rgba(255,204,102,0.18);
+  --lc-w:2.7rem;      /* sidebar width */
+  --lc-h:1.05rem;     /* header bar */
+  --lc-hb:0.6rem;     /* footer bar */
+  --lc-ri:0.75rem;    /* inner radius of the bend */
+  --lc-rx:2.35rem;    /* outer sweep, across */
+  --lc-ry:1.85rem;    /* outer sweep, down */
+  --lc-g:0.22rem;     /* gap between segments */
+  --lc-cap:1.3rem;    /* rounded end cap */
+  --lc-ta:calc(var(--lc-h) + var(--lc-ri) + 1.25rem);   /* top elbow block */
+  --lc-tb:2.05rem;                                      /* second block */
+  --lc-td:calc(var(--lc-hb) + var(--lc-ri) + 0.85rem);  /* bottom elbow block */
+  --lc-armb:3.2rem;   /* footer arm past the bend */
+  --lc-lc:4.3rem;     /* label column in the readouts */
+  --lc-vc:4.7rem;     /* value column */
+}
+/* The palette replaces the accent inside the panels, so anything left on the
+   classic rules (edit-mode tags, drop targets) lands in LCARS colors. */
+body.hud-lcars #screens{
+  --accent:var(--lc-or); --accent-bright:var(--lc-tan); --accent-dim:var(--lc-bv);
+  --accent-faint:rgba(255,153,0,0.16); --accent-line:rgba(255,153,0,0.4);
+  --accent-glow:rgba(255,153,0,0.45); --panel-brd:rgba(255,153,0,0.3);
+  --text:var(--lc-tan); --text-dim:rgba(153,153,204,0.9);
+}
+
+/* ------------------------------- PANEL SHELL ------------------------------ */
+/* frame colors: a = elbows and header, b c = sidebar blocks, d = footer
+   elbow, e = footer run */
+body.hud-lcars .win{
+  --lc-a:var(--lc-or); --lc-b:var(--lc-tan); --lc-c:var(--lc-lil); --lc-d:var(--lc-or); --lc-e:var(--lc-bv);
+  /* the long sidebar block and the footer run are images, so a panel can
+     split them into more segments */
+  --lc-cimg:linear-gradient(var(--lc-c),var(--lc-c));
+  --lc-eimg:linear-gradient(90deg, var(--lc-e) 0 calc(100% - 2.4rem), transparent 0 calc(100% - 2.4rem + var(--lc-g)), var(--lc-b) 0);
+  border:0; box-shadow:none;
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  background:var(--panel);
+  border-radius:var(--lc-rx) calc(var(--lc-h)/2) calc(var(--lc-hb)/2) var(--lc-rx) /
+                var(--lc-ry) calc(var(--lc-h)/2) calc(var(--lc-hb)/2) var(--lc-ry);
+}
+body.hud-lcars .col.x-r .win{
+  border-radius:calc(var(--lc-h)/2) var(--lc-rx) var(--lc-rx) calc(var(--lc-hb)/2) /
+                calc(var(--lc-h)/2) var(--lc-ry) var(--lc-ry) calc(var(--lc-hb)/2);
+}
+body.hud-lcars #terminal{ --lc-a:var(--lc-lil); --lc-b:var(--lc-pch); --lc-c:var(--lc-bv); --lc-d:var(--lc-lil); --lc-e:var(--lc-tan); }
+body.hud-lcars #diag    { --lc-a:var(--lc-or);  --lc-b:var(--lc-tan); --lc-c:var(--lc-per); --lc-d:var(--lc-or); --lc-e:var(--lc-lil); }
+body.hud-lcars #sysmon  { --lc-a:var(--lc-bv);  --lc-b:var(--lc-gold); --lc-c:var(--lc-lil); --lc-d:var(--lc-pch); --lc-e:var(--lc-bv); }
+body.hud-lcars #tl      { --lc-a:var(--lc-tan); --lc-b:var(--lc-lil); --lc-c:var(--lc-or); --lc-d:var(--lc-tan); --lc-e:var(--lc-per); }
+body.hud-lcars #audio   { --lc-a:var(--lc-per); --lc-b:var(--lc-or); --lc-c:var(--lc-tan); --lc-d:var(--lc-per); --lc-e:var(--lc-lil); }
+body.hud-lcars #proc    { --lc-a:var(--lc-pch); --lc-b:var(--lc-bv); --lc-c:var(--lc-tan); --lc-d:var(--lc-pch); --lc-e:var(--lc-gold); }
+body.hud-lcars #tailnet { --lc-a:var(--lc-lil); --lc-b:var(--lc-or); --lc-c:var(--lc-per); --lc-d:var(--lc-gold); --lc-e:var(--lc-lil); }
+/* the monitor's sidebar is long enough to read as a stack of blocks */
+body.hud-lcars #sysmon{
+  --lc-cimg:linear-gradient(var(--lc-lil) 0 8.5rem, transparent 0 calc(8.5rem + var(--lc-g)),
+    var(--lc-pch) 0 10.4rem, transparent 0 calc(10.4rem + var(--lc-g)),
+    var(--lc-lil) 0 calc(100% - 4.2rem), transparent 0 calc(100% - 4.2rem + var(--lc-g)), var(--lc-tan) 0);
+}
+
+/* The frame. Layers, top first: the header bend (inner fillet, arm, block),
+   the two middle blocks, the footer bend (block, fillet, arm), the footer
+   run and its rounded cap. The outer sweeps come from the border-radius. */
+body.hud-lcars .win::before{
+  content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+  border-radius:var(--lc-rx) calc(var(--lc-h)/2) calc(var(--lc-hb)/2) var(--lc-rx) /
+                var(--lc-ry) calc(var(--lc-h)/2) calc(var(--lc-hb)/2) var(--lc-ry);
+  background:
+    radial-gradient(circle at 100% 100%, transparent calc(var(--lc-ri) - 0.6px), var(--lc-a) var(--lc-ri))
+      left calc(var(--lc-w) - 1px) top calc(var(--lc-h) - 1px) / calc(var(--lc-ri) + 1px) calc(var(--lc-ri) + 1px) no-repeat,
+    linear-gradient(var(--lc-a),var(--lc-a)) 0 0 / calc(var(--lc-w) + var(--lc-ri) + var(--lc-arm,0px)) var(--lc-h) no-repeat,
+    linear-gradient(var(--lc-a),var(--lc-a)) 0 0 / var(--lc-w) var(--lc-ta) no-repeat,
+    linear-gradient(var(--lc-b),var(--lc-b)) left 0 top calc(var(--lc-ta) + var(--lc-g)) / var(--lc-w) var(--lc-tb) no-repeat,
+    var(--lc-cimg) left 0 top calc(var(--lc-ta) + var(--lc-tb) + 2*var(--lc-g)) /
+      var(--lc-w) calc(100% - var(--lc-ta) - var(--lc-tb) - var(--lc-td) - 3*var(--lc-g)) no-repeat,
+    linear-gradient(var(--lc-d),var(--lc-d)) left 0 bottom 0 / var(--lc-w) var(--lc-td) no-repeat,
+    radial-gradient(circle at 100% 0, transparent calc(var(--lc-ri) - 0.6px), var(--lc-d) var(--lc-ri))
+      left calc(var(--lc-w) - 1px) bottom calc(var(--lc-hb) - 1px) / calc(var(--lc-ri) + 1px) calc(var(--lc-ri) + 1px) no-repeat,
+    linear-gradient(var(--lc-d),var(--lc-d)) left 0 bottom 0 / calc(var(--lc-w) + var(--lc-ri) + var(--lc-armb)) var(--lc-hb) no-repeat,
+    var(--lc-eimg) left calc(var(--lc-w) + var(--lc-ri) + var(--lc-armb) + var(--lc-g)) bottom 0 /
+      calc(100% - var(--lc-w) - var(--lc-ri) - var(--lc-armb) - 2*var(--lc-g) - var(--lc-cap)) var(--lc-hb) no-repeat,
+    radial-gradient(circle at 0 50%, var(--lc-c) calc(var(--lc-hb)/2 - 0.6px), transparent calc(var(--lc-hb)/2))
+      right 0 bottom 0 / calc(var(--lc-hb)/2) var(--lc-hb) no-repeat,
+    linear-gradient(var(--lc-c),var(--lc-c)) right calc(var(--lc-hb)/2 - 0.5px) bottom 0 / calc(var(--lc-cap) - var(--lc-hb)/2 + 0.5px) var(--lc-hb) no-repeat;
+}
+body.hud-lcars .col.x-r .win::before{ transform:scaleX(-1); }
+
+/* sidebar codes, black on the blocks, bottom right like the console's */
+body.hud-lcars .win::after,
+body.hud-lcars .win .bdy::after{
+  position:absolute; z-index:1; pointer-events:none;
+  left:0; width:var(--lc-w); padding-right:0.3rem;
+  font:400 0.62rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.03em;
+  color:#000; text-align:right; white-space:nowrap;
+}
+body.hud-lcars .win::after{ content:"03-1138"; top:calc(var(--lc-ta) + var(--lc-g) + var(--lc-tb) - 0.78rem); }
+body.hud-lcars .win .bdy::after{ content:"47"; bottom:calc(var(--lc-td) + var(--lc-g) + 0.16rem); }
+body.hud-lcars .col.x-r .win::after,
+body.hud-lcars .col.x-r .win .bdy::after{ left:auto; right:0; }
+body.hud-lcars #terminal::after{ content:"21-0447"; }   body.hud-lcars #terminal .bdy::after{ content:"0310"; }
+body.hud-lcars #diag::after    { content:"07-3361"; }   body.hud-lcars #diag .bdy::after    { content:"55"; }
+body.hud-lcars #sysmon::after  { content:"03-4612"; }   body.hud-lcars #sysmon .bdy::after  { content:"84-2209"; }
+body.hud-lcars #proc::after    { content:"16-5730"; }   body.hud-lcars #proc .bdy::after    { content:"6681"; }
+body.hud-lcars #tailnet::after { content:"47-1138"; }   body.hud-lcars #tailnet .bdy::after { content:"1701"; }
+body.hud-lcars #tl::after      { content:"02-8155"; }   body.hud-lcars #tl .bdy::after      { content:none; }
+
+body.hud-lcars .win .bdy{
+  padding:calc(var(--lc-h) + 0.8rem) 1rem calc(var(--lc-hb) + 0.85rem) calc(var(--lc-w) + 0.95rem);
+}
+body.hud-lcars .col.x-r .win .bdy{ padding-left:1rem; padding-right:calc(var(--lc-w) + 0.95rem); }
+
+/* ------------------------------- HEADER BAR -------------------------------- */
+/* The title sits on black in the header run: the bar coming out of the bend,
+   one short block, the title, a rounded cap. */
+body.hud-lcars .sec-h{
+  position:absolute; z-index:1; top:0; left:var(--lc-w); right:0; height:var(--lc-h);
+  margin:0; display:flex; align-items:center; gap:0.3rem;
+  font:400 1.5rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.05em;
+  color:var(--lc-a); text-shadow:none; white-space:nowrap;
+}
+body.hud-lcars .sec-h::before{ content:""; flex:1 1 0; min-width:1rem; height:100%; background:var(--lc-a); }
+body.hud-lcars .sec-h .plus{ font-size:0; flex:none; width:2.3rem; height:100%; background:var(--lc-b); color:transparent; }
+body.hud-lcars .sec-h::after{
+  content:""; flex:none; width:var(--lc-cap); height:100%; background:var(--lc-c);
+  border-radius:0 calc(var(--lc-h)/2) calc(var(--lc-h)/2) 0;
+}
+body.hud-lcars .col.x-r .sec-h{ left:0; right:var(--lc-w); flex-direction:row-reverse; }
+body.hud-lcars .col.x-r .sec-h::after{ border-radius:calc(var(--lc-h)/2) 0 0 calc(var(--lc-h)/2); }
+
+/* ------------------------------- OS LABEL -------------------------------- */
+/* a title strip over the first panel: rounded block as wide as the sidebar,
+   the host in large type, the version on a button, a bar to a rounded end */
+body.hud-lcars #os-label{
+  align-items:center; gap:var(--lc-g); padding:0 0 0.2rem; height:2.05rem;
+  font:400 2rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.05em;
+  color:var(--lc-or); text-shadow:none;
+}
+body.hud-lcars #os-label::before{
+  content:""; flex:none; width:var(--lc-w); height:1.2rem; background:var(--lc-or);
+  border-radius:0.6rem 0 0 0.6rem; margin-right:0.25rem;
+}
+body.hud-lcars #os-label .host{ padding-right:0.2rem; }
+body.hud-lcars #os-label .ver{
+  flex:none; height:1.2rem; display:flex; align-items:flex-end; justify-content:flex-end;
+  min-width:3.4rem; padding:0 0.35rem 0.1rem;
+  font:400 0.72rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.06em; text-transform:uppercase;
+  color:#000; background:var(--lc-lil);
+}
+body.hud-lcars #os-label::after{
+  content:""; flex:1 1 0; height:1.2rem; background:var(--lc-tan);
+  border-radius:0 0.6rem 0.6rem 0;
+}
+body.hud-lcars .col.x-r #os-label{ flex-direction:row-reverse; }
+body.hud-lcars .col.x-r #os-label::before{ border-radius:0 0.6rem 0.6rem 0; margin:0 0 0 0.25rem; }
+body.hud-lcars .col.x-r #os-label .host{ padding:0 0 0 0.2rem; }
+body.hud-lcars .col.x-r #os-label::after{ border-radius:0.6rem 0 0 0.6rem; }
+
+/* ----------------------------- SYSTEM (identity) --------------------------- */
+body.hud-lcars #term-out{ font-family:var(--lc-font); font-stretch:condensed; }
+body.hud-lcars .nf{ gap:0.2rem 1.1rem; }
+body.hud-lcars .nf pre{
+  color:var(--lc-or); text-shadow:none; font-size:0.6rem; line-height:1; letter-spacing:0;
+  font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; font-stretch:normal;
+}
+body.hud-lcars .nf .info div{ font-size:0.9rem; line-height:1.42; letter-spacing:0.03em; color:var(--lc-tan); }
+body.hud-lcars .nf .info b{
+  display:inline-block; min-width:5.7rem; font-weight:400; text-transform:uppercase;
+  letter-spacing:0.08em; color:var(--lc-bv);
+}
+body.hud-lcars .nf .info span{ color:var(--lc-tan); }
+body.hud-lcars .nf .info [data-key="Host"] span,
+body.hud-lcars .nf .info [data-key="OS"] span{ color:var(--lc-or); }
+
+/* ------------------------------ DIAGNOSTICS -------------------------------- */
+/* Dials as LCARS sector readouts: the track is a run of blocks, the reading a
+   solid band in the dial's own color. --accent is the color the runtime
+   paints the arc with (Alert past 85%), so each dial sets its own. */
+body.hud-lcars .gauges{ gap:0.4rem; }
+body.hud-lcars .gauge:nth-child(1){ --accent:var(--lc-or); }
+body.hud-lcars .gauge:nth-child(2){ --accent:var(--lc-lil); }
+body.hud-lcars .gauge:nth-child(3){ --accent:var(--lc-per); }
+body.hud-lcars .gauge .g-track{
+  stroke:var(--lc-bv-d); stroke-width:10px;
+  stroke-dasharray:8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16
+                   8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 2.16 8.4 80;
+}
+body.hud-lcars .gauge .g-arc{ stroke-width:10px; stroke-linecap:butt; filter:none; }
+body.hud-lcars .gauge .g-lbl{
+  font-family:var(--lc-font); font-stretch:condensed; font-size:8.5px; letter-spacing:1.4px;
+  fill:var(--lc-bv);
+}
+body.hud-lcars .gauge .g-val{
+  font-family:var(--lc-font); font-stretch:condensed; font-weight:400; font-size:24px;
+  fill:var(--lc-tan); font-variant-numeric:tabular-nums; transform:translateY(3px);
+}
+
+/* ------------------------------ SYSTEM MONITOR ----------------------------- */
+/* each group has its own color, k: the button with the group's name, its
+   graph, its lit segments and its drive bars */
+body.hud-lcars #sysmon{ --lc-k:var(--lc-or); --lc-kd:var(--lc-or-d); }
+body.hud-lcars .mgrp:has(#clk-gpu), body.hud-lcars .mrow:has(#sp-gpu),
+body.hud-lcars .mrow:has(#bar-gtemp), body.hud-lcars .mrow:has(#bar-vram){ --lc-k:var(--lc-per); --lc-kd:var(--lc-per-d); }
+body.hud-lcars .mgrp:has(#clk-mem), body.hud-lcars .mrow:has(#bar-mem),
+body.hud-lcars .mrow:has(#bar-swap){ --lc-k:var(--lc-lil); --lc-kd:var(--lc-lil-d); }
+body.hud-lcars .mgrp:has(+ .mrow #sp-net), body.hud-lcars .mrow:has(#sp-net){ --lc-k:var(--lc-pch); --lc-kd:var(--lc-pch-d); }
+body.hud-lcars .mgrp:has(+ #drives), body.hud-lcars #drives{ --lc-k:var(--lc-gold); --lc-kd:var(--lc-gold-d); }
+
+/* group header: the name right-aligned on a button as wide as the label
+   column, a thin run, the live clock */
+body.hud-lcars .mgrp{
+  display:grid; grid-template-columns:calc(var(--lc-lc) - 0.32rem) 1fr auto; column-gap:calc(0.32rem + var(--lc-g));
+  align-items:center; height:1.08rem; margin:0.85rem 0 0.32rem;
+  font:400 0.78rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.08em;
+  color:#000; text-align:right; padding-top:0.18rem;
+  background:linear-gradient(var(--lc-k),var(--lc-k)) left top / var(--lc-lc) 100% no-repeat;
+  border-radius:0.54rem 0 0 0.54rem;
+}
+body.hud-lcars .mgrp:first-child{ margin-top:0; }
+body.hud-lcars .mgrp::after{
+  content:""; grid-row:1; grid-column:2; align-self:end; height:0.22rem; margin-bottom:0.04rem;
+  background:var(--lc-k);
+}
+body.hud-lcars .mgrp .clk{
+  grid-row:1; grid-column:3; margin:0; align-self:center; margin-top:-0.18rem;
+  font-size:0.92rem; letter-spacing:0.05em; color:var(--lc-k); text-shadow:none;
+}
+body.hud-lcars .mrow{
+  grid-template-columns:var(--lc-lc) 1fr var(--lc-vc); gap:0.55rem; padding:0.26rem 0;
+  font-family:var(--lc-font); font-stretch:condensed;
+}
+body.hud-lcars .mrow + .mrow{ border-top:0; }
+body.hud-lcars .mrow .lbl{
+  font-size:0.8rem; letter-spacing:0.1em; text-transform:uppercase;
+  color:var(--lc-bv); text-align:right; padding-right:0.32rem;
+}
+body.hud-lcars .mrow .val{
+  min-width:0; font-size:1.1rem; letter-spacing:0.03em; line-height:1;
+  color:var(--lc-tan); text-shadow:none; font-variant-numeric:tabular-nums;
+}
+body.hud-lcars .mrow .val.dual{ font-size:0.84rem; line-height:1.12; white-space:nowrap; }
+
+/* segment bars: blocks in the group color, a rounded end on each side */
+body.hud-lcars .segbar{ gap:0.13rem; height:0.84rem; }
+body.hud-lcars .segbar i{ background:var(--lc-kd); }
+body.hud-lcars .segbar i.on{ background:var(--lc-k); box-shadow:none; }
+body.hud-lcars .segbar i.hot{ background:var(--alert); box-shadow:none; }
+body.hud-lcars .segbar i:first-child{ border-radius:0.42rem 0 0 0.42rem; }
+body.hud-lcars .segbar i:last-child{ border-radius:0 0.42rem 0.42rem 0; }
+body.hud-lcars .spark{ height:1.55rem; }
+
+/* drives: the letter on a button, a pill track with a square-ended fill */
+body.hud-lcars .drv{ padding:0.26rem 0; font-family:var(--lc-font); font-stretch:condensed; }
+body.hud-lcars .drv + .drv{ border-top:0; }
+body.hud-lcars .drv .top{ grid-template-columns:var(--lc-lc) 1fr var(--lc-vc); gap:0.55rem; }
+body.hud-lcars .drv .id{
+  height:1.02rem; padding:0.2rem 0.32rem 0 0; text-align:right;
+  font-size:0.8rem; font-weight:400; letter-spacing:0.06em; line-height:1;
+  color:#000; background:var(--lc-k); border-radius:0.51rem 0 0 0.51rem;
+}
+body.hud-lcars .drv .bar{ height:0.84rem; background:var(--lc-kd); border-radius:0.42rem; }
+body.hud-lcars .drv .bar i{ background:var(--lc-k); box-shadow:none; }
+body.hud-lcars .drv .bar i.hot{ background:var(--alert); box-shadow:none; }
+body.hud-lcars .drv .pct{ font-size:1.1rem; line-height:1; color:var(--lc-tan); text-shadow:none; }
+body.hud-lcars .drv .sub{
+  margin-top:0.22rem; padding-left:calc(var(--lc-lc) + 0.55rem);
+  font-size:0.74rem; letter-spacing:0.07em; text-transform:uppercase; color:var(--lc-bv);
+}
+body.hud-lcars .drv .sub .io{ color:var(--lc-tan); opacity:0.7; }
+
+/* ------------------------------- PROCESSES --------------------------------- */
+/* the column heads are one run of buttons; rows read as colored columns */
+body.hud-lcars .ptbl{
+  font-family:var(--lc-font); font-stretch:condensed; font-size:0.92rem;
+  border-collapse:separate; border-spacing:0;
+}
+body.hud-lcars .ptbl th,
+body.hud-lcars .ptbl td{ border-right:var(--lc-g) solid transparent; background-clip:padding-box; }
+body.hud-lcars .ptbl th:last-child,
+body.hud-lcars .ptbl td:last-child{ border-right:0; }
+body.hud-lcars .ptbl th{
+  padding:0.26rem 0.32rem 0.1rem; border-bottom:0;
+  font-size:0.76rem; font-weight:400; letter-spacing:0.08em; line-height:1;
+  color:#000; background:var(--lc-bv); text-align:right;
+}
+body.hud-lcars .ptbl th:nth-child(2){ text-align:left; background:var(--lc-tan); }
+body.hud-lcars .ptbl th:nth-child(3){ background:var(--lc-or); }
+body.hud-lcars .ptbl th:first-child{ border-radius:0.52rem 0 0 0.52rem; }
+body.hud-lcars .ptbl th:last-child{ border-radius:0 0.52rem 0.52rem 0; background:var(--lc-lil); }
+body.hud-lcars .ptbl tbody tr:first-child td{ padding-top:0.45rem; }
+body.hud-lcars .ptbl td{ padding:0.2rem 0.32rem; letter-spacing:0.04em; font-variant-numeric:tabular-nums; }
+body.hud-lcars .ptbl td:nth-child(1){ color:var(--lc-bv); }
+body.hud-lcars .ptbl tr td:nth-child(2){ color:var(--lc-tan); }
+body.hud-lcars .ptbl td:nth-child(3){ color:var(--lc-or); }
+body.hud-lcars .ptbl td:nth-child(4){ color:var(--lc-lil); }
+body.hud-lcars .ptbl tbody tr:first-child td:nth-child(2){ color:var(--lc-or); }
+
+/* -------------------------------- TAILNET ---------------------------------- */
+body.hud-lcars .tnet{ gap:0.1rem; }
+body.hud-lcars .tn{
+  grid-template-columns:1.5rem 1fr auto; gap:0.55rem; padding:0.2rem 0;
+  font-family:var(--lc-font); font-stretch:condensed; font-size:0.92rem; letter-spacing:0.03em;
+}
+body.hud-lcars .tn + .tn{ border-top:0; }
+body.hud-lcars .tn .led{ width:1.5rem; height:0.7rem; border-radius:0.35rem; background:var(--lc-gold); box-shadow:none; }
+body.hud-lcars .tn.off{ opacity:1; }
+body.hud-lcars .tn.off .led{ background:var(--lc-bv-d); }
+body.hud-lcars .tn .nm{ color:var(--lc-tan); }
+body.hud-lcars .tn .nm b{ color:var(--lc-tan); font-weight:400; }
+body.hud-lcars .tn .nm .os{ color:var(--lc-bv); font-size:0.74rem; letter-spacing:0.08em; text-transform:uppercase; }
+body.hud-lcars .tn.off .nm, body.hud-lcars .tn.off .nm b{ color:rgba(255,204,153,0.5); }
+body.hud-lcars .tn.off .nm .os{ color:rgba(153,153,204,0.6); }
+body.hud-lcars .tn .st{
+  min-width:3.6rem; padding:0.18rem 0.4rem 0.06rem; text-align:right;
+  font-size:0.72rem; letter-spacing:0.08em; line-height:1; text-transform:uppercase;
+  color:#000; background:var(--lc-per); border-radius:0.46rem;
+}
+body.hud-lcars .tn.off .st{ background:none; color:var(--lc-bv); opacity:0.75; }
+
+/* ---------------------------- TIME / LOCATION ------------------------------ */
+/* No section header here: the two block heads ride in the header run, one
+   per column, so the bar reads TIME and LOCATION. */
+body.hud-lcars #tl .bdy{ padding-top:calc(var(--lc-h) + 0.65rem); }
+body.hud-lcars .tl-grid{ grid-template-columns:auto 1fr; gap:0.9rem; }
+body.hud-lcars .tl-block .h{
+  height:var(--lc-h); margin:calc(-0.65rem - var(--lc-h)) -0.3rem 0.6rem 0; gap:0.3rem;
+  font:400 1.5rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.05em;
+  color:var(--lc-a); white-space:nowrap;
+}
+body.hud-lcars .tl-block .h .plus{
+  font-size:0; flex:1 1 0; min-width:0.8rem; height:100%; background:var(--lc-a); color:transparent;
+}
+body.hud-lcars .tl-block:first-child .h{ margin-left:-0.95rem; }
+body.hud-lcars .tl-block:last-child .h{ margin-right:-1rem; margin-left:-0.3rem; }
+body.hud-lcars .tl-block:last-child .h .plus{ background:var(--lc-b); }
+body.hud-lcars .tl-block:last-child .h::after{
+  content:""; flex:none; width:var(--lc-cap); height:100%; background:var(--lc-c);
+  border-radius:0 calc(var(--lc-h)/2) calc(var(--lc-h)/2) 0;
+}
+body.hud-lcars .col.x-r #tl .bdy{ padding-left:1rem; }
+body.hud-lcars .col.x-r .tl-block .h{ flex-direction:row-reverse; }
+body.hud-lcars .col.x-r .tl-block:first-child .h{ margin-left:-1rem; margin-right:-0.3rem; }
+body.hud-lcars .col.x-r .tl-block:last-child .h{ margin-right:-0.95rem; }
+body.hud-lcars .col.x-r .tl-block:first-child .h .plus{ background:var(--lc-b); }
+body.hud-lcars .col.x-r .tl-block:last-child .h .plus{ background:var(--lc-a); }
+body.hud-lcars .col.x-r .tl-block:last-child .h::after{ content:none; }
+body.hud-lcars .col.x-r .tl-block:first-child .h::before{
+  content:""; flex:none; width:var(--lc-cap); height:100%; background:var(--lc-c);
+  border-radius:calc(var(--lc-h)/2) 0 0 calc(var(--lc-h)/2); order:9;
+}
+body.hud-lcars #clock{
+  font:400 2.7rem/0.9 var(--lc-font); font-stretch:condensed; letter-spacing:0.02em;
+  color:var(--lc-or); text-shadow:none;
+}
+body.hud-lcars #clock small{ font-size:0.3em; letter-spacing:0.1em; color:var(--lc-lil); margin-left:0.25em; }
+body.hud-lcars #date{
+  font:400 0.92rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.14em;
+  color:var(--lc-tan); margin-top:0.5rem; font-variant-numeric:tabular-nums;
+}
+body.hud-lcars #weekday{
+  font:400 1.05rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.3em;
+  color:var(--lc-lil); margin-top:0.45rem; text-shadow:none;
+}
+body.hud-lcars #coords{
+  font:400 0.98rem/1.1 var(--lc-font); font-stretch:condensed; letter-spacing:0.01em;
+  color:var(--lc-tan); text-shadow:none; font-variant-numeric:tabular-nums;
+}
+body.hud-lcars #elev{
+  font:400 0.8rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.16em;
+  color:var(--lc-bv); margin-top:0.35rem;
+}
+body.hud-lcars #weather{
+  font:400 0.92rem/1.15 var(--lc-font); font-stretch:condensed; letter-spacing:0.08em;
+  color:var(--lc-gold); text-shadow:none; margin-top:0.5rem;
+}
+body.hud-lcars #weather .wx-t{ color:var(--lc-or); font-weight:400; font-size:1.25em; }
+body.hud-lcars #weather .wx-sub{
+  font-size:0.74rem; letter-spacing:0.1em; color:var(--lc-bv); margin-top:0.2rem;
+}
+
+/* ------------------------------ VISUALIZER --------------------------------- */
+/* The header run is drawn here while nothing plays; with a track up, the
+   now-playing line takes its place in the bar. */
+body.hud-lcars #audio,
+body.hud-lcars #audio.np-on{ height:7.6rem; }
+body.hud-lcars #audio .bdy{
+  padding:calc(var(--lc-h) + 0.55rem) 1rem calc(var(--lc-hb) + 0.5rem) calc(var(--lc-w) + 0.95rem);
+}
+body.hud-lcars .col.x-r #audio .bdy{ padding-left:1rem; padding-right:calc(var(--lc-w) + 0.95rem); }
+/* flat console colors: no glow halo on the banks */
+body.hud-lcars #audio-cv{ filter:none; }
+body.hud-lcars #audio::after{ content:"09-2716"; }
+body.hud-lcars #audio .bdy::after{ content:none; }
+body.hud-lcars #audio .bdy::before{
+  content:""; position:absolute; z-index:1; top:0; left:var(--lc-w); right:0; height:var(--lc-h);
+  background:
+    linear-gradient(var(--lc-a),var(--lc-a)) left / calc(100% - 7.2rem - 3*var(--lc-g)) 100% no-repeat,
+    linear-gradient(var(--lc-b),var(--lc-b)) right calc(var(--lc-cap) + 3.1rem + 2*var(--lc-g)) center / 2.8rem 100% no-repeat,
+    linear-gradient(var(--lc-e),var(--lc-e)) right calc(var(--lc-cap) + var(--lc-g)) center / 3.1rem 100% no-repeat,
+    linear-gradient(var(--lc-c),var(--lc-c)) right center / var(--lc-cap) 100% no-repeat;
+  border-radius:0 calc(var(--lc-h)/2) calc(var(--lc-h)/2) 0;
+}
+body.hud-lcars .col.x-r #audio .bdy::before{ left:0; right:var(--lc-w); transform:scaleX(-1); }
+body.hud-lcars #audio.np-on .bdy::before{ display:none; }
+body.hud-lcars #audio.np-on .bdy{ gap:0; }
+body.hud-lcars #np{
+  position:absolute; z-index:1; top:0; left:var(--lc-w); right:0; height:var(--lc-h);
+  gap:0.3rem; font:400 1.3rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.04em;
+}
+body.hud-lcars #np::before{ content:""; flex:1 1 2rem; min-width:2rem; height:100%; background:var(--lc-a); order:-2; }
+body.hud-lcars #np .np-i{
+  order:-1; align-self:stretch; width:1.6rem; height:auto; border:0; background:var(--lc-b);
+}
+body.hud-lcars #np.paused .np-i{ background:var(--lc-bv-d); width:1.6rem; height:auto; }
+body.hud-lcars #np .np-t{ color:var(--lc-or); }
+body.hud-lcars #np .np-a{ color:var(--lc-lil); max-width:38%; }
+body.hud-lcars #np .np-a::before{ content:""; }
+body.hud-lcars #np::after{
+  content:""; flex:none; width:var(--lc-cap); height:100%; background:var(--lc-c);
+  border-radius:0 calc(var(--lc-h)/2) calc(var(--lc-h)/2) 0;
+}
+body.hud-lcars .col.x-r #np{ left:0; right:var(--lc-w); flex-direction:row-reverse; }
+body.hud-lcars .col.x-r #np::after{ border-radius:calc(var(--lc-h)/2) 0 0 calc(var(--lc-h)/2); }
+
+/* ------------------------------ SCREEN CHROME ------------------------------ */
+body.hud-lcars .corner{ width:1.6rem; height:1.6rem; border-color:rgba(153,153,204,0.35); border-width:0.18rem; }
+body.hud-lcars .corner.tl{ border-top-left-radius:0.9rem; }
+body.hud-lcars .corner.tr{ border-top-right-radius:0.9rem; }
+body.hud-lcars .corner.bl{ border-bottom-left-radius:0.9rem; }
+body.hud-lcars .corner.br{ border-bottom-right-radius:0.9rem; }
+body.hud-lcars .bottom-hash{ gap:var(--lc-g); opacity:0.75; }
+body.hud-lcars .bottom-hash i{ transform:none; height:0.5rem; width:1.6rem; background:var(--lc-bv); }
+body.hud-lcars .bottom-hash i:nth-child(1){ width:2.2rem; background:var(--lc-or); border-radius:0.25rem 0 0 0.25rem; }
+body.hud-lcars .bottom-hash i:nth-child(2){ width:0.9rem; background:var(--lc-tan); }
+body.hud-lcars .bottom-hash i:nth-child(3){ width:3rem; background:var(--lc-lil); }
+body.hud-lcars .bottom-hash i:nth-child(4){ width:1.2rem; background:var(--lc-per); }
+body.hud-lcars .bottom-hash i:nth-child(5){ width:2.2rem; background:var(--lc-pch); border-radius:0 0.25rem 0.25rem 0; }
+body.hud-lcars #mode-tag{
+  font:400 0.74rem/1 var(--lc-font); font-stretch:condensed; letter-spacing:0.14em;
+  color:var(--lc-bv); opacity:0.8;
+}
+body.hud-lcars #mode-tag b{ color:var(--lc-or); font-weight:400; }

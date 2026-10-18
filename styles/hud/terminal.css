@@ -1,0 +1,319 @@
+/* =========================================================================
+   HUD STYLE: Terminal
+   A monochrome phosphor CRT: every panel is a text-mode window, near-black
+   with a double rule drawn half a cell in from its edge, the way a TUI frame
+   sits in its border cells, and the title cut into the top rule between two
+   tees ( ╡ SYSTEM ╞ ). Everything is the accent at three intensities, set in
+   the console font. Bars are block fills over a ░ shade, the dials become
+   readouts with a block bar, and the process header is reverse video.
+   Every rule is a background layer or a plain box (no clip-path, mask or
+   filter, see LARGE-SURFACE ECONOMY). Scoped under body.hud-terminal.
+   ========================================================================= */
+
+body.hud-terminal{
+  --tm-font: "Cascadia Mono","Cascadia Code",Consolas,"Lucida Console",ui-monospace,monospace;
+  --tm-i:   0.34rem;                                /* frame inset from the panel edge */
+  --tm-lw:  max(1px, 0.066rem);                     /* rule weight */
+  --tm-gp:  0.15rem;                                /* gap inside a double rule */
+  --tm-o:   calc(var(--tm-lw) + var(--tm-gp));      /* inner rule offset */
+  --tm-band:calc(var(--tm-lw) * 2 + var(--tm-gp));  /* the double rule, top to bottom */
+  --tm-arm: 0.8rem;                                 /* top rule before a title */
+  --tm-tee: 0.9rem;                                 /* tee height */
+  --tm-px:  1.2rem;                                 /* body padding, sides */
+  --tm-pt:  1.6rem;                                 /* body padding, top (clears the title) */
+  --tm-pb:  1.05rem;
+  --tm-hi:  var(--accent-bright);                   /* the three phosphor intensities */
+  --tm-fg:  var(--accent);
+  --tm-lo:  var(--accent-glow);
+  --tm-glow: 0 0 calc(0.32rem * var(--glow-strength)) var(--accent-glow);
+  --tm-soft: 0 0 calc(0.28rem * var(--glow-strength)) var(--accent-faint);
+  /* ░ the way the console font draws it: thin rising hatching */
+  --tm-shade: repeating-linear-gradient(135deg, var(--accent-glow) 0 0.055rem, transparent 0.055rem 0.17rem);
+}
+
+/* --------------------------------- WINDOW ---------------------------------- */
+body.hud-terminal .win{
+  --c: var(--accent);
+  font-family: var(--tm-font);
+  color: var(--tm-fg);
+  text-shadow: var(--tm-soft);
+  border-color: transparent;
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  background: var(--panel);
+  box-shadow: 0 0 1.4rem rgba(0,0,0,0.45);
+}
+/* The frame: both rules down each side and along the bottom, joined at the
+   lower corners, and a short arm of the top rule at each upper corner. The
+   title row draws the rest of the top rule, so a translucent panel never
+   needs a knocked-out patch behind the title. */
+body.hud-terminal .win::before{
+  content:""; position:absolute; inset:var(--tm-i); pointer-events:none;
+  background:
+    linear-gradient(var(--c),var(--c)) left top    / var(--tm-lw) 100% no-repeat,
+    linear-gradient(var(--c),var(--c)) right top   / var(--tm-lw) 100% no-repeat,
+    linear-gradient(var(--c),var(--c)) left bottom / 100% var(--tm-lw) no-repeat,
+    linear-gradient(var(--c),var(--c)) left var(--tm-o) top var(--tm-o)  / var(--tm-lw) calc(100% - 2 * var(--tm-o)) no-repeat,
+    linear-gradient(var(--c),var(--c)) right var(--tm-o) top var(--tm-o) / var(--tm-lw) calc(100% - 2 * var(--tm-o)) no-repeat,
+    linear-gradient(var(--c),var(--c)) left var(--tm-o) bottom var(--tm-o) / calc(100% - 2 * var(--tm-o)) var(--tm-lw) no-repeat,
+    linear-gradient(var(--c),var(--c)) left top  / var(--tm-arm) var(--tm-lw) no-repeat,
+    linear-gradient(var(--c),var(--c)) right top / var(--tm-arm) var(--tm-lw) no-repeat,
+    linear-gradient(var(--c),var(--c)) left var(--tm-o) top var(--tm-o)  / calc(var(--tm-arm) - var(--tm-o)) var(--tm-lw) no-repeat,
+    linear-gradient(var(--c),var(--c)) right var(--tm-o) top var(--tm-o) / calc(var(--tm-arm) - var(--tm-o)) var(--tm-lw) no-repeat;
+}
+/* phosphor: the screen glows faintly from the middle out */
+body.hud-terminal .win::after{
+  content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background: radial-gradient(70% 60% at 50% 45%, var(--accent-faint), transparent);
+  opacity:0.28;
+}
+body.hud-terminal .win .bdy{ padding:var(--tm-pt) var(--tm-px) var(--tm-pb); }
+
+/* --------------------------------- TITLES ---------------------------------
+   One row on the top rule: left tee, title, right tee, then the double rule
+   on to the far corner arm. The rule piece is exactly the band's height, so
+   it lines up with the arms; only the tees overhang it. */
+body.hud-terminal .sec-h,
+body.hud-terminal .tl-block .h,
+body.hud-terminal #audio #np{
+  position:absolute; z-index:1; margin:0; padding:0; gap:0;
+  top:var(--tm-i); height:var(--tm-band);
+  display:flex; align-items:center; white-space:nowrap;
+  font-family:var(--tm-font); font-weight:400; font-size:0.78rem; line-height:1;
+  letter-spacing:0.16em; color:var(--tm-hi); text-shadow:var(--tm-glow);
+  background:none;
+}
+body.hud-terminal .sec-h{ left:calc(var(--tm-i) + var(--tm-arm)); right:calc(var(--tm-i) + var(--tm-arm)); }
+body.hud-terminal .sec-h .plus,
+body.hud-terminal .tl-block .h .plus{
+  font-size:0; flex:none; width:var(--tm-lw); height:var(--tm-tee);
+  background:var(--c); margin-right:0.55rem; transform:none;
+}
+body.hud-terminal .sec-h::before,
+body.hud-terminal .tl-block .h::before{
+  content:""; order:2; flex:none; width:var(--tm-lw); height:var(--tm-tee);
+  background:var(--c); margin-left:0.4rem;
+}
+body.hud-terminal .sec-h::after,
+body.hud-terminal .tl-block .h::after{
+  content:""; order:3; flex:1 1 0; align-self:flex-start; height:var(--tm-band); min-width:0.6rem;
+  margin:0; font-size:0; text-shadow:none;
+  background:
+    linear-gradient(var(--c),var(--c)) left top    / 100% var(--tm-lw) no-repeat,
+    linear-gradient(var(--c),var(--c)) left bottom / 100% var(--tm-lw) no-repeat;
+}
+
+/* ------------------------------- OS LABEL -------------------------------- */
+/* a shell prompt with the cursor parked after it */
+body.hud-terminal #os-label{
+  font-family:var(--tm-font); font-size:0.86rem; letter-spacing:0.18em;
+  color:var(--tm-hi); text-shadow:var(--tm-glow);
+  align-items:baseline; gap:0.6rem; padding:0 0.2rem 0.15rem;
+}
+body.hud-terminal #os-label::before{ content:">"; color:var(--tm-fg); letter-spacing:0; }
+body.hud-terminal #os-label .ver{ color:var(--tm-lo); font-size:0.72rem; letter-spacing:0.12em; text-shadow:none; }
+body.hud-terminal #os-label .ver::before{ content:"["; }
+body.hud-terminal #os-label .ver::after{ content:"]"; }
+body.hud-terminal #os-label::after{
+  content:""; align-self:center; width:0.55em; height:1em; background:var(--tm-fg);
+  box-shadow:var(--tm-glow); animation:tmBlink 1.06s steps(1,end) infinite;
+}
+@keyframes tmBlink{ 50%{ opacity:0; } }
+/* game mode holds the frame still: no blink to keep the compositor busy */
+body.hud-terminal.game #os-label::after{ animation:none; }
+
+/* ----------------------------- SYSTEM (identity) --------------------------- */
+body.hud-terminal #term-out{ font-size:0.78rem; }
+body.hud-terminal .nf{ gap:0.2rem 1.25rem; }
+/* the logo letter casts a hard shade down and right, like ANSI art */
+body.hud-terminal .nf pre{
+  font-family:var(--tm-font); color:var(--tm-fg);
+  text-shadow: 0.16rem 0.16rem 0 var(--accent-line), var(--tm-glow);
+}
+body.hud-terminal .nf .info div{ font-size:0.72rem; line-height:1.6; }
+body.hud-terminal .nf .info b{ color:var(--tm-hi); font-weight:600; text-shadow:var(--tm-glow); }
+body.hud-terminal .nf .info span{ color:var(--tm-fg); }
+
+/* ------------------------------ SYSTEM MONITOR ----------------------------- */
+/* group header: ─ CPU ─────────────── 1.93 GHz */
+body.hud-terminal .mgrp{
+  font-size:0.68rem; letter-spacing:0.18em; color:var(--tm-hi); text-shadow:var(--tm-glow);
+  margin:0.7rem 0 0.15rem; align-items:center; gap:0.55rem;
+}
+body.hud-terminal .mgrp:first-child{ margin-top:0; }
+body.hud-terminal .mgrp::before,
+body.hud-terminal .mgrp::after{
+  content:""; height:var(--tm-lw); background:var(--tm-lo); flex:none; width:0.6rem;
+}
+body.hud-terminal .mgrp::after{ order:1; flex:1 1 0; width:auto; min-width:0.6rem; }
+body.hud-terminal .mgrp .clk{
+  order:2; margin-left:0; letter-spacing:0.04em; color:var(--tm-fg); text-shadow:var(--tm-soft);
+}
+body.hud-terminal .mrow{ grid-template-columns:5rem 1fr auto; gap:0.75rem; padding:0.36rem 0; font-size:0.74rem; }
+body.hud-terminal .mrow + .mrow{ border-top:0; }
+body.hud-terminal .mrow .lbl{ color:var(--tm-lo); text-transform:uppercase; letter-spacing:0.1em; font-size:0.68rem; }
+body.hud-terminal .mrow .val{
+  color:var(--tm-hi); text-shadow:var(--tm-glow); font-variant-numeric:tabular-nums; min-width:5rem;
+}
+body.hud-terminal .mrow .val.dual{ font-size:0.68rem; line-height:1.3; }
+
+/* ████████░░░░░░░░: lit cells are solid and touch, unlit cells are the shade */
+body.hud-terminal .segbar{ gap:0; height:0.72rem; background:var(--tm-shade); }
+body.hud-terminal .segbar i{ background:transparent; transition:none; }
+body.hud-terminal .segbar i.on{ background:var(--tm-fg); box-shadow:none; }
+body.hud-terminal .segbar i.hot{ background:var(--alert); box-shadow:none; }
+body.hud-terminal .spark{ height:1.4rem; }
+
+/* drives: the same block fill */
+body.hud-terminal .drv{ padding:0.38rem 0; font-size:0.72rem; }
+body.hud-terminal .drv + .drv{ border-top:0; }
+body.hud-terminal .drv .id{ color:var(--tm-hi); font-weight:600; text-shadow:var(--tm-glow); }
+body.hud-terminal .drv .pct{ color:var(--tm-hi); text-shadow:var(--tm-glow); }
+body.hud-terminal .drv .bar{ height:0.62rem; background:var(--tm-shade); }
+body.hud-terminal .drv .bar i{ background:var(--tm-fg); box-shadow:none; }
+body.hud-terminal .drv .bar i.hot{ background:var(--alert); }
+body.hud-terminal .drv .sub{ color:var(--tm-lo); font-size:0.64rem; margin-top:0.24rem; }
+body.hud-terminal .drv .sub .io{ color:var(--tm-lo); }
+
+/* ------------------------------ DIAGNOSTICS --------------------------------
+   Each dial becomes a readout: label left, value right, a block bar under
+   them. The SVG is kept and re-drawn by CSS alone: the ring circles get a
+   radius so large that the dash the runtime sets (from the start of the
+   path, 190 units at 100%) runs as a straight bar, and the group transform
+   lays it along the bottom of the tile. The tile shows one band of the
+   square drawing: user y 22..58. */
+body.hud-terminal .gauges{ justify-content:space-between; gap:1.2rem; }
+body.hud-terminal .gauge{
+  flex:1 1 0; width:auto; min-width:0; position:relative;
+  aspect-ratio:110 / 36; overflow:hidden; text-align:left;
+}
+body.hud-terminal .gauge svg{ position:relative; margin-top:-20%; overflow:hidden; }
+/* the ░ track sits under the bar (user y 46..57) */
+body.hud-terminal .gauge::before{
+  content:""; position:absolute; left:0; right:0; top:66.667%; height:30.556%;
+  background:var(--tm-shade);
+}
+body.hud-terminal .gauge svg g{ transform:translate(0px, 51.5px) scale(0.578936) rotate(-90deg); }
+body.hud-terminal .gauge circle{
+  cx:-100000px; cy:0px; r:100000px;
+  stroke-width:19px; stroke-linecap:butt;
+  stroke-dasharray:190.0035 10000000;
+  filter:none;
+}
+body.hud-terminal .gauge .g-track{ stroke:transparent; }
+body.hud-terminal .gauge .g-lbl{
+  text-anchor:start; transform:translate(-55px, 0px);
+  font-family:var(--tm-font); font-size:9.5px; letter-spacing:1.6px; fill:var(--tm-lo);
+}
+body.hud-terminal .gauge .g-val{
+  text-anchor:end; transform:translate(55px, -22px);
+  font-family:var(--tm-font); font-size:21px; font-weight:600; letter-spacing:0;
+  fill:var(--tm-hi); font-variant-numeric:tabular-nums;
+}
+body.hud-terminal .gauge .g-unit{ display:none; }
+
+/* ------------------------------- PROCESSES --------------------------------- */
+body.hud-terminal .ptbl{ font-size:0.74rem; }
+/* the header is reverse video, the way top and htop draw theirs */
+body.hud-terminal .ptbl th{
+  background:var(--tm-fg); color:var(--bg); text-shadow:none;
+  font-weight:600; letter-spacing:0.1em; font-size:0.68rem;
+  padding:0.16rem 0.3rem; border-bottom:0;
+}
+body.hud-terminal .ptbl th:first-child{ text-align:right; }
+body.hud-terminal .ptbl td{ padding:0.3rem 0.3rem; color:var(--tm-fg); font-variant-numeric:tabular-nums; }
+body.hud-terminal .ptbl td.n{ color:var(--tm-fg); }
+body.hud-terminal .ptbl td:first-child{ color:var(--tm-lo); }
+body.hud-terminal .ptbl tr td:nth-child(2){ color:var(--tm-hi); }
+/* the busiest process sits under a cursor bar */
+body.hud-terminal .ptbl tbody tr:first-child td{ background:var(--accent-faint); }
+
+/* -------------------------------- TAILNET ---------------------------------- */
+body.hud-terminal .tn{ grid-template-columns:0.8rem 1fr auto; padding:0.28rem 0; font-size:0.72rem; }
+body.hud-terminal .tn + .tn{ border-top:0; }
+body.hud-terminal .tn .led{
+  width:auto; height:auto; border-radius:0; background:none; box-shadow:none; border:0;
+  font-size:0.72rem; line-height:1; color:var(--tm-hi); text-shadow:var(--tm-glow);
+}
+body.hud-terminal .tn .led::before{ content:"\25A0"; }
+body.hud-terminal .tn.off .led::before{ content:"\25A1"; }
+body.hud-terminal .tn.off .led{ color:var(--tm-lo); text-shadow:none; }
+body.hud-terminal .tn .nm{ color:var(--tm-fg); }
+body.hud-terminal .tn .nm b{ color:var(--tm-hi); font-weight:600; }
+body.hud-terminal .tn .nm .os{ color:var(--tm-lo); font-size:0.64rem; }
+body.hud-terminal .tn .st{ color:var(--tm-fg); text-transform:uppercase; letter-spacing:0.1em; font-size:0.64rem; }
+body.hud-terminal .tn.off .st{ color:var(--tm-lo); }
+body.hud-terminal .tn.off{ opacity:0.7; }
+
+/* ---------------------------- TIME / LOCATION ------------------------------ */
+/* both block headers ride the top rule: TIME from the left arm, its rule
+   running through the gap to LOCATION, and LOCATION's on to the right arm */
+body.hud-terminal #tl{ --tl-gap:1.1rem; }
+body.hud-terminal .tl-grid{ gap:var(--tl-gap); }
+body.hud-terminal .tl-block{ position:relative; }
+body.hud-terminal .tl-block .h{ top:calc(var(--tm-i) - var(--tm-pt)); }
+body.hud-terminal .tl-block:first-child .h{
+  left:calc(var(--tm-i) + var(--tm-arm) - var(--tm-px)); right:calc(-1 * var(--tl-gap));
+}
+body.hud-terminal .tl-block:last-child .h{
+  left:0; right:calc(var(--tm-i) + var(--tm-arm) - var(--tm-px));
+}
+body.hud-terminal #clock{
+  font-family:var(--tm-font); font-weight:600; font-size:2.05rem; letter-spacing:0.02em;
+  color:var(--tm-hi); text-shadow:var(--tm-glow);
+}
+body.hud-terminal #clock small{ font-weight:400; color:var(--tm-fg); letter-spacing:0.1em; }
+body.hud-terminal #date{ color:var(--tm-fg); font-size:0.76rem; letter-spacing:0.16em; margin-top:0.4rem; }
+body.hud-terminal #weekday{ color:var(--tm-hi); font-weight:600; font-size:0.92rem; letter-spacing:0.3em; margin-top:0.45rem; text-shadow:var(--tm-glow); }
+body.hud-terminal #coords{ color:var(--tm-hi); font-size:0.8rem; letter-spacing:0.02em; text-shadow:var(--tm-glow); }
+body.hud-terminal #elev{ color:var(--tm-lo); font-size:0.7rem; letter-spacing:0.14em; }
+body.hud-terminal #weather{ color:var(--tm-fg); font-size:0.76rem; letter-spacing:0.06em; text-shadow:var(--tm-soft); }
+body.hud-terminal #weather .wx-t{ color:var(--tm-hi); font-weight:600; text-shadow:var(--tm-glow); }
+body.hud-terminal #weather .wx-sub{ color:var(--tm-lo); font-size:0.66rem; letter-spacing:0.08em; }
+
+/* ------------------------------ VISUALIZER --------------------------------- */
+/* #np is the title row here, so it always shows: ╡ AUDIO ╞ while nothing is
+   playing, ╡ ▶ title · artist ╞ while a track is up. The line lives in the
+   rule, so the panel keeps its height and the meter its size. */
+body.hud-terminal #audio.np-on{ height:6.5rem; }
+body.hud-terminal #audio .bdy{
+  padding:calc(var(--tm-i) + var(--tm-band) + 0.5rem) calc(var(--tm-i) + var(--tm-band) + 0.4rem)
+          calc(var(--tm-i) + var(--tm-band) + 0.32rem);
+}
+body.hud-terminal #audio.np-on .bdy{ flex-direction:row; align-items:center; gap:0; }
+body.hud-terminal #audio.np-on canvas{ flex:none; height:100%; }
+body.hud-terminal #audio #np{
+  left:calc(var(--tm-i) + var(--tm-arm)); right:calc(var(--tm-i) + var(--tm-arm));
+  font-size:0.74rem; letter-spacing:0.06em; overflow:visible;
+}
+body.hud-terminal #audio:not(.np-on) #np > *{ display:none; }
+/* the left tee, and the panel name when nothing is playing */
+body.hud-terminal #np::before{
+  content:"AUDIO"; flex:none; height:var(--tm-tee); line-height:var(--tm-tee);
+  padding-left:calc(var(--tm-lw) + 0.55rem);
+  font-size:0.78rem; letter-spacing:0.16em;
+  background:linear-gradient(var(--c),var(--c)) left top / var(--tm-lw) 100% no-repeat;
+}
+body.hud-terminal #audio.np-on #np::before{ content:""; }
+/* #np has its own children in the row, so the right tee and the rule share
+   one piece, centered on the band like the tees */
+body.hud-terminal #np::after{
+  --e: calc((var(--tm-tee) - var(--tm-band)) / 2);
+  content:""; flex:1 1 0; min-width:1.2rem; height:var(--tm-tee); margin-left:0.4rem;
+  background:
+    linear-gradient(var(--c),var(--c)) left top / var(--tm-lw) 100% no-repeat,
+    linear-gradient(var(--c),var(--c)) left 0 top var(--e) / 100% var(--tm-lw) no-repeat,
+    linear-gradient(var(--c),var(--c)) left 0 top calc(var(--e) + var(--tm-o)) / 100% var(--tm-lw) no-repeat;
+}
+body.hud-terminal #np .np-i{ border-left-color:var(--tm-hi); margin-right:0.5rem; }
+body.hud-terminal #np.paused .np-i{ background:linear-gradient(90deg, var(--tm-hi) 35%, transparent 35% 65%, var(--tm-hi) 65%); }
+body.hud-terminal #np .np-t{ color:var(--tm-hi); }
+body.hud-terminal #np .np-a{ color:var(--tm-fg); text-shadow:var(--tm-soft); }
+body.hud-terminal #np .np-a::before{ content:"\00A0\00B7\00A0"; }
+
+/* ------------------------------ SCREEN CHROME ------------------------------ */
+body.hud-terminal .corner{ width:1.6rem; height:1.6rem; border-color:var(--accent-line); }
+body.hud-terminal .bottom-hash{ gap:0.3rem; opacity:0.55; }
+body.hud-terminal .bottom-hash i{ width:0.5rem; height:0.5rem; transform:none; background:var(--accent-dim); }
+body.hud-terminal .bottom-hash i:nth-child(3){ background:var(--accent); }
+body.hud-terminal #mode-tag{ font-family:var(--tm-font); letter-spacing:0.12em; font-size:0.64rem; color:var(--tm-lo); opacity:0.8; }
+body.hud-terminal #mode-tag b{ color:var(--tm-fg); font-weight:400; }

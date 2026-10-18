@@ -19,7 +19,7 @@
                  o.seg     points around a section (default 40)
                  o.res     subdivisions per span (default 4)
                  o.cap     close open ends with a flat fan (default true)
-                 o.mat     material name (see MATS)
+                 o.mat     material name (see MATS; paint is a light warm cream, amber a dim warm glow)
                  o.mirror  also emit the copy mirrored to -z
                  o.win     1 = this skin can carry lit windows
                  o.wa      window run axis: "u" along the path, "v" around
@@ -28,7 +28,7 @@
                            radii in each direction; o.n  plan superellipse
    ========================================================================= */
 const SHIPGEOM=(()=>{
-  const MATS={ hull:0, hull2:1, grille:2, bussard:3, deflector:4, impulse:5, dark:6, trim:7, lamp:8 };
+  const MATS={ hull:0, hull2:1, grille:2, bussard:3, deflector:4, impulse:5, dark:6, trim:7, lamp:8, paint:9, amber:10 };
   function mesh(){ return { p:[], m:[], w:[], c:[], i:[] }; }
 
   const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];

@@ -159,10 +159,11 @@
 
   /* ---- game mode's parked visualizer (drawn once per entry) ----
      The axis alone, fading out toward both ends, with the mode set in a pill
-     where the waveform's center would be. */
+     where the waveform's center would be, in sentence case like the titles. */
   function audioStill(ctx, w, h, label){
     const P=pal(), mid=Math.round(h/2)+0.5;
-    const px=clamp(Math.round(h*0.12), 8, 16), ls=px*0.26;
+    const px=clamp(Math.round(h*0.15), 9, 20), ls=px*0.03;
+    label=label.charAt(0)+label.slice(1).toLowerCase();
     ctx.font=`600 ${px}px "Segoe UI Variable Small","Segoe UI",sans-serif`;
     try{ ctx.letterSpacing=ls.toFixed(1)+"px"; }catch(e){}
     ctx.textAlign="center"; ctx.textBaseline="middle";

@@ -114,16 +114,21 @@ const STARSHIP=(()=>{
     const fs=clamp(B.h*0.021, 10, 30);
     const sp=v=>{ try{ c.letterSpacing=v.toFixed(1)+"px"; }catch(e){} };
     const hdg=((-P.yaw*180/Math.PI)%360+360)%360;
+    // the LCARS panel style redraws the caption and callouts as console buttons
+    const lc=document.body.classList.contains("hud-lcars");
     c.textAlign="center"; c.textBaseline="alphabetic";
-    c.font="600 "+fs.toFixed(1)+"px "+font; sp(fs*0.32);
-    c.fillStyle=PAL.bright; c.globalAlpha=0.88;
-    const y0=B.h*0.94;
-    c.fillText(S.name+"  "+DOT+"  "+S.reg, B.w/2, y0);
-    c.font=(fs*0.62).toFixed(1)+"px "+font; sp(fs*0.22);
-    c.fillStyle=PAL.accent; c.globalAlpha=0.72;
-    c.fillText(S.cls+"  "+DOT+"  "+S.len.toFixed(1)+" M  "+DOT+"  HDG "+hdg.toFixed(1)+DEG, B.w/2, y0+fs*1.25);
+    if(lc) lcCaption(c, S, B, fs, hdg, sp);
+    else{
+      c.font="600 "+fs.toFixed(1)+"px "+font; sp(fs*0.32);
+      c.fillStyle=PAL.bright; c.globalAlpha=0.88;
+      const y0=B.h*0.94;
+      c.fillText(S.name+"  "+DOT+"  "+S.reg, B.w/2, y0);
+      c.font=(fs*0.62).toFixed(1)+"px "+font; sp(fs*0.22);
+      c.fillStyle=PAL.accent; c.globalAlpha=0.72;
+      c.fillText(S.cls+"  "+DOT+"  "+S.len.toFixed(1)+" M  "+DOT+"  HDG "+hdg.toFixed(1)+DEG, B.w/2, y0+fs*1.25);
+    }
     sp(0); c.globalAlpha=1;
-    if(look!=="holo" || !S.callouts || !S.callouts.length) return;
+    if(look!=="holo" || !S.callouts || !S.callouts.length){ if(lc) lcFont(c, 0); return; }
 
     const ctr=R.project(R.center), cw=ctr ? ctr[3] : 0, k=R.last ? R.last.k : 1;
     const items=S.callouts.map((co,i)=>{
@@ -140,7 +145,9 @@ const STARSHIP=(()=>{
       ST.side[it.i]=s; it.side=s;
     });
     const lh=fs*1.7, fl=fs*0.62;
-    c.font=fl.toFixed(1)+"px "+font; sp(fl*0.2); c.textBaseline="middle";
+    if(lc){ lcFont(c, fl); sp(fl*0.08); }
+    else{ c.font=fl.toFixed(1)+"px "+font; sp(fl*0.2); }
+    c.textBaseline="middle";
     [-1,1].forEach(side=>{
       const col=items.filter(it=>it.side===side).sort((a,b)=>a.y-b.y);
       let yp=-1e9;
@@ -151,6 +158,7 @@ const STARSHIP=(()=>{
         ST.ly[it.i]=it.ly;
       });
       col.forEach(it=>{
+        if(lc){ lcCallout(c, it, side, B, fs, fl); return; }
         const tw=c.measureText(it.text).width;
         const lx=side<0 ? B.w*0.09 : B.w*0.91;
         const ex=side<0 ? lx+tw+fs*0.6 : lx-tw-fs*0.6;
@@ -169,6 +177,72 @@ const STARSHIP=(()=>{
       });
     });
     sp(0); c.globalAlpha=1;
+    if(lc) lcFont(c, 0);
+  }
+
+  /* LCARS overlay parts. The caption is a header run: bar, block, the name on
+     black, the registry on a button, bar to a rounded end, and a row of three
+     buttons under it. A callout is its label on a button, with the leader and
+     the marker in the button's color. lcFont(c, 0) puts the stretch back. */
+  const LC={ font:'"Bahnschrift Condensed","Bahnschrift SemiCondensed",Bahnschrift,"Arial Narrow",sans-serif',
+             or:"#FF9900", tan:"#FFCC99", pch:"#FF9966", lil:"#CC99CC", per:"#9999FF", bv:"#9999CC",
+             cyc:["#FF9900","#CC99CC","#9999FF","#FFCC99","#FF9966","#FFCC66","#9999CC"] };
+  function lcFont(c, px){
+    if(px) c.font="400 "+px.toFixed(1)+"px "+LC.font;
+    try{ c.fontStretch=px ? "condensed" : "normal"; }catch(e){}
+  }
+  function lcPill(c, x, y, w, h, l, r){
+    const k=h/2;
+    c.beginPath(); c.moveTo(l ? x+k : x, y);
+    if(r){ c.lineTo(x+w-k, y); c.arc(x+w-k, y+k, k, -TAU/4, TAU/4); }
+    else { c.lineTo(x+w, y); c.lineTo(x+w, y+h); }
+    if(l){ c.lineTo(x+k, y+h); c.arc(x+k, y+k, k, TAU/4, TAU*0.75); }
+    else c.lineTo(x, y+h);
+    c.closePath(); c.fill();
+  }
+  function lcCaption(c, S, B, fs, hdg, sp){
+    const g=Math.max(2, fs*0.2), bh=Math.round(fs*0.74), y=Math.round(B.h*0.905);
+    const run=fs*4.2, blk=fs*1.2, pad=fs*0.3;
+    lcFont(c, fs*1.05); sp(fs*0.05);
+    const nw=c.measureText(S.name).width;
+    lcFont(c, fs*0.56); sp(fs*0.05);
+    const rw=c.measureText(S.reg).width+fs*1.3;
+    const x0=Math.round(B.w/2-(2*run+2*g+blk+2*pad+nw+rw)/2);
+    let x=x0;
+    c.globalAlpha=0.94; c.textAlign="right";
+    c.fillStyle=LC.bv; lcPill(c, x, y, run, bh, true, false); x+=run+g;
+    c.fillStyle=LC.or; lcPill(c, x, y, blk, bh, false, false); x+=blk+pad;
+    c.fillStyle=LC.tan; lcPill(c, x+nw+pad, y, rw, bh, false, false);
+    c.fillStyle="#000"; c.fillText(S.reg, x+nw+pad+rw-fs*0.32, y+bh-fs*0.1);
+    lcFont(c, fs*1.05); sp(fs*0.05); c.textAlign="left";
+    c.fillStyle=LC.or; c.fillText(S.name, x, y+bh);
+    x+=nw+pad+rw+g;
+    c.fillStyle=LC.lil; lcPill(c, x, y, run, bh, false, true);
+    // class, length and heading on three buttons; the heading's is sized for
+    // its widest reading, so it never shifts as the ship turns
+    const t=[S.cls, S.len.toFixed(1)+" M", "HDG "+hdg.toFixed(1)+DEG], col=[LC.lil, LC.pch, LC.per];
+    lcFont(c, fs*0.5); sp(fs*0.06); c.textAlign="right";
+    const ws=[c.measureText(t[0]).width, c.measureText(t[1]).width, c.measureText("HDG 888.8"+DEG).width].map(v=>v+fs*1.4);
+    const ph=Math.round(fs*0.66), py=y+bh+Math.round(fs*0.3);
+    x=Math.round(B.w/2-(ws[0]+ws[1]+ws[2]+2*g)/2);
+    for(let i=0;i<3;i++){
+      c.fillStyle=col[i]; lcPill(c, x, py, ws[i], ph, i===0, i===2);
+      c.fillStyle="#000"; c.fillText(t[i], x+ws[i]-fs*(i===2 ? 0.55 : 0.4), py+ph-fs*0.13);
+      x+=ws[i]+g;
+    }
+  }
+  function lcCallout(c, it, side, B, fs, fl){
+    const col=LC.cyc[it.i%LC.cyc.length];
+    const tw=c.measureText(it.text).width, ph=Math.round(fl*1.5), pw=tw+fl*1.6;
+    const lx=side<0 ? B.w*0.09 : B.w*0.91-pw, y=Math.round(it.ly-ph/2);
+    const ix=side<0 ? lx+pw : lx, ex=ix-side*fs*0.6;
+    c.globalAlpha=it.a;
+    c.strokeStyle=col; c.lineWidth=1.5;
+    c.beginPath(); c.moveTo(ix, it.ly); c.lineTo(ex, it.ly); c.lineTo(it.x, it.y); c.stroke();
+    c.fillStyle=col; lcPill(c, lx, y, pw, ph, true, true);
+    c.fillRect(Math.round(it.x)-3, Math.round(it.y)-3, 6, 6);
+    c.fillStyle="#000"; c.textAlign="right"; c.textBaseline="alphabetic";
+    c.fillText(it.text, lx+pw-fl*0.62, y+ph-fl*0.36);
   }
 
   return {

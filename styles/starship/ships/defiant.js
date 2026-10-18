@@ -6,7 +6,7 @@
 SHIPS.defiant={
   name:"U.S.S. DEFIANT", reg:"NX-74205", cls:"DEFIANT CLASS",
   len:170.68, beam:134.11, height:30.1,
-  hull:[0.46,0.48,0.51], defl:[0.55,0.8,1.0], deck:3,
+  hull:[0.54,0.56,0.59], defl:[0.36,0.64,1.0], deck:3,
   callouts:[
     { text:"MAIN BRIDGE", at:[0.5,13.7,0] },
     { text:"WARP NACELLE", at:[-15.92,5.6,48.17] },
@@ -90,6 +90,9 @@ SHIPS.defiant={
       }
       if(v<0) for(let t=i0;t<I.length;t+=3){ const x=I[t+1]; I[t+1]=I[t+2]; I[t+2]=x; }
     }
+    // the skins paint and lettering are laid on: [from, to, open] triangle ranges of M.i, for the top and each
+    // side (a closed loft faces outward, so only its faces toward the ray are kept; an open one keeps both)
+    const SK={ top:[], s1:[], s2:[] }, skin=(k,f,o)=>{ const a=M.i.length; f(); SK[k].push(a,M.i.length,o?1:0); };
     // stations from a list of [from, to, step] runs
     // how far a span [a,b] pulls in at X to round its ends with radius r
     const rnd=(a,b,r,X)=>{ const d=Math.min(X-a,b-X); return d<r ? r-Math.sqrt(Math.max(0,r*r-(r-d)*(r-d))) : 0; };
@@ -130,20 +133,20 @@ SHIPS.defiant={
       return { dt:l=>{ const a=Math.abs(l)-27; return ht+0.13*(a>3?a:a>-3?(a+3)*(a+3)/12:0); },
                db:l=>hc+(hb-hc)*sstep(13.6,16.2,Math.abs(l))+(ho-hb)*sstep(21.5,26,Math.abs(l)) }; };
     const HBOT=(X,z)=>hsec(X).db(z), HTOP=(X,z)=>hsec(X).dt(z);
-    // two window cells (3.45 m) on each side wall at X 96.6-103.5, aft of the targeting sensors
-    // (the hull's window coordinate runs 6.9 m behind X: it puts two lit cells of the renderer's pattern there)
+    // one row of window cells (3.45 m) low on each side wall of the forward hull, from abreast of the bridge to the
+    // targeting sensors (the hull's window coordinate runs 6.9 m behind X, which shifts the renderer's lit pattern)
     const hwin={ win:1, wf:q=>{ const X=q[0]+X0, D=Y0-q[1];
-      return X>96 && X<103 && Math.abs(q[2])>HW(X)-1.2 && Math.abs(D-15.7)<0.8 ? 1 : 0; } };
+      return X>89.6 && X<114 && Math.abs(q[2])>HW(X)-1.2 && Math.abs(D-15.7)<0.8 ? 1 : 0; } };
     const SLOT=127.5, SZ=14;
     // the stern center sits back between two corner nubs
     const C0=M.c.length;
-    xbody(stations([[2.3,9.3,1.2],[9.3,9.7,0.4],[9.7,28.4,1.2],[28.4,28.9,0.5],[28.9,SLOT,1.25]]),
-      X=>Object.assign(hsec(X),{ w:HW(X), rt:HR(X), nh:48, nv:4, nc:6 }), hwin, [9.3,9.7,28.4,28.9]);
+    skin("top",()=>xbody(stations([[2.3,9.3,1.2],[9.3,9.7,0.4],[9.7,28.4,1.2],[28.4,28.9,0.5],[28.9,SLOT,1.25]]),
+      X=>Object.assign(hsec(X),{ w:HW(X), rt:HR(X), nh:48, nv:4, nc:6 }), hwin, [9.3,9.7,28.4,28.9]));
     for(let i=C0;i<M.c.length;i++) M.c[i]-=6.9;
     [1,-1].forEach(mz=>xbody([0.45,1.2,1.9,2.6], X=>{ const W=HW(X); return Object.assign(hsec(X),{ lc:(W+10.3)/2, w:(W-10.3)/2, r4:[HR(X),0.3,0.3,HR(X)], nh:6, nv:3, nc:5 }); }, { mz }));
     const jaw=X=>{ const W=Math.max(SZ+0.25,HW(X)), r=Math.min(HR(X),(W-SZ)*0.95);
       return Object.assign(hsec(X),{ lc:(SZ+W)/2, w:(W-SZ)/2, r4:[r,0.25,0.25,r] }); };
-    [1,-1].forEach(mz=>xbody(stations([[SLOT,142,1],[142,144.8,0.4]]), X=>Object.assign(jaw(X),{ nh:14, nv:4, nc:6 }), Object.assign({ mz, cap0:false },hwin)));
+    [1,-1].forEach(mz=>skin("top",()=>xbody(stations([[SLOT,142,1],[142,144.8,0.4]]), X=>Object.assign(jaw(X),{ nh:14, nv:4, nc:6 }), Object.assign({ mz, cap0:false },hwin))));
 
     /* skins laid on the hull's outboard rim: hside(X) walks the section from the
        keel round the side to the deck as [l, D, nl, nD] (n the outward normal);
@@ -198,13 +201,13 @@ SHIPS.defiant={
     const SPN=tab([[21.4,12.8],[29,13.7],[50,16.7],[61,18.8],[72,20.8],[80,21.6],[86,0]]);
     const SW=X=>Math.max(X<86?SPN(X):0, 22.5*Math.sqrt(Math.max(0,1-Math.pow((X-86)/22.5,2))));
     const ST=tab([[21.4,5.0],[22.6,3.1],[24,1.8],[30,1.6],[38,1.35],[42,1.25],[45,1.0],[58,1.0],[62,0.85],[70,0.7],[75,0.6],[90,0.6],[95,0.95],[99,1.35],[102,1.8],[105.6,2.4],[108.6,3.6]]);
-    xbody(stations([[21.4,24,0.4],[24,104,1.2],[104,108.5,0.45]]), X=>({ w:Math.max(0.4,SW(X)), dt:ST(X), db:8.5, rt:1.2, rb:0.5, tt:0.05, nh:16, nv:3, nc:4 }), {});
+    skin("top",()=>xbody(stations([[21.4,24,0.4],[24,104,1.2],[104,108.5,0.45]]), X=>({ w:Math.max(0.4,SW(X)), dt:ST(X), db:8.5, rt:1.2, rb:0.5, tt:0.05, nh:16, nv:3, nc:4 }), {}));
     const SF=X=>0.95*(SW(X)-1.2);   // edge of the spine's flat top
 
     /* ---------------- forward deck: the raised inner ellipse, cut by the slot ---------------- */
     const FW=tab([[90,24],[100,23.5],[110,21],[118,17.5],[124,15.2],[SLOT,14.2]]);
     const FT=tab([[90,4.0],[100,4.6],[108.9,5.2],[112.6,5.7],[116,6.2],[119.3,6.7],[122.7,7.2],[126,7.5],[SLOT,7.6]]);
-    xbody(stations([[90,SLOT,1]]), X=>({ w:FW(X), dt:FT(X), db:12, rt:1.2, rb:0.5, nh:16, nv:3, nc:4 }), {});
+    skin("top",()=>xbody(stations([[90,SLOT,1]]), X=>({ w:FW(X), dt:FT(X), db:12, rt:1.2, rb:0.5, nh:16, nv:3, nc:4 }), {}));
     // sensor pallets flanking the centerline: dark greebled wells, stepped aft-inboard, the outer fore corner cut
     { const zi=tab([[112.3,10.2],[114.9,10.2],[115.3,5.4],[120.1,5.4]]), zo=X=>Math.min(17.6-1.2*Math.max(0,X-116.3),FW(X)-1);
       const box=(x0,x1,z0,z1,h,mz)=>xbody([x0,x1], X=>({ lc:(z0+z1)/2, w:(z1-z0)/2, dt:FT(X)-0.1-h, db:FT(X), rt:0.08, nh:1, nv:1, nc:1 }), { mat:"hull2", mz });
@@ -222,7 +225,7 @@ SHIPS.defiant={
     // narrow below (front view: a trapezoid with open notches beside it), a little fuller where it clears the jaws
     const MK=X=>0.35+0.15*sstep(141,146.5,X), MLW=tab([[18.3,14],[18.9,10.6],[19.6,10.25],[21.4,9.35],[22.8,8.35],[23.5,7.75],[24.1,6.4],[24.7,4.6],[25.3,0.5]]);
     const xsM=stations([[124,166,1],[166,170.6,0.4]]), MN=2*14+2*7+4*5, T0=M.i.length;
-    xbody(xsM, X=>({ w:MW(X), dt:MT(X), db:MB(X), rt:1.2, rb:3.5, taper:MK(X), nh:14, nv:7, nc:5 }), { lim:MLW });
+    skin("top",()=>xbody(xsM, X=>({ w:MW(X), dt:MT(X), db:MB(X), rt:1.2, rb:3.5, taper:MK(X), nh:14, nv:7, nc:5 }), { lim:MLW }));
     /* the deflector: lenses laid on the module's lower front along rays cast aft
        from the front view: a rim, the glow inside it, a Y strut across the glow */
     const cast=(()=>{
@@ -299,11 +302,13 @@ SHIPS.defiant={
     function nacelle(mz){
       const Q=(u,v,D)=>P(NX(u,v),D,NZ(u,v)*mz);
       const vs=stations([[-5,-2,0.5],[-2,18,1],[18,22.9,0.35]]);
+      const i0=M.i.length;
       loft(vs.map(v=>{
         const [u0,u1]=endsB(v), hh=(NBOT(v)-NTOP(v))/2;
         return { p:sec({ lc:(u0+u1)/2, w:(u1-u0)/2, dt:u=>NT(u,v), db:u=>NB(u,v), r4:[NR(hh,RFT(v)),NR(hh,RRT),NR(hh,RRB),NR(hh,RFB(v))], nh:26, nv:6, nc:6 },
           (u,D)=>Q(u,v,D)), c:v };
       }),{});
+      SK.top.push(i0,M.i.length,0); SK[mz>0?"s1":"s2"].push(i0,M.i.length,0);
       /* a plate pr proud of the front (f) or rear face, v from va to vb, D from top(v) to bot(v)
          kept on the flat face, its ends rounded with radius rc */
       const fp=(f,va,vb,top,bot,pr,rc,mat)=>loft(stations([[va,va+rc,rc/3],[va+rc,vb-rc,1.1],[vb-rc,vb,rc/3]]).map(v=>{
@@ -341,10 +346,7 @@ SHIPS.defiant={
       // registry stripe and chevron along the outboard edge
       const RD=(NTOP(VO)+NBOT(VO))/2, sd=[-sn,0,ct*mz], rs=(u,d,o)=>{ const q=Q(u,VO+0.1,RD+d); return Object.assign({ x:q[0], y:q[1], z:q[2], w:0.06, n:4 },o); };
       G.sweep(M,{ side:sd, seg:8, res:1, mat:"trim", st:stations([[10,41.2,3.1]]).map(u=>rs(u,0,{ t:0.6, b:0.6 })) });
-      G.sweep(M,{ side:sd, seg:8, res:1, mat:"trim", st:[rs(41.6,-0.95,{ t:0.3, b:0.3 }), rs(46,0,{ t:0.3, b:0.3, k:1 }), rs(41.6,0.95,{ t:0.3, b:0.3 })] });
-      // a darker panel on the inboard top
-      loft(stations([[0.5,13,0.5]]).map(v=>({ p:sec({ lc:33, w:12, dt:NTOP(v)-0.07, db:NTOP(v)+0.6, rt:0.6, rb:0.1, nh:4, nv:2, nc:3 },
-        (u,D)=>Q(u,v,D)) })),{ mat:"hull2" });
+      G.sweep(M,{ side:sd, seg:8, res:1, mat:"paint", st:stations([[13,37,3]]).map(u=>rs(u,0,{ w:0.09, t:0.12, b:0.12 })) });
       // fairing on the inboard rear of the pod (the fin in the side view)
       const FH=tab([[2.5,6.6],[5,4.4],[9,3.9],[13,4.3],[19,6.4]]), FV=tab([[2.5,1.0],[6,2.4],[13,2.4],[19,0.9]]);
       loft(stations([[2.5,19,0.6]]).map(u=>({ p:sec({ lc:0.2, w:FV(u), dt:FH(u), db:8, rt:1.1, rb:0.2, tt:0.2, nh:6, nv:3, nc:4 },
@@ -355,7 +357,7 @@ SHIPS.defiant={
     /* ---------------- bridge platform: two terraces and the bridge block ---------------- */
     const BC=86;
     [[13.6,0.1,0],[9.0,0.2,0.1]].forEach(([R,h,h0])=>{
-      plate(BC,[[0,h],[4,h],[7.5,h],[11,h]].filter(q=>q[0]<R-1).concat([[R-0.35,h,1],[R,h0+0.02,1],[R,h0-0.3]]),ST,1,{ n:Math.round(R*7), cap:false });
+      skin("top",()=>plate(BC,[[0,h],[4,h],[7.5,h],[11,h]].filter(q=>q[0]<R-1).concat([[R-0.35,h,1],[R,h0+0.02,1],[R,h0-0.3]]),ST,1,{ n:Math.round(R*7), cap:false }),1);
       plate(BC,[[R,h0-0.1],[R,h0+0.05,1],[R+0.4,h0+0.05,1],[R+0.4,h0-0.1]],ST,1,{ mat:"dark", n:Math.round(R*7), cap:false });
     });
     const BW=tab([[76.8,0.8],[77.4,4.3],[78.6,4.9],[84,5.0],[87,4.4],[89.3,3.0],[90.3,1.5],[90.6,0.5]]);
@@ -364,6 +366,149 @@ SHIPS.defiant={
     xbody(bx, X=>({ w:BW(X), dt:ST(X)-0.3, db:ST(X)-0.05, rt:0.3, rb:0.05, tt:0.15, nh:8, nv:2, nc:4 }), { mat:"hull2" });
     xbody([76.5].concat(bx.slice(1,-1),[90.9]), X=>({ w:BW(Math.min(90.6,Math.max(76.8,X)))+0.35, dt:ST(X)-0.225, db:ST(X)-0.05, rt:0.05, nh:8, nv:1, nc:2 }), { mat:"dark" });
     disc(81.2,0,[[0,-0.08],[0.8,-0.07],[1.3,-0.045],[1.6,-0.01],[1.75,0.03,1],[1.75,0.2]].map(([r,d,k])=>[r,ST(81.2)-0.3+d,k]),{ n:28 });
+
+    /* ---------------- paint and lettering, laid on the hull by rays cast along one axis ----------------
+       caster(ax, sg, R): the triangles in the ranges R of M.i, binned by centroid on a 2 m grid across
+       axis ax; it maps a point (a, b) of that plane to the outermost hit seen from the sg side,
+       [x,y,z, nx,ny,nz] with the normal toward that side (a hit is searched in the 3 x 3 cells around) */
+    function caster(ax,sg,R){
+      const p=M.p, I=M.i, A=ax===0?2:0, B=ax===1?2:1, a0=-45, b0=-36, na=90, nb=72, st=new Int32Array(na*nb+1), fs=ax===2?sg:-sg;
+      let n=0; for(let r=0;r<R.length;r+=3) n+=(R[r+1]-R[r])/3;
+      const C=new Int32Array(n), T=new Int32Array(n);
+      let m=0;
+      for(let r=0;r<R.length;r+=3) for(let t=R[r], open=R[r+2];t<R[r+1];t+=3){
+        const a=I[t]*3, b=I[t+1]*3, c=I[t+2]*3, xa=p[a+A], ya=p[a+B], xb=p[b+A], yb=p[b+B], xc=p[c+A], yc=p[c+B];
+        if(!open && fs*((xb-xa)*(yc-ya)-(yb-ya)*(xc-xa))<=0) continue;
+        const i=Math.floor((xa+xb+xc)/6)-a0, j=Math.floor((ya+yb+yc)/6)-b0;
+        if(i<0||j<0||i>=na||j>=nb) continue;
+        const k=i*nb+j; C[m]=k; T[m++]=t; st[k+1]++;
+      }
+      for(let k=1;k<st.length;k++) st[k]+=st[k-1];
+      const L=new Int32Array(m), cur=st.slice(0,-1);
+      for(let s=0;s<m;s++) L[cur[C[s]]++]=T[s];
+      return (qa,qb)=>{
+        const i0=Math.floor(qa/2)-a0, j0=Math.floor(qb/2)-b0;
+        let best=null, bv=-1e9;
+        for(let i=Math.max(0,i0-1);i<=Math.min(na-1,i0+1);i++) for(let j=Math.max(0,j0-1);j<=Math.min(nb-1,j0+1);j++)
+        for(let k=st[i*nb+j];k<st[i*nb+j+1];k++){
+          const t=L[k], a=I[t]*3, b=I[t+1]*3, c=I[t+2]*3;
+          const ua=p[b+A]-p[a+A], ub=p[b+B]-p[a+B], va=p[c+A]-p[a+A], vb=p[c+B]-p[a+B], det=ua*vb-ub*va;
+          if(Math.abs(det)<1e-9) continue;
+          const wa=qa-p[a+A], wb=qb-p[a+B], s=(wa*vb-wb*va)/det, r=(ua*wb-ub*wa)/det;
+          if(s<-1e-6||r<-1e-6||s+r>1+1e-6) continue;
+          const h=p[a+ax]+s*(p[b+ax]-p[a+ax])+r*(p[c+ax]-p[a+ax]);
+          if(sg*h<=bv) continue; bv=sg*h;
+          const e=[p[b]-p[a],p[b+1]-p[a+1],p[b+2]-p[a+2]], f=[p[c]-p[a],p[c+1]-p[a+1],p[c+2]-p[a+2]];
+          const n=[e[1]*f[2]-e[2]*f[1], e[2]*f[0]-e[0]*f[2], e[0]*f[1]-e[1]*f[0]], l=Math.hypot(n[0],n[1],n[2])*(n[ax]*sg<0?-1:1);
+          best=[0,0,0,n[0]/l,n[1]/l,n[2]/l]; best[A]=qa; best[B]=qb; best[ax]=h;
+        }
+        return best;
+      };
+    }
+    // ship-frame wrappers: top (X, z) from above; sides (X, D) from starboard or port
+    // @t casters
+    const CT=caster(1,1,SK.top), CS=[caster(2,1,SK.s1), caster(2,-1,SK.s2)];
+    const top=(X,z)=>CT(X-X0,z), side=sg=>(X,D)=>CS[sg>0?0:1](X-X0,Y0-D);
+    const lay=(cs,q,o)=>{ const h=cs(q[0],q[1]); return h ? [h[0]+o*h[3],h[1]+o*h[4],h[2]+o*h[5]] : null; };
+    // a paint panel: convex outline C (plane points) laid off m proud, its rim sunk into the hull
+    function panel(cs,C,mat,off){
+      const O=poly(C,0.9), c=[0,0]; O.forEach(q=>{ c[0]+=q[0]/O.length; c[1]+=q[1]/O.length; });
+      const rm=Math.max(...O.map(q=>Math.hypot(q[0]-c[0],q[1]-c[1]))), K=Math.max(1,Math.ceil(rm/1.3)), H=O.map(q=>cs(q[0],q[1])), m=lay(cs,c,off);
+      if(!m || H.some(h=>!h)) return;
+      const at=o=>({ p:H.map(h=>[h[0]+o*h[3],h[1]+o*h[4],h[2]+o*h[5]]) }), R=[{ p:O.map(()=>m) }];
+      for(let k=1;k<K;k++){ const s=k/K; R.push({ p:O.map(q=>lay(cs,[c[0]+(q[0]-c[0])*s,c[1]+(q[1]-c[1])*s],off)) }); }
+      R.push(Object.assign(at(off),{ k:1 }), at(-0.25));
+      if(R.every(r=>r.p.every(q=>q))) loft(R,{ mat, cap:false });
+    }
+    // rows of points -> a quad strip
+    function strip(R,mat){
+      const m=G.MATS[mat], s0=M.p.length/3, n=R[0].length;
+      R.forEach(r=>r.forEach(q=>{ M.p.push(q[0],q[1],q[2]); M.m.push(m); M.w.push(0); M.c.push(0); }));
+      for(let i=0;i<R.length-1;i++) for(let j=0;j<n-1;j++){ const a=s0+i*n+j, b=a+n; M.i.push(a,b,a+1, a+1,b,b+1); }
+    }
+    // a squared, extended sans: [advance, polylines]; cap height 1, stroke centerlines
+    const FONT={ "N":[1.2,[[0,0,0,1,1.2,0,1.2,1]]], "X":[1.2,[[0,0,1.2,1],[0,1,1.2,0]]], "-":[0.6,[[0,0.5,0.6,0.5]]],
+      "7":[1.15,[[0,1,1.15,1,0.4,0]]], "4":[1.2,[[0.9,0,0.9,1,0,0.32,1.2,0.32]]], " ":[0.35,[]], ".":[0,[[0,0.06,0.001,0.06]]],
+      "2":[1.2,[[0,1,1.02,1,1.2,0.82,1.2,0.68,1.02,0.5,0.18,0.5,0,0.32,0,0,1.2,0]]],
+      "0":[1.2,[[0.18,0,1.02,0,1.2,0.18,1.2,0.82,1.02,1,0.18,1,0,0.82,0,0.18,0.18,0]]],
+      "5":[1.2,[[1.2,1,0,1,0,0.5,1.02,0.5,1.2,0.32,1.2,0.18,1.02,0,0,0]]],
+      "U":[1.2,[[0,1,0,0.18,0.18,0,1.02,0,1.2,0.18,1.2,1]]], "S":[1.2,[[1.2,1,0.18,1,0,0.82,0,0.68,0.18,0.5,1.02,0.5,1.2,0.32,1.2,0.18,1.02,0,0,0]]],
+      "D":[1.2,[[0,0,0,1,0.95,1,1.2,0.75,1.2,0.25,0.95,0,0,0]]], "E":[1.1,[[1.1,1,0,1,0,0,1.1,0],[0,0.5,0.9,0.5]]],
+      "F":[1.1,[[1.1,1,0,1,0,0],[0,0.5,0.9,0.5]]], "I":[0,[[0,0,0,1]]], "A":[1.3,[[0,0,0.65,1,1.3,0],[0.26,0.4,1.04,0.4]]],
+      "T":[1.2,[[0,1,1.2,1],[0.6,1,0.6,0]]] };
+    /* a line of text centered on s=0: cap height h; L(s, t) maps text space (s along the line, t up, m) to the
+       caster's plane; each stroke is a strip off m proud, cut every 0.5 m so it follows the hull */
+    function text(cs,str,h,L,off,o){
+      o=o||{}; const w=(o.w||0.17), sp=o.sp||0.32, ch=[...str], W=ch.reduce((s,c)=>s+FONT[c][0]+w+sp,-sp);
+      let x=-W/2;
+      ch.forEach(c=>{ const g=FONT[c];
+        g[1].forEach(pl=>{ for(let i=0;i+3<pl.length;i+=2){
+          const p=[(x+w/2+pl[i])*h,(w/2+pl[i+1]*(1-w))*h], q=[(x+w/2+pl[i+2])*h,(w/2+pl[i+3]*(1-w))*h];
+          let d=[q[0]-p[0],q[1]-p[1]]; const l=Math.hypot(d[0],d[1]); d=l>1e-6?[d[0]/l,d[1]/l]:[1,0];
+          const hw=w*h/2, n=[-d[1]*hw,d[0]*hw], a=[p[0]-d[0]*hw,p[1]-d[1]*hw], tl=l+2*hw, k=Math.max(1,Math.ceil(tl/0.5)), R=[];
+          for(let j=0;j<=k;j++){ const s=tl*j/k, m=[a[0]+d[0]*s,a[1]+d[1]*s];
+            R.push([lay(cs,L(m[0]+n[0],m[1]+n[1]),off), lay(cs,L(m[0]-n[0],m[1]-n[1]),off)]); }
+          if(R.every(r=>r[0]&&r[1])) strip(R,o.mat||"dark");
+        } });
+        x+=g[0]+w+sp; });
+    }
+    // @t paint
+    // darker panels (port outlines in X, z; mirrored), from the studio model's paint
+    const arc=(r0,r1,f0,f1,n)=>{ const C=[]; for(let k=0;k<=n;k++){ const f=(f0+(f1-f0)*k/n)*PI/180; C.push([BC+r1*Math.cos(f),r1*Math.sin(f)]); }
+      for(let k=n;k>=0;k--){ const f=(f0+(f1-f0)*k/n)*PI/180; C.push([BC+r0*Math.cos(f),r0*Math.sin(f)]); } return C; };
+    const PAN=[
+      // the band across the forward hull, from the spine's nose out to the nacelle's front
+      [[106.4,-16.6],[111,-16.6],[111,-19.2],[106.4,-20.4]], [[106.2,-23.2],[110.9,-22.4],[110.9,-30.4],[105.6,-30.8]],
+      [[105.6,-30.8],[110.9,-30.4],[106.6,-39.2],[101.6,-39.6]],
+      // the forward deck's tip and the jaws beside the module
+      [[121,-7.2],[126.6,-7.2],[126.6,-12.8],[121.6,-14.6]], [[129,-16.6],[137.5,-16.6],[135,-24.5],[128.6,-25.5]],
+      [[117.6,-20.8],[124,-19.2],[126.6,-24.2],[119.2,-26.8]],
+      // aft hull and stern
+      [[12,-15],[21,-15],[21,-21],[12,-20.4]], [[23.5,-19.2],[34,-19.6],[34,-24.5],[23.5,-24]], [[10,-6.5],[16,-6.5],[16,-12.6],[10,-12.6]],
+      // spine: a patch aft of the platform, the band round it outside the stripe
+      [[63.5,-14.6],[70.4,-15.6],[70.4,-19.2],[63.5,-18]], arc(19.9,20.9,-118,-96,4), arc(19.9,20.9,-96,-70,4),
+      // two arrows on the spine, pointing forward
+      [[54,-9.7],[58.4,-9.7],[60.6,-10.95],[58.4,-12.2],[54,-12.2]],
+      // the module: two plates either side of the targeting array's root
+      [[131,-3.4],[139,-3.4],[139,-10.4],[132.6,-10.4]]];
+    [1,-1].forEach(sg=>PAN.forEach(C=>panel(top,C.map(q=>[q[0],q[1]*sg]),"hull2",0.05)));
+    // the light panels: the module's targeting array and two arcs aft on the platform
+    const LIT=[[[140,-7.4],[149.4,-7.4],[149.4,-1.5],[141.8,-1.5]], [[150.5,-6.3],[154.3,-6.3],[154.3,-1.5],[150.5,-1.5]],
+      [[155.2,-6.3],[165.2,-6.3],[166.6,-4.8],[166.6,-1.5],[155.2,-1.5]], arc(14.6,19,-172,-153,4)];
+    [1,-1].forEach(sg=>LIT.forEach(C=>panel(top,C.map(q=>[q[0],q[1]*sg]),"paint",0.05)));
+    // nacelle tops ([u, v] outlines): the big dark triangle forward, the vent plate aft
+    const NP=[[[31,18.2],[51,18.2],[51,2]], [[6,7.4],[19,7.4],[19,13.6],[6,13.6]]];
+    [1,-1].forEach(mz=>{ const T=(u,v)=>[NX(u,v),mz*NZ(u,v)];
+      NP.forEach(C=>panel(top,C.map(q=>T(q[0],q[1])),"hull2",0.05));
+      for(let k=0;k<5;k++){ const v=8.4+k*1.05; panel(top,[T(7.5,v),T(17.5,v),T(17.5,v+0.4),T(7.5,v+0.4)],"dark",0.09); } });
+    // raised vent plates with ribs across them, and two round sensor domes (port X, z; mirrored)
+    const vent=(C,ax,n)=>{ panel(top,C,"hull2",0.2);
+      const [a,b,c]=C, e=[b[0]-a[0],b[1]-a[1]], f=[c[0]-b[0],c[1]-b[1]], d=ax?f:e, g=ax?e:f, w=0.12/Math.hypot(d[0],d[1]);
+      const at=(t,u)=>[a[0]+d[0]*t+g[0]*u, a[1]+d[1]*t+g[1]*u];
+      for(let k=0;k<n;k++){ const t=(k+0.6)/(n+0.2); panel(top,[at(t-w,0.12),at(t+w,0.12),at(t+w,0.88),at(t-w,0.88)],"dark",0.26); } };
+    [1,-1].forEach(sg=>{ const Z=q=>[q[0],q[1]*sg];
+      vent([[79.4,-25.6],[83.6,-25.6],[83.6,-28.8],[79.4,-28.8]].map(Z),0,6);
+      vent([[15.4,-8.6],[18.4,-8.6],[18.4,-12],[15.4,-12]].map(Z),1,5);
+      const T=(u,v)=>[NX(u,v),sg*NZ(u,v)];
+      panel(top,[T(4,4.6),T(12.5,4.6),T(12.5,7.2),T(4,7.2)],"hull2",0.22);
+      [[87.8,-28.3,1.05],[106.8,-20,0.85]].forEach(([X,z,r])=>{ const C=[]; for(let k=0;k<14;k++){ const a=k/14*2*PI; C.push([X+r*Math.cos(a),sg*z+r*Math.sin(a)]); }
+        panel(top,C,"hull2",0.3); panel(top,C.map(q=>[X+(q[0]-X)*0.55,sg*z+(q[1]-sg*z)*0.55]),"dark",0.36); }); });
+    // the module's ribbed center bar
+    panel(top,[[149.6,-0.6],[165.4,-0.6],[165.4,0.6],[149.6,0.6]],"hull2",0.05);
+    for(let X=150.4;X<165;X+=1.2) panel(top,[[X,-0.5],[X+0.4,-0.5],[X+0.4,0.5],[X,0.5]],"dark",0.08);
+    // @t text
+    // U.S.S. DEFIANT around the front of the platform, read from the bow; the letters stand inward
+    { const rb=19.5, h=2.8, rm=rb-h/2;
+      text(top,"U.S.S.DEFIANT",h,(s,t)=>{ const a=-s/rm, r=rb-t; return [BC+r*Math.cos(a), r*Math.sin(a)]; },0.08,{ w:0.2 }); }
+    // the registry across the module's tip, read from the bow
+    text(top,"NX-74205",1.25,(s,t)=>[168.8-t,-s],0.08,{ w:0.2 });
+    [1,-1].forEach(mz=>{
+      // on each nacelle top along its outboard edge, read from outboard
+      text(top,"NX-74205",1.8,(s,t)=>{ const u=23+mz*s, v=17-t; return [NX(u,v),mz*NZ(u,v)]; },0.08,{ w:0.2 });
+      // and on its outboard side, over and under the registry stripe
+      text(side(mz),"NX-74205",1.6,(s,t)=>[57.5+mz*s,16.6-t],0.08,{ w:0.2 });
+      text(side(mz),"U.S.S. DEFIANT",0.95,(s,t)=>[56.5+mz*s,20.6-t],0.08,{ w:0.2 });
+    });
 
     /* ---------------- dorsal trim: centerline stripes, the U around the platform, plasma vents ---------------- */
     // a stripe pair on the centerline over the surface top(X); sg -1 runs it under the keel instead
@@ -387,7 +532,11 @@ SHIPS.defiant={
       loft(R.concat([ring(51.15,0.12)]),{}); }
     const chev=(xa,xb,za,y,o)=>G.sweep(M,{ seg:12, res:1, mat:"trim", side:[0,1,0], st:[
       Object.assign({ x:xa-X0, y:y(xa), z:za },o), Object.assign({ x:xb-X0, y:y(xb), z:0, k:1 },o), Object.assign({ x:xa-X0, y:y(xa), z:-za },o)] });
-    chev(121,123.5,2.0,X=>Y0-FT(X)+0.05,{ w:0.06, t:0.33, b:0.33, n:4 });
+    // the arrowheads: a filled delta ahead of the dorsal stripes, and one at the end of each nacelle stripe
+    const delta=(cs,x0,x1,y,h,s,off)=>{ const t=[x1,y], n=[x0+(x1-x0)*0.3,y];
+      panel(cs,[t,[x0,y-h*s],n],"paint",off); panel(cs,[t,n,[x0,y+h*s]],"paint",off); };
+    delta(top,120.9,124.4,0,1.9,1,0.07);
+    { const RD=(NTOP(VO)+NBOT(VO))/2; [1,-1].forEach(mz=>delta(side(mz),79.2,83.6,RD,1.05,1,0.12)); }
     const UZ=tab([[25,11.6],[35,12.9],[45,14.0],[55,15.4],[62,16.5],[70,17.8],[76,18.7],[80,19.1],[84,19.3],[86,19.3]]);
     [1,-1].forEach(sg=>{
       const st=[], at=(X,z)=>st.push({ x:X-X0, y:Y0-ST(X)+0.04, z:sg*z, w:0.3, t:0.05, b:0.4, n:4 });

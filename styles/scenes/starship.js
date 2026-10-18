@@ -20,7 +20,7 @@
                  o.seg     points around a section (default 40)
                  o.res     subdivisions per span (default 4)
                  o.cap     close open ends with a flat fan (default true)
-                 o.mat     material name (see MATS)
+                 o.mat     material name (see MATS; paint is a light warm cream, amber a dim warm glow)
                  o.mirror  also emit the copy mirrored to -z
                  o.win     1 = this skin can carry lit windows
                  o.wa      window run axis: "u" along the path, "v" around
@@ -29,7 +29,7 @@
                            radii in each direction; o.n  plan superellipse
    ========================================================================= */
 const SHIPGEOM=(()=>{
-  const MATS={ hull:0, hull2:1, grille:2, bussard:3, deflector:4, impulse:5, dark:6, trim:7, lamp:8 };
+  const MATS={ hull:0, hull2:1, grille:2, bussard:3, deflector:4, impulse:5, dark:6, trim:7, lamp:8, paint:9, amber:10 };
   function mesh(){ return { p:[], m:[], w:[], c:[], i:[] }; }
 
   const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
@@ -177,7 +177,8 @@ const SHIPGEOM=(()=>{
 const SHIPS={};
 
 /* USS Enterprise NCC-1701-D, Galaxy class. Nacelle tails at x 0, saucer bow at x 642.5,
-   keel at y 1.5, bridge at y 141.4. Fitted to ref/galaxy.jpg (side), galaxy-top.jpg, galaxy-front.jpg. */
+   keel at y 1.5, bridge at y 141.4. Fitted to ref/galaxy.jpg (side), galaxy-top.jpg, galaxy-front.jpg;
+   escape pods, registry and paint read off galaxy-top.jpg and the studio model photos (galaxy-extra-*). */
 SHIPS.galaxy=(()=>{
   const spow=(v,e)=>Math.sign(v)*Math.pow(Math.abs(v),e);
   // monotone cubic through [[x,y],...]: smooth, never overshoots
@@ -208,27 +209,27 @@ SHIPS.galaxy=(()=>{
   const LF=mono(lift([[0,82.6],[.14,83.6],[.25,85.2],[.36,87.8],[.465,91.2],[.57,95.5],[.68,100.6],[.75,102.3],[.85,103.2],[.993,104.0]]));
   const LA=mono(lift([[0,82.6],[.18,83.4],[.28,85.1],[.39,87.4],[.49,88.8],[.6,92.5],[.7,98],[.78,101.5],[.86,102.6],[.993,102.8]]));
   const LL=mono(lift([[0,82.6],[.2,82.4],[.3,83.4],[.4,85.4],[.5,88.1],[.6,92.3],[.667,96],[.733,99.9],[.8,102.5],[.9,102.8],[.993,102.8]]));
-  function sau(r, th, up){
-    const c=Math.cos(th), s=Math.sin(th);
+  function sau(r, th, up, y0){ return sauCS(r, Math.cos(th), Math.sin(th), up, y0); }
+  // the same from the angle's cosine and sine; y0 skips the profile lookups when the caller has them
+  function sauCS(r, c, s, up, y0){
     let x=SC.x+r*(c>=0?SC.f:SC.a)*c; const z=r*SC.s*s;
-    x=SC.cut+3*Math.log(1+Math.exp((x-SC.cut)/3));
+    if(x-SC.cut<60) x=SC.cut+3*Math.log(1+Math.exp((x-SC.cut)/3));
     // the notches on the aft rim that hold the saucer impulse engines
     const az=Math.abs(z), k=(az-100)/8, q=(146-az)/8;
     if(c<0 && k>0 && q>0){ const wgt=Math.min(1,k)*Math.min(1,q), sw=wgt*wgt*(3-2*wgt);
       x+=sw*(296+1.5*Math.log(1+Math.exp((x-296)/1.5))-x); }
-    const y=up ? UP(r) : (c>0?c*c:0)*LF(r)+(c<0?c*c:0)*LA(r)+s*s*LL(r);
+    const y=up ? (y0?y0[0]:UP(r)) : y0 ? (c>0?c*c:0)*y0[0]+(c<0?c*c:0)*y0[1]+s*s*y0[2] : (c>0?c*c:0)*LF(r)+(c<0?c*c:0)*LA(r)+s*s*LL(r);
     return [x,y,z];
   }
 
-  /* ---- nacelle (starboard; the build mirrors it): a sweep along x about y 70, z 127.8; the last
-     stations are the cowl lip round the back of the bussard ---- */
+  /* ---- nacelle (starboard; the build mirrors it): a sweep along x about y 70, z 127.8, ending
+     at the cowl round the back of the bussard ---- */
   const NZ=127.8, NY=70;
   const NAC=[
     {x:0,w:0,t:0,b:0,r:3},{x:1.2,w:9,t:5.5,b:5.8,r:3},{x:4,w:16,t:9.6,b:10.2,r:3},{x:9,w:22,t:12.8,b:13.4,r:3},
-    {x:17,w:25,t:14.4,b:15.2,r:3},{x:28,w:25.9,t:15.4,b:15.6,r:6},{x:80,w:25.4,t:15.9,b:15.6,r:6},{x:140,w:23.35,t:15.5,b:15.4,r:5},
+    {x:17,w:25,t:14.4,b:15.2,r:3},{x:28,w:25.9,t:15.4,b:15.6,r:3},{x:80,w:25.4,t:15.9,b:15.6,r:3},{x:140,w:23.35,t:15.5,b:15.4,r:3},
     {x:180,w:21.1,t:14.1,b:15,r:3},{x:196,w:20.9,t:12.9,b:14.5,r:2},{x:200,w:20.4,t:12.3,b:13.8,r:3},{x:211,w:19.5,t:12,b:13.4,r:2},
-    {x:217,w:19.1,t:11.7,b:12.6,r:2},{x:222,w:18.7,t:11.2,b:12,r:1},{x:223.5,w:18.4,t:10.8,b:11.5,r:2},{x:226,w:17.6,t:10.3,b:10.8,r:2},
-    {x:230,w:16.7,t:9.4,b:9.7}];
+    {x:217,w:19.1,t:11.7,b:12.6}];
   const NAC_N={nt:4.2, nb:3.0};
   // the sweep's own station smoothing, so details can sit on a skin
   function cr(a,b,c,d,t){ const t2=t*t, t3=t2*t; return 0.5*(2*b+(-a+c)*t+(2*a-5*b+4*c-d)*t2+(-a+3*b-3*c+d)*t3); }
@@ -244,14 +245,17 @@ SHIPS.galaxy=(()=>{
   }
   // a dense station list sampled at path coordinate v along key k (linear between stations)
   function at(D, k, v){
+    const K=D.fk||(D.fk=Object.keys(D[0]));
     for(let i=0;i<D.length-1;i++) if(v<=D[i+1][k]){
       const a=D[i], b=D[i+1], f=(v-a[k])/((b[k]-a[k])||1), o={};
-      for(const q in a) o[q]=a[q]+(b[q]-a[q])*f;
+      for(let j=0;j<K.length;j++){ const q=K[j]; o[q]=a[q]+(b[q]-a[q])*f; }
       return o;
     }
     return D[D.length-1];
   }
-  const ND=dense(NAC, 6), nsec=x=>at(ND,"x",x);
+  // a two-slot cache: the grilles ask for the same few stations over and over
+  const ND=dense(NAC, 6), NC=[[NaN,null],[NaN,null]];
+  const nsec=x=>{ if(NC[0][0]===x) return NC[0][1]; if(NC[1][0]===x) return NC[1][1]; NC.unshift([x,at(ND,"x",x)]); NC.pop(); return NC[0][1]; };
   // point on the nacelle skin at x, ring angle a (0 = outboard, pi/2 = top), lifted off by d
   function npt(x, a, d){
     const s=nsec(x), up=Math.sin(a)>=0, e=2/(up?NAC_N.nt:NAC_N.nb);
@@ -282,7 +286,7 @@ SHIPS.galaxy=(()=>{
   const BODY=[[55,0,0,0],[62,10,10,4],[80,28,14,5],[110,47,18,5.5],[140,60,21.5,5.5],[160,64,24,13],[180,68.5,26,13],
     [205,72.5,27,13],[235,74.3,27.5,13],[255,73.8,28,13],[275,70,28.5,13],[290,63,29,13],[298,54,27,7],[302,40,22,3],[303.5,0,0,0]]
     .map(q=>({ x:q[0], y:25, w:q[1], t:q[2], b:q[3], nt:q[0]<130?1.8:q[0]<165?1.4:1.25, nb:q[0]>=160&&q[0]<=290?1.6:2 }));
-  const BD=dense(BODY, 5, ["x","w","t","nt"]);
+  const BD=dense(BODY, 4, ["x","w","t","nt"]);
   // the upper body's flank at x, height y (starboard)
   const bpt=(x,y)=>{ const s=at(BD,"x",x), h=Math.min(0.999,Math.max(0,(y-25)/s.t)); return [x, y, s.w*Math.pow(1-Math.pow(h,s.nt),1/s.nt)]; };
 
@@ -301,11 +305,11 @@ SHIPS.galaxy=(()=>{
   return {
     name:"U.S.S. ENTERPRISE", reg:"NCC-1701-D", cls:"GALAXY CLASS",
     len:642.51, beam:463.73, height:195.26,
-    hull:[0.62,0.66,0.70], defl:[1.0,0.55,0.18], deck:3.6,
+    hull:[0.62,0.66,0.70], defl:[1.0,0.3,0.05], deck:3.6,
     callouts:[
       { text:"MAIN BRIDGE", at:[433.5,141.4,0] },
       { text:"SAUCER SECTION", at:sau(0.62,0.6,true) },
-      { text:"MAIN SHUTTLEBAY", at:[343.5,domeAt(343.5,0)+1.1,0] },
+      { text:"MAIN SHUTTLEBAY", at:[346.5,domeAt(347.5,0)-1.2,0] },
       { text:"MAIN DEFLECTOR", at:dp(-10,0,0) },
       { text:"IMPULSE ENGINE", at:[194.3,61,0] },
       { text:"WARP NACELLE", at:npt(110,Math.PI/2,0) },
@@ -315,12 +319,13 @@ SHIPS.galaxy=(()=>{
       const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
       const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
       /* a grid of points P[i][j] as a sheet; out(p) gives an outward hint for the winding;
-         wc[i][j] window coordinates (optional) */
+         wc[i][j] window coordinates and skip(i,j) cells left open (both optional) */
       function sheet(P, o){
         const mat=MAT[o.mat||"hull"], win=o.win?1:0, nj=P[0].length;
         (o.mirror?[1,-1]:[1]).forEach(mz=>{
           const b0=M.p.length/3;
-          P.forEach((row,i)=>row.forEach((p,j)=>{ M.p.push(p[0],p[1],p[2]*mz); M.m.push(mat); M.w.push(win); M.c.push(o.wc?o.wc[i][j]:0); }));
+          for(let i=0;i<P.length;i++){ const row=P[i], wr=o.wc&&o.wc[i];
+            for(let j=0;j<nj;j++){ const p=row[j]; M.p.push(p[0],p[1],p[2]*mz); M.m.push(mat); M.w.push(win); M.c.push(wr?wr[j]:0); } }
           // winding from the first cell with some area
           let flip=false;
           for(let i=0;i<P.length-1;i++){ let done=false;
@@ -333,6 +338,7 @@ SHIPS.galaxy=(()=>{
           }
           if(mz<0) flip=!flip;
           for(let i=0;i<P.length-1;i++) for(let j=0;j<nj-1;j++){
+            if(o.skip && o.skip(i,j)) continue;
             const a=b0+i*nj+j, b=a+1, c=a+nj, d=c+1;
             if(!flip) M.i.push(a,b,c, b,d,c); else M.i.push(a,c,b, b,c,d);
           }
@@ -340,29 +346,44 @@ SHIPS.galaxy=(()=>{
       }
 
       // ---- saucer: top dome, rim band, lower dome (separate sheets: hard creases at the rim) ----
-      const NS=168, rr=t=>0.993*(0.5*t+0.5*(1-(1-t)*(1-t)));
+      const NS=120, rr=t=>0.993*(0.5*t+0.5*(1-(1-t)*(1-t)));
       const ring=f=>{ const R=[]; for(let j=0;j<=NS;j++) R.push(f(j/NS*Math.PI*2)); return R; };
+      const CS=[]; for(let j=0;j<=NS;j++){ const a=j/NS*Math.PI*2; CS.push([Math.cos(a),Math.sin(a)]); }
+      const dome2=(r,up)=>{ const y0=up?[UP(r)]:[LF(r),LA(r),LL(r)]; return CS.map(q=>sauCS(r,q[0],q[1],up,y0)); };
       const arc=P=>P.map(row=>{ let u=0; return row.map((p,j)=>{ if(j) u+=Math.hypot(p[0]-row[j-1][0],p[2]-row[j-1][2]); return u; }); });
       const out=p=>[p[0]-SC.x, p[1]-106, p[2]];
       const top=[], bot=[], rim=[];
-      for(let i=0;i<=38;i++) top.push(ring(th=>sau(rr(i/38),th,true)));
-      for(let i=38;i>=0;i--) bot.push(ring(th=>sau(rr(i/38),th,false)));
+      for(let i=0;i<=38;i++) top.push(dome2(rr(i/38),true));
+      for(let i=28;i>=0;i--) bot.push(dome2(rr(i/28),false));
       const edge=(th,up,dy,k)=>{ const p=sau(0.993,th,up), q=sau(1,th,true); return [q[0]+(p[0]-q[0])*k, p[1]+dy, q[2]+(p[2]-q[2])*k]; };
       rim.push(top[top.length-1], ring(th=>edge(th,true,-0.6,0.3)), ring(th=>edge(th,true,-1.5,0)),
                ring(th=>edge(th,false,1.5,0)), ring(th=>edge(th,false,0.6,0.3)), bot[0]);
-      sheet(top,{ out });
+      // main shuttlebay: a recess in the dome aft of the deck (its door is the deck's aft face). The
+      // top sheet leaves the cells over it open and a finer patch with the recess fills them.
+      const bayDepth=(x,z)=>{ const c=v=>{ v=Math.min(1,Math.max(0,v)); return v*v*(3-2*v); };
+        return 3.6*c((x-326)/16)*c((37-Math.abs(z))/1.6)*c((351-x)/2); };
+      const BI=[16,22], BJ=[53,67];
+      sheet(top,{ out, skip:(i,j)=>i>=BI[0]&&i<BI[1]&&j>=BJ[0]&&j<BJ[1] });
+      { const P=[];
+        for(let a=0;a<=(BI[1]-BI[0])*3;a++){ const r=rr((BI[0]+a/3)/38), R=[];
+          for(let b=0;b<=(BJ[1]-BJ[0])*3;b++){ const p=sau(r,(BJ[0]+b/3)/NS*Math.PI*2,true); p[1]-=bayDepth(p[0],p[2]); R.push(p); }
+          P.push(R); }
+        sheet(P,{ out }); }
       sheet(rim,{ out, win:1, wc:arc(rim) });
       sheet(bot,{ out });
       // phaser arrays: a band round the dorsal dome (open aft) and one round the ventral dome
-      const band=(r0,r1,a0,a1,up,n)=>{ const P=[];
-        [r0,r1].forEach(r=>{ const R=[]; for(let j=0;j<=n;j++){ const p=sau(r,a0+(a1-a0)*j/n,up); p[1]+=up?0.18:-0.18; R.push(p); } P.push(R); });
-        sheet(P,{ mat:"dark", out:p=>[0,up?1:-1,0] }); };
-      band(0.768,0.782,-2.72,2.72,true,140);
-      band(0.585,0.597,-2.55,2.55,false,120);
+      const band=(r0,r1,a0,a1,up,n,mat,d)=>{ const P=[];
+        [r0,r1].forEach(r=>{ const R=[]; for(let j=0;j<=n;j++){ const p=sau(r,a0+(a1-a0)*j/n,up); p[1]+=up?d:-d; R.push(p); } P.push(R); });
+        sheet(P,{ mat, out:p=>[0,up?1:-1,0] }); };
+      // the dorsal strip: a gray band between two dark lines
+      band(0.763,0.787,-2.72,2.72,true,140,"hull2",0.18);
+      band(0.763,0.7655,-2.72,2.72,true,140,"dark",0.21);
+      band(0.7845,0.787,-2.72,2.72,true,140,"dark",0.21);
+      band(0.583,0.598,-2.55,2.55,false,120,"dark",0.18);
 
       // ---- secondary hull: the upper body (widest at y 25) and one lens-shaped keel under it ----
-      G.sweep(M,{ win:1, seg:56, res:5, st:BODY });
-      G.sweep(M,{ win:1, seg:56, res:5, st:[
+      G.sweep(M,{ win:1, seg:56, res:4, st:BODY });
+      G.sweep(M,{ win:1, seg:56, res:4, st:[
         [132,0,0],[140,28,3.5],[150,44,6.5],[160,52,12],[170,59,19],[180,64,20.5],[220,64,20.5],[245,63,17.4],
         [265,60,15.1],[285,52,12],[296,40,6.5],[301,0,0]]
         .map(q=>({ x:q[0], y:22, w:q[1], t:Math.min(q[1],6), b:q[2], nt:2, nb:1.4 })) });
@@ -379,6 +400,7 @@ SHIPS.galaxy=(()=>{
       // dorsal neck: a vertical sweep about x 280 (t reaches aft, b forward, w abeam)
       G.sweep(M,{ win:1, wa:"v", seg:56, res:3, st:NECK.map(s=>Object.assign({ x:280, z:0, nt:2.4, nb:2.2 },s)) });
 
+      let pyFace=null;
       // ---- pylons: out from the hull, then up to the nacelles (U seen from the bow). The chord
       // stays along x everywhere, so the edges never tilt: [z, y, leading x, trailing x, half thickness] ----
       {
@@ -394,6 +416,12 @@ SHIPS.galaxy=(()=>{
           return row; });
         const cap=r=>r.map(p=>{ const q=p.c.slice(); q.c=p.c; return q; });
         sheet([cap(R[0])].concat(R,[cap(R[R.length-1])]),{ mirror:true, out:p=>sub(p,p.c) });
+        // the outboard face of the rising part at (x, y), lifted d (the registry is painted there)
+        pyFace=(x,y,d)=>{ let i=PD.findIndex(s=>s.z>110); while(i<PD.length-2 && PD[i+1].y<y) i++;
+          const a=PD[i], b=PD[i+1], f=(y-a.y)/(b.y-a.y), L=k=>a[k]+(b[k]-a[k])*f, l=Math.hypot(b.y-a.y,b.z-a.z);
+          const ny=(b.z-a.z)/l, nz=-(b.y-a.y)/l, xc=(L("le")+L("te"))/2, hw=(L("le")-L("te"))/2;
+          const Y=-L("t")*Math.sqrt(Math.max(0,1-Math.pow((x-xc)/hw,2)))-d;
+          return [x, L("y")+ny*Y, L("z")+nz*Y]; };
       }
 
       // ---- nacelles ----
@@ -401,14 +429,15 @@ SHIPS.galaxy=(()=>{
       const BUS=[{x:213,w:15,t:7.0},{x:224,w:16.2,t:7.6},{x:236,w:15.6,t:7.4},{x:244,w:12.8,t:6.4},
         {x:249.5,w:8.6,t:4.4},{x:252,w:2.8,t:1.5},{x:252.6,w:0,t:0}];
       G.sweep(M,{ mirror:true, mat:"bussard", seg:40, res:3, st:BUS.map(s=>Object.assign({y:NY+0.5,z:NZ,n:2.6,b:s.t},s)) });
-      // the cowl lip runs forward over the bussard's top (aft at the keel, x 231, fore at the crown, x 239.5);
-      // a gray shell from the cowl's front face to the lip, then a maroon collar ring
+      // the cowl is a clamshell: its lip runs forward over the bussard's crown and under its keel (x 239)
+      // and is cut back at the flanks (x 219), so the bussard shows its full length from the side;
+      // a gray shell from the nacelle's end to the lip, then a maroon collar ring
       {
-        const BSD=dense(BUS, 3, ["x","w","t"]), e=2/2.6, xl=a=>231+8.5*Math.pow((1+Math.sin(a))/2,2);
+        const BSD=dense(BUS, 3, ["x","w","t"]), e=2/2.6, xl=a=>219+20*Math.pow(Math.abs(Math.sin(a)),1.6);
         const bp=(x,a,d)=>{ const q=at(BSD,"x",x); return [x, NY+0.5+spow(Math.sin(a),e)*(q.t+d), NZ+spow(Math.cos(a),e)*(q.w+d)]; };
         const shell=[], collar=[], J=48, out=p=>[0,p[1]-NY-0.5,p[2]-NZ];
-        for(let i=0;i<=5;i++){ const f=i/5, g=1-(1-f)*(1-f), R=[];
-          for(let j=0;j<=J;j++){ const a=j/J*2*Math.PI, c=npt(230,a,0), x=230+f*(xl(a)-230), b=bp(x,a,0.65);
+        for(let i=0;i<=6;i++){ const f=i/6, R=[];
+          for(let j=0;j<=J;j++){ const a=j/J*2*Math.PI, c=npt(217,a,0), x=217+f*(xl(a)-217), b=bp(x,a,0.65), g=Math.sin(a)>0?1-(1-f)*(1-f):Math.pow(f,1.6);
             R.push([x, c[1]+(b[1]-c[1])*g, c[2]+(b[2]-c[2])*g]); }
           shell.push(R); }
         [[0,0.65],[0.3,0.95],[1.3,0.95],[1.6,0.1]].forEach(([dx,d])=>{ const R=[];
@@ -423,33 +452,36 @@ SHIPS.galaxy=(()=>{
       G.sweep(M,{ mirror:true, seg:32, res:3, st:HOOD });
       const HD=dense(HOOD, 3, ["x","y","t"]), hoodTop=x=>{ const q=at(HD,"x",x); return q.y+q.t; };
       [221.7,225.6,229.4].forEach(x=>{
-        G.sweep(M,{ mat:"dark", mirror:true, seg:16, st:[x-1.1,x+1.1].map(xx=>({ x:xx, y:hoodTop(xx)+0.1, z:NZ, w:6, t:0.22, b:0.22, n:6 })) }); });
+        G.sweep(M,{ mat:"dark", mirror:true, seg:16, res:1, st:[x-1.1,x+1.1].map(xx=>({ x:xx, y:hoodTop(xx)+0.1, z:NZ, w:6, t:0.22, b:0.22, n:6 })) }); });
       // the copper field coils between the grilles and the bussard
-      for(let i=0;i<4;i++){
-        const x0=199.8+i*2.75, a=nsec(x0), b=nsec(x0+1.7);
-        G.sweep(M,{ mirror:true, mat:"trim", seg:48, st:[a,b].map((q,k)=>Object.assign({ x:x0+k*1.7, y:NY, z:NZ, w:q.w+0.35, t:q.t+0.35, b:q.b+0.35 }, NAC_N)) });
+      for(let i=0;i<5;i++){
+        const x0=200+i*2, a=nsec(x0), b=nsec(x0+1.6);
+        G.sweep(M,{ mirror:true, mat:"trim", seg:48, res:1, st:[a,b].map((q,k)=>Object.assign({ x:x0+k*1.6, y:NY, z:NZ, w:q.w+0.35, t:q.t+0.35, b:q.b+0.35 }, NAC_N)) });
       }
-      // two red lines along each nacelle's top
+      // two red lines along each nacelle's top, aft from a Starfleet delta (red, a white one inside)
+      const nsk=(x,z,d)=>{ const c=Math.pow(Math.abs(z)/nsec(x).w,NAC_N.nt/2)*Math.sign(z); return npt(x,Math.acos(c),d); };
       [-3.2,3.2].forEach(z0=>{
         const P=[];
-        for(let i=0;i<=12;i++){ const x=96+i/12*96, sw=nsec(x).w, row=[];
-          [z0-0.55,z0+0.55].forEach(z=>{ const c=Math.pow(Math.abs(z)/sw,NAC_N.nt/2)*Math.sign(z); row.push(npt(x,Math.acos(c),0.15)); });
-          P.push(row); }
+        for(let i=0;i<=12;i++){ const x=74+i/12*102, row=[]; [z0-0.55,z0+0.55].forEach(z=>row.push(nsk(x,z,0.15))); P.push(row); }
         sheet(P,{ mat:"trim", mirror:true, out:p=>[0,1,0] });
       });
+      [[1,"trim",0.2],[0.6,"paint",0.26]].forEach(([k,mat,d])=>{
+        const A=[[4.8,0],[-4,3.6],[-1.9,0],[-4,-3.6]].map(q=>nsk(181.5+q[0]*k,q[1]*k,d));
+        sheet([[A[0],A[0],A[0]],[A[1],A[2],A[3]]],{ mat, mirror:true, out:p=>[0,1,0] }); });
       // warp field grilles: lifted strips on the outboard and inboard flanks, flaring at the front
       [0, Math.PI].forEach(a0=>{
-        const P=[], nx=60;
-        for(let i=0;i<=nx;i++){
-          const x=4+i/nx*191, h=3.2+7.8*Math.pow(Math.max(0,(x-160)/35),1.6);
+        // they run round the tail too: there the band of the two sides meets across the cap
+        const P=[], X=[0.12,0.45,0.9,1.5,2.2,3.0]; for(let x=4;x<150;x+=6) X.push(x); for(let x=150;x<=195.01;x+=2.25) X.push(x);
+        X.forEach(x=>{
+          const h=3.2+7.8*Math.pow(Math.max(0,(x-160)/35),1.6);
           const s=nsec(x), row=[];
           for(let j=0;j<=16;j++){
             const v=-1+2*j/16, up=v>=0, tt=up?s.t:s.b, nn=up?NAC_N.nt:NAC_N.nb;
-            const q=Math.min(0.97,Math.abs(v)*h/tt), a=Math.sign(v)*Math.asin(Math.pow(q,nn/2));
+            const q=Math.min(tt>h?0.97:1,Math.abs(v)*h/tt), a=Math.sign(v)*Math.asin(Math.pow(q,nn/2));
             row.push(npt(x, a0===0 ? a : Math.PI-a, 0.4));
           }
           P.push(row);
-        }
+        });
         sheet(P,{ mat:"grille", mirror:true, out:p=>[0,0,a0===0?1:-1] });
       });
 
@@ -478,26 +510,27 @@ SHIPS.galaxy=(()=>{
       const dome=x=>UP(Math.abs(x-SC.x)/(x>SC.x?SC.f:SC.a));
       // [x, half beam, top above the dome]: a straight-sided plate from the main shuttlebay, then a broad
       // crescent round the bridge whose horns end in the RCS pods
-      const DECK=[[338,39,0.4],[346,39,1.0],[356,37.5,1.3],[380,36,1.3],[405,35.5,1.4],[420,45,1.8],
+      const DECK=[[347.5,37.5,2.2,3.2],[351,37.6,2.2,3.2],[358,37.3,1.7,2],[380,36,1.3],[405,35.5,1.4],[420,45,1.8],
         [440,54.5,3.3],[452,56,3.6],[462,55,2.7],[472,51,1.4],[482,42,1.5],[490,27,1.4],[495,12,1.0],[497.5,0,0]]
-        .map(q=>({ x:q[0], y:dome(q[0])-1.5, w:q[1], t:q[2]+1.5, b:1.5, nt:5, nb:2 }));
+        .map(q=>({ x:q[0], y:dome(q[0])-1.5, w:q[1], t:q[2]+1.5, b:q[3]||1.5, nt:5, nb:q[3]?5:2 }));
       G.sweep(M,{ seg:48, res:4, st:DECK });
       // the top of the deck (or of the saucer where there is no deck) over a plan point
       const DKD=dense(DECK, 4, ["x","y","w","t"]);
-      const deckAt=(x,z)=>{ const s=at(DKD,"x",x), a=Math.abs(z)/(s.w||1e-6);
+      const deckAt=(x,z)=>{ if(x<347.5) return domeAt(x,z); const s=at(DKD,"x",x), a=Math.abs(z)/(s.w||1e-6);
         return Math.max(domeAt(x,z), a<1 ? s.y+s.t*Math.pow(1-Math.pow(a,5),0.2) : 0); };
       // the RCS pods at the crescent's tips (a sweep out along z), each with a red thruster mark
       const pod=[[44,0,0],[46,7.5,138.5],[50,9,138.7],[55,8.6,138.6],[61,6.2,138],[67,3.6,137],[71,1.4,136],[72.5,0,135.6]];
       G.sweep(M,{ mirror:true, side:[-1,0,0], seg:28, res:3, st:pod.map(q=>{ const y=domeAt(452,q[0])-1;
         return { x:452, y:y, z:q[0], w:q[1], t:q[1]?q[2]-y:0, b:q[1]?1:0, nt:2.6, nb:2 }; }) });
       const podTop=mono(pod.slice(1,-1).map(q=>[q[0],q[2]]));
-      G.sweep(M,{ mat:"trim", mirror:true, side:[-1,0,0], seg:16, st:[57.5,60].map(z=>({ x:451, y:podTop(z)+0.05, z:z, w:1.6, t:0.3, b:0.3, n:4 })) });
-      // main shuttlebay door, on the ramp at the deck's aft end
-      G.sweep(M,{ mat:"dark", seg:16, st:[{x:337,y:dome(337)+0.4,w:35,t:0.3,b:0.3,n:6},{x:350,y:dome(350)+1.2,w:35,t:0.3,b:0.3,n:6}] });
+      G.sweep(M,{ mat:"trim", mirror:true, side:[-1,0,0], seg:16, res:1, st:[57.5,60].map(z=>({ x:451, y:podTop(z)+0.05, z:z, w:1.6, t:0.3, b:0.3, n:4 })) });
       // bridge module; the observation lounge is its aft end (windows placed with the panes below)
-      const BRM=[{x:422,w:0,t:0,b:0},{x:423,w:9,t:2},{x:426.5,w:12.5,t:3.9},{x:433.5,w:14,t:4.3},
-        {x:441,w:12.5,t:3.8},{x:447,w:8,t:2.2},{x:449,w:0,t:0}].map(s=>Object.assign({ y:137.1, b:1, nt:2.6, nb:2 },s));
+      const BRM=[{x:422,w:0,t:0,b:0},{x:423,w:9,t:2},{x:426.5,w:12.5,t:3.3},{x:433.5,w:14,t:3.4},
+        {x:441,w:12.5,t:3.0},{x:447,w:8,t:1.8},{x:449,w:0,t:0}].map(s=>Object.assign({ y:137.1, b:1, nt:2.6, nb:2 },s));
       G.sweep(M,{ seg:48, res:4, st:BRM });
+      // the bridge itself, a low dome on the module's forward half
+      G.sweep(M,{ seg:36, res:3, st:[{x:430,w:0,t:0},{x:431,w:4.6,t:3.7},{x:434.5,w:7,t:4.3},{x:439.5,w:6.4,t:4.1},{x:442.5,w:3.5,t:3.5},{x:443.5,w:0,t:0}]
+        .map(s=>Object.assign({ y:137.1, b:0.5, nt:2.2, nb:2 },s)) });
       // Ten Forward: the big windows across the bow, on the rim
       for(let k=-9;k<=9;k++){
         const t0=(k*2.3-0.8)*Math.PI/180, t1=(k*2.3+0.8)*Math.PI/180, P=[];
@@ -509,39 +542,30 @@ SHIPS.galaxy=(()=>{
       G.sweep(M,{ seg:32, st:[{x:436,w:0,t:0,b:0},{x:438,w:8,b:1.2},{x:446,w:13,b:2},{x:462,w:13,b:2},{x:470,w:8,b:1.2},{x:472,w:0,b:0}]
         .map(s=>Object.assign({ y:84.2, t:1, n:2.4 },s)) });
       // shuttlebays 2 and 3, on the aft slope of the neck
-      const bay=[]; for(let i=0;i<=4;i++){ const y=95.5+i*2.1, row=[]; for(let j=0;j<=4;j++) row.push(kpt(y,17.5+j*3,0.35)); bay.push(row); }
+      const bay=[]; for(let i=0;i<=3;i++){ const y=101.2+i*2.2, row=[]; for(let j=0;j<=6;j++) row.push(kpt(y,8.6+j*3.4,0.35)); bay.push(row); }
       sheet(bay,{ mat:"dark", mirror:true, out:p=>[-1,0.9,0] });
       // torpedo launchers: aft, in the tail between the pylons, and forward, at the foot of the neck
-      G.sweep(M,{ mat:"dark", seg:16, st:[{x:37.2,y:23.6,w:7,t:1.3,b:1.3,n:5},{x:37.9,y:23.6,w:7,t:1.3,b:1.3,n:5}] });
-      G.sweep(M,{ mat:"dark", seg:16, st:[{x:321.4,y:49.6,w:6.5,t:1.2,b:1.2,n:5},{x:322.5,y:49.6,w:6.5,t:1.2,b:1.2,n:5}] });
+      G.sweep(M,{ mat:"dark", seg:16, res:1, st:[{x:37.2,y:23.6,w:7,t:1.3,b:1.3,n:5},{x:37.9,y:23.6,w:7,t:1.3,b:1.3,n:5}] });
+      G.sweep(M,{ mat:"dark", seg:16, res:1, st:[{x:321.4,y:49.6,w:6.5,t:1.2,b:1.2,n:5},{x:322.5,y:49.6,w:6.5,t:1.2,b:1.2,n:5}] });
       // main impulse engine, at the foot of the neck's aft slope
       G.sweep(M,{ seg:24, st:[{x:195,y:57,w:14,t:9.6,b:10,nt:4,nb:8},{x:210,y:57.5,w:14,t:9.8,b:10,nt:4,nb:8},{x:222,y:60,w:7,t:5,b:8,nt:3,nb:4}] });
-      G.sweep(M,{ mat:"impulse", seg:24, st:[{x:194.3,y:61,w:12.6,t:4.2,b:4.2,n:4},{x:194.8,y:61,w:12.6,t:4.2,b:4.2,n:4}] });
+      G.sweep(M,{ mat:"impulse", seg:24, res:1, st:[{x:194.3,y:61,w:12.6,t:4.2,b:4.2,n:4},{x:194.8,y:61,w:12.6,t:4.2,b:4.2,n:4}] });
       // saucer impulse engines, on the aft rim either side of the neck
-      G.sweep(M,{ mat:"impulse", mirror:true, seg:24, st:[{x:295.6,y:106.3,z:123.5,w:14.5,t:2.9,b:2.9,n:5},{x:297,y:106.3,z:123.5,w:14.5,t:2.9,b:2.9,n:5}] });
+      G.sweep(M,{ mat:"impulse", mirror:true, seg:24, res:1, st:[{x:295.6,y:106.3,z:123.5,w:14.5,t:2.9,b:2.9,n:5},{x:297,y:106.3,z:123.5,w:14.5,t:2.9,b:2.9,n:5}] });
 
       // ---- lit window panes on the faces too flat for the renderer's window rows ----
       const nrm=a=>{ const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l]; };
       let seed=7; const rnd=()=>(seed=seed*16807%2147483647)/2147483647;
       // a pane at p, its long side along u, lifted d along the normal n
       const pane=(p,u,n,L,H,d,mat)=>{
-        u=nrm(sub(u,n.map(c=>c*dot(u,n)))); const v=cross(n,u), b0=M.p.length/3;
-        [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([a,b])=>{
-          for(let k=0;k<3;k++) M.p.push(p[k]+n[k]*d+u[k]*a*L/2+v[k]*b*H/2);
-          M.m.push(mat===undefined?MAT.lamp:mat); M.w.push(0); M.c.push(0); });
+        const k=u[0]*n[0]+u[1]*n[1]+u[2]*n[2]; let ux=u[0]-n[0]*k, uy=u[1]-n[1]*k, uz=u[2]-n[2]*k;
+        const l=Math.sqrt(ux*ux+uy*uy+uz*uz)||1, hl=L/2/l; ux*=hl; uy*=hl; uz*=hl;
+        const hh=H/2/hl, vx=(n[1]*uz-n[2]*uy)*hh, vy=(n[2]*ux-n[0]*uz)*hh, vz=(n[0]*uy-n[1]*ux)*hh;
+        const cx=p[0]+n[0]*d, cy=p[1]+n[1]*d, cz=p[2]+n[2]*d, b0=M.p.length/3, m=mat===undefined?MAT.lamp:mat;
+        M.p.push(cx-ux-vx,cy-uy-vy,cz-uz-vz, cx+ux-vx,cy+uy-vy,cz+uz-vz, cx+ux+vx,cy+uy+vy,cz+uz+vz, cx-ux+vx,cy-uy+vy,cz-uz+vz);
+        M.m.push(m,m,m,m); M.w.push(0,0,0,0); M.c.push(0,0,0,0);
         M.i.push(b0,b0+1,b0+2, b0,b0+2,b0+3); };
       const nearImpulse=(th,z)=>Math.cos(th)<0 && Math.abs(z)>92 && Math.abs(z)<154;
-      // concentric rows over the saucer's outer annulus, top and bottom
-      [[0.86,1],[0.91,1],[0.955,1],[0.90,0],[0.95,0]].forEach(([r,up])=>{
-        for(let k=0;k<150;k++){
-          if(rnd()<0.4) continue;
-          const th=(k+0.5)/150*2*Math.PI, p=sau(r,th,!!up);
-          if(nearImpulse(th,p[2]) || (!up && inNeck(p,3))) continue;
-          const dt=sub(sau(r,th+0.003,!!up),p); let n=nrm(cross(dt,sub(sau(r+0.003,th,!!up),p)));
-          if((n[1]>0)!==!!up) n=n.map(c=>-c);
-          pane(p,dt,n,2.2,0.9,0.2);
-        }
-      });
       // the dark slots ringing the bridge (an oval of x 409-469, z +/-26), radial, on the deck
       const slope=(f,x,z)=>{ const e=0.3; return nrm([-(f(x+e,z)-f(x-e,z))/(2*e), 1, -(f(x,z+e)-f(x,z-e))/(2*e)]); };
       for(let k=0;k<44;k++){ const g=(k+0.5)/44*2*Math.PI, x=439+30*Math.cos(g), z=26*Math.sin(g);
@@ -553,16 +577,166 @@ SHIPS.galaxy=(()=>{
         for(let z=-4.8;z<=4.9;z+=2.4){ let lo=422, hi=430;
           for(let i=0;i<24;i++){ const m=(lo+hi)/2; if(bh(m,z)<138.5) lo=m; else hi=m; }
           pane([lo,138.5,z], [0,0,1], slope(bh,lo,z), 1.8, 0.7, 0.12); }
+        // and a lit band round the bridge module's flanks
+        for(let x=429;x<=445;x+=1.9){ const q=at(BD2,"x",x), z=q.w*Math.pow(1-Math.pow(0.6,2.6),1/2.6)+0.02;
+          [z,-z].forEach(zz=>pane([x,137.1+0.6*q.t,zz], [1,0,0], slope(bh,x,zz*0.995), 1.3, 0.55, 0.1)); }
       }
-      // deck rows along the secondary hull's upper flanks
+
+      // main shuttlebay door, on the deck's aft face over the recess
+      pane([347.5,dome(347.5)-1.1,0],[0,0,1],[-1,0,0],66,5.6,0.12,MAT.dark);
+
+      // ---- saucer dressing: aztec paint, escape pods, windows, registry ----
+      const hsh=(a,b)=>{ const s=Math.sin(a*127.1+b*311.7)*43758.5453; return s-Math.floor(s); };
+      const rawX=(r,th)=>SC.x+r*(Math.cos(th)>=0?SC.f:SC.a)*Math.cos(th);
+      const DKT=[]; for(let x=347;x<=499;x++) DKT.push(at(DKD,"x",x).w);
+      const DKW=x=>{ if(x<347.5||x>498) return -9; const i=Math.floor(x-347), f=x-347-i; return DKT[i]+(DKT[i+1]-DKT[i])*f; };
+      // the plan's radial direction (ellipse gradient) at a point
+      const radial=(x,z)=>{ const dx=x-SC.x, f=dx>0?SC.f:SC.a; return nrm([dx/(f*f),0,z/(SC.s*SC.s)]); };
+      const lowAt=(x,z)=>{ const dx=x-SC.x, u=dx/(dx>0?SC.f:SC.a), v=z/SC.s; return sau(Math.hypot(u,v),Math.atan2(v,u),false)[1]; };
+      // a cell of the saucer grid is usable away from the aft cut, the impulse notches and the deck
+      const open=(r,th,up)=>{ const x=rawX(r,th), z=r*SC.s*Math.sin(th);
+        if(x<SC.cut+5 || (nearImpulse(th,z) && r>0.8) || (up && x>318 && x<352 && Math.abs(z)<41)) return false;
+        return up ? Math.abs(z)>DKW(x)+2.5 : !inNeck(sau(r,th,false),4) && !(x>432&&x<476&&Math.abs(z)<17); };
+      // aztec: light panels in zones of rings that share one angular grid, so blocks step between zones
+      const strip=(r0,r1,t0,t1,up,d)=>{ const n=Math.max(1,Math.ceil((t1-t0)*r1*SC.s/7)), P=[];
+        [r0,r1].forEach(r=>{ const R=[]; for(let j=0;j<=n;j++){ const p=sau(r,t0+(t1-t0)*j/n,up); p[1]+=up?d:-d; R.push(p); } P.push(R); });
+        sheet(P,{ mat:"paint", mirror:true, out:()=>[0,up?1:-1,0] }); };
+      [[1,[.27,.31,.35,.39],.6],[1,[.39,.43,.47],.53],[1,[.47,.51,.55,.585],.7],[1,[.585,.62,.655,.69],.59],[1,[.69,.73,.762],.72],
+       [1,[.79,.82,.85],.61],[1,[.85,.88,.91],.74],[1,[.91,.94,.965,.988],.65]].forEach(([up,R,lean],zi)=>{
+        const na=Math.round(Math.PI*R[1]*(SC.s+SC.f)/2/(6+3*hsh(zi,1)));
+        for(let k=0;k<R.length-1;k++){ let j0=-1;
+          for(let j=0;j<=na;j++){
+            const th=(j+0.5)/na*Math.PI;
+            const v=j<na && open((R[k]+R[k+1])/2,th,up) && 0.55*hsh(zi*7+3,Math.floor(j/3))+0.3*hsh(zi*5+k,Math.floor(j/2)+40)+0.15*hsh(k+zi*11,j)>lean;
+            if(v && j0<0) j0=j;
+            if(!v && j0>=0){ strip(R[k],R[k+1],j0/na*Math.PI,j/na*Math.PI,!!up,0.07); j0=-1; }
+          }
+        }
+      });
+      // escape pod hatches, read off galaxy-top.jpg (starboard; mirrored)
+      const POD=[[599.5,10],[599.1,17.8],[598.5,25.7],[597.5,33.4],[588.1,75],[585.6,82.4],[580.8,45.8],[579.9,96.3],[579,53.6],[577,61.3],
+        [576.7,103.1],[574.8,68.9],[573.2,109.8],[572.4,76.4],[569.7,116.2],[565.8,122.7],[565.3,93.9],[561.8,128.8],[561.6,101.2],[557.8,108.2],
+        [553.6,115],[552.9,140.9],[549.2,121.6],[548,146.7],[543,152.8],[539,36.7],[539,135.1],[537.8,158.1],[537.3,44.3],[535.2,51.8],
+        [534.1,140.9],[533,59.2],[532.2,163.3],[528.9,146.4],[524.8,78.6],[523.3,151.8],[521,85.3],[518.8,173.3],[517.1,91.8],[512.7,98.2],
+        [512.1,160.1],[511.8,177.4],[505.2,164.1],[504.6,181.2],[485.1,126.9],[478.2,33.2],[478.1,130.4],[473.7,40],[468.2,45.8],[456.6,30.8],
+        [449.2,32.2],[424.9,129.7],[418,126.1],[395.1,179.6],[387.6,175.3],[381.2,171.1],[380.7,151.8],[375.2,146.1],[371.9,163.6],[370,140.5],
+        [366.4,158.2],[364.9,134.6],[360.8,152.2],[355.3,146.1],[350.4,139.6],[342.2,128.2],[337.8,121.3],[333.8,114.6],[331.2,78.3],[330,107.6],
+        [328.6,70.9],[326.6,100.6],[326.2,63.2],[323.4,93.5],[318.7,81.9],[317.8,15.9],[317.4,8.1],[316.1,74.3],[313.6,66.2],[307.9,87.8],
+        [305.1,80],[302.6,72.7],[300.6,65.1],[299,57.4],[297.2,49.8],[294.2,27.9],[293.6,20.1],[293.4,12.1],[293,4.2],[317.4,0]];
+      const pods=[]; POD.forEach(([x,z])=>(z?[z,-z]:[0]).forEach(zz=>pods.push([x,zz])));
+      pods.forEach(([x,z])=>{ const r=radial(x,z), p=[x,deckAt(x,z),z], n=slope(deckAt,x,z);
+        pane(p, [-r[2],0,r[0]], n, 5.5, 5.5, 0.11, MAT.dark); pane(p, [-r[2],0,r[0]], n, 4.5, 4.5, 0.14, MAT.paint); });
+      // windows in broken concentric rows: radial slits in rooms of two to four, a room lit or dark
+      const PG={}; pods.forEach(q=>{ const k=Math.round(q[0]/10)*100+Math.round(q[1]/10); (PG[k]=PG[k]||[]).push(q); });
+      const nearPod=(x,z)=>{ const i=Math.round(x/10), j=Math.round(z/10);
+        for(let a=i-1;a<=i+1;a++) for(let b=j-1;b<=j+1;b++){ const L=PG[a*100+b]; if(L) for(const q of L) if(Math.abs(q[0]-x)<5 && Math.abs(q[1]-z)<5) return true; }
+        return false; };
+      [[.975,1,.7],[.95,1,.35],[.925,1,.5],[.9,1,.3],[.872,1,.25],[.84,1,.2],[.81,1,.35],[.745,1,.3],[.715,1,.25],[.68,1,.15],[.62,1,.15],
+       [.56,1,.15],[.5,1,.12],[.44,1,.12],[.36,1,.12],
+       [.965,0,.45],[.92,0,.45],[.875,0,.4],[.83,0,.45],[.78,0,.35],[.73,0,.4],[.68,0,.35],[.635,0,.25]]
+        .forEach(([r,up,fill])=>{
+        const step=1.7/(r*(SC.s+SC.f)/2), n=Math.floor(Math.PI/step), U=!!up, e=0.002;
+        const Y=q=>U?[UP(q)]:[LF(q),LA(q),LL(q)], y0=Y(r), y1=Y(r+e);
+        let left=0, lit=false;
+        for(let j=0;j<n;j++){
+          if(left<=0){ left=2+Math.floor(rnd()*3); lit=rnd()<0.5; j+=Math.round((1-fill)/fill*(left+1.5)*(0.4+1.2*rnd())); if(j>=n) break; }
+          left--;
+          const th=(j+0.5)*step, c=Math.cos(th), sn=Math.sin(th);
+          if(!open(r,th,U)) continue;
+          const p=sauCS(r,c,sn,U,y0);
+          if(U && (nearPod(p[0],p[2]) || (p[0]>504 && p[0]<536 && Math.abs(p[2])<58))) continue;
+          if(!U && p[0]>506 && p[0]<530 && Math.abs(p[2])<52) continue;
+          const dt=sub(sauCS(r,Math.cos(th+e),Math.sin(th+e),U,y0),p); let n0=nrm(cross(dt,sub(sauCS(r+e,c,sn,U,y1),p)));
+          if((n0[1]>0)!==U) n0=[-n0[0],-n0[1],-n0[2]];
+          const rd=radial(p[0],p[2]), mat=lit?MAT.lamp:MAT.dark;
+          pane(p, rd, n0, 2.4, 0.75, 0.2, mat);
+          pane([p[0],p[1],-p[2]], [rd[0],0,-rd[2]], [n0[0],n0[1],-n0[2]], 2.4, 0.75, 0.2, mat);
+        }
+      });
+      // registry: a squared, extended sans; glyphs are polylines in a unit-high box (width first)
+      const fil=(P,r,cl)=>{ const o=[]; if(!cl) o.push(P[0]);
+        for(let i=cl?0:1;i<(cl?P.length:P.length-1);i++){ const a=P[(i-1+P.length)%P.length], b=P[i], c=P[(i+1)%P.length];
+          const u=[a[0]-b[0],a[1]-b[1]], v=[c[0]-b[0],c[1]-b[1]], lu=Math.hypot(u[0],u[1]), lv=Math.hypot(v[0],v[1]), rr2=Math.min(r,lu/2,lv/2);
+          const p0=[b[0]+u[0]/lu*rr2,b[1]+u[1]/lu*rr2], p1=[b[0]+v[0]/lv*rr2,b[1]+v[1]/lv*rr2];
+          for(let k=0;k<=4;k++){ const t=k/4; o.push([(1-t)*(1-t)*p0[0]+2*t*(1-t)*b[0]+t*t*p1[0], (1-t)*(1-t)*p0[1]+2*t*(1-t)*b[1]+t*t*p1[1]]); } }
+        if(cl) o.push(o[0]); else o.push(P[P.length-1]);
+        return o; };
+      const GL={
+        N:[.9,[[[0,0],[0,1],[.9,0],[.9,1]]]], C:[.86,[fil([[.86,1],[0,1],[0,0],[.86,0]],.3)]], "0":[.86,[fil([[0,0],[0,1],[.86,1],[.86,0]],.3,1)]],
+        "1":[.32,[[[0,.78],[.3,1],[.3,0]]]], "7":[.82,[[[0,1],[.82,1],[.24,0]]]], D:[.88,[fil([[0,1],[.88,1],[.88,0],[0,0]],.3).concat([[0,1]])]],
+        "-":[.42,[[[.04,.5],[.38,.5]]]], ".":[.12,[[[.06,.06],[.0601,.06]]]], " ":[.4,[]],
+        U:[.86,[fil([[0,1],[0,0],[.86,0],[.86,1]],.3)]], S:[.86,[fil([[.86,1],[0,1],[0,.5],[.86,.5],[.86,0],[0,0]],.22)]],
+        E:[.8,[[[.8,1],[0,1],[0,0],[.8,0]],[[0,.5],[.62,.5]]]], T:[.84,[[[0,1],[.84,1]],[[.42,1],[.42,0]]]],
+        R:[.86,[fil([[0,0],[0,1],[.86,1],[.86,.5],[0,.5]],.22),[[.5,.5],[.86,0]]]], P:[.86,[fil([[0,0],[0,1],[.86,1],[.86,.5],[0,.5]],.22)]],
+        I:[.12,[[[.06,0],[.06,1]]]] };
+      // lay a string along s (centered), its glyphs' up along t; map(s,t) -> point on the hull, out = outward hint
+      // each polyline is one strip with mitred joins and square ends
+      const write=(str,H,sw,sp,map,out,mat)=>{
+        let W=-sp; for(const ch of str) W+=GL[ch][0]*H+sp;
+        let s0=-W/2; const h=sw/2, un=(a,b)=>{ const x=b[0]-a[0], y=b[1]-a[1], l=Math.hypot(x,y); return l>1e-6?[x/l,y/l]:[1,0]; };
+        for(const ch of str){ const g=GL[ch];
+          g[1].forEach(L0=>{
+            const L=L0.map(q=>[s0+q[0]*H,(q[1]-0.5)*H]), n=L.length, cl=Math.hypot(L[0][0]-L[n-1][0],L[0][1]-L[n-1][1])<1e-6, P=[[],[]];
+            for(let i=0;i<n;i++){
+              const dp=i>0?un(L[i-1],L[i]):cl?un(L[n-2],L[0]):null, dn=i<n-1?un(L[i],L[i+1]):cl?un(L[0],L[1]):null;
+              let c=L[i], m;
+              if(dp && dn){ const a=[-dp[1]-dn[1],dp[0]+dn[0]], l=Math.hypot(a[0],a[1])||1, k=Math.min(2,1/Math.max(0.2,(a[0]*-dn[1]+a[1]*dn[0])/l));
+                m=[a[0]/l*k,a[1]/l*k]; }
+              else { const d=dp||dn; m=[-d[1],d[0]]; c=[c[0]+d[0]*h*(dp?1:-1),c[1]+d[1]*h*(dp?1:-1)]; }
+              P[0].push(map(c[0]-m[0]*h,c[1]-m[1]*h)); P[1].push(map(c[0]+m[0]*h,c[1]+m[1]*h)); }
+            sheet(P,{ mat:Object.keys(MAT).find(k=>MAT[k]===mat), out:()=>out }); });
+          s0+=g[0]*H+sp; } };
+      // dorsal: read from the bow (tops aft, N to starboard); ventral: read from below (tops forward)
+      write("NCC-1701-D",12.5,3.0,2.6,(s,t)=>{ const x=524-t, z=-s; return [x,deckAt(x,z)+0.13,z]; },[0,1,0],MAT.trim);
+      write("NCC-1701-D",12.5,2.3,2.6,(s,t)=>{ const x=524-t, z=-s; return [x,deckAt(x,z)+0.17,z]; },[0,1,0],MAT.dark);
+      write("U.S.S. ENTERPRISE",3.4,0.62,0.9,(s,t)=>{ const x=514.2-t, z=-s; return [x,deckAt(x,z)+0.16,z]; },[0,1,0],MAT.dark);
+      write("NCC-1701-D",9,1.6,3.4,(s,t)=>{ const x=518+t, z=-s; return [x,lowAt(x,z)-0.16,z]; },[0,-1,0],MAT.dark);
+      // and on the pylons' outboard faces, read from either side
+      write("NCC-1701-D",3.6,0.62,1.1,(s,t)=>pyFace(73+s,35.5+t,0.2),[0,0,1],MAT.dark);
+      write("NCC-1701-D",3.6,0.62,1.1,(s,t)=>{ const p=pyFace(73-s,35.5+t,0.2); return [p[0],p[1],-p[2]]; },[0,0,-1],MAT.dark);
+      // RCS thruster quads on the rim, fore and aft of abeam
+      [0.91,2.23].forEach(th=>[1,-1].forEach(m=>{
+        const p=sau(1,th*m,true), q=sau(0.993,th*m,false), c=[p[0],(p[1]+q[1])/2-1.2,p[2]], r=radial(p[0],p[2]);
+        pane(c,[-r[2],0,r[0]],r,7,3.4,0.3,MAT.paint);
+        [-1.6,1.6].forEach(o=>pane([c[0]-r[2]*o,c[1],c[2]+r[0]*o],[-r[2],0,r[0]],r,1.6,1.4,0.42,MAT.dark)); }));
+      // the dorsal spine: down the neck's aft face from the saucer to the impulse engine, then along
+      // the secondary hull's ridge to the tail; a red line runs along its crest
+      { const sp=(st,w)=>{ G.sweep(M,{ side:[0,0,-1], seg:20, res:3, st:st.map(q=>({ x:q[0], y:q[1], w:q[2]*w, t:1.2, b:1.4, nt:4, nb:2 })) });
+          G.sweep(M,{ mat:"trim", side:[0,0,-1], seg:12, res:3, st:st.map(q=>({ x:q[0]+q[3]*1.1, y:q[1]+q[4]*1.1, w:0.42, t:0.16, b:0.2, n:4 })) }); };
+        const nk=[113,108,102,96,90,84,78,72.5].map((y,i,A)=>{ const p=kpt(y,0,-0.6), q=kpt(A[Math.min(i+1,A.length-1)],0,-0.6), o=kpt(A[Math.max(i-1,0)],0,-0.6);
+          const t=nrm([q[0]-o[0],q[1]-o[1],0]); return [p[0],p[1],3.1,t[1],-t[0]]; });
+        sp(nk,1);
+        const rg=[192,180,165,150,135,120,105,90,78,68].map(x=>[x,25+at(BD,"x",x).t-0.55,1-(192-x)/260,0,1]);
+        sp(rg,3.6); }
+      // two dark vents on each nacelle's top, near the tail
+      [-4.3,4.3].forEach(z=>{ const p=nsk(39.5,z,0), q=nsk(40,z,0), n=nrm(sub(nsk(39.5,z,1),p));
+        pane(p,sub(q,p),n,21,3.4,0.18,MAT.dark); pane([p[0],p[1],-p[2]],[q[0]-p[0],q[1]-p[1],p[2]-q[2]],[n[0],n[1],-n[2]],21,3.4,0.18,MAT.dark); });
+      // window rows over the secondary hull's back, fanning out with the beam: slits across the
+      // row, two or three to a room
+      [0.2,0.29,0.38,0.47,0.56,0.65,0.74].forEach(v=>{ let left=0, lit=false;
+        const f=(x,u)=>{ const q=at(BD,"x",x); return [x, 25+q.t*Math.pow(1-Math.pow(u,q.nt),1/q.nt), u*q.w]; };
+        for(let x=92+5*rnd();x<=292;x+=1.6){
+          if(left<=0){ left=2+Math.floor(rnd()*2); lit=rnd()<0.5; x+=1.6*(2+Math.floor(rnd()*6)); }
+          left--;
+          const p=f(x,v);
+          if(inNeck(p,2) || (x>186 && x<228 && p[2]<18)) continue;
+          let n=nrm(cross(sub(f(x+0.6,v),p),sub(f(x,v+0.01),p))); if(n[1]<0) n=[-n[0],-n[1],-n[2]];
+          const mat=lit?MAT.lamp:MAT.dark;
+          pane(p,[1,0,0],n,0.75,2.2,0.2,mat); pane([p[0],p[1],-p[2]],[1,0,0],[n[0],n[1],-n[2]],0.75,2.2,0.2,mat);
+        }
+      });
+      // deck rows along the secondary hull's upper flanks: tall windows in pairs
       [28.6,32.2,35.8,39.4].forEach(y=>{
-        for(let x=141;x<=290;x+=4.2){
-          if(rnd()<0.4) continue;
-          const p=bpt(x,y);
-          if(inNeck(p,2)) continue;
-          let n=nrm(cross(sub(bpt(x+0.5,y),p),sub(bpt(x,y+0.3),p)));
-          if(n[2]<0) n=n.map(c=>-c);
-          [1,-1].forEach(m=>pane([p[0],p[1],p[2]*m],[1,0,0],[n[0],n[1],n[2]*m],2.2,0.9,0.2));
+        for(let x=141+4*rnd();x<=290;x+=5.2){
+          if(rnd()<0.35) continue;
+          const lit=rnd()<0.7;
+          for(const dx of [0,1.6]){
+            const p=bpt(x+dx,y);
+            if(inNeck(p,2)) continue;
+            let n=nrm(cross(sub(bpt(x+dx+0.5,y),p),sub(bpt(x+dx,y+0.3),p)));
+            if(n[2]<0) n=n.map(c=>-c);
+            [1,-1].forEach(m=>pane([p[0],p[1],p[2]*m],[1,0,0],[n[0],n[1],n[2]*m],0.8,1.6,0.2,lit?MAT.lamp:MAT.dark));
+          }
         }
       });
 
@@ -578,7 +752,7 @@ SHIPS.galaxy=(()=>{
 SHIPS.constitution={
   name:"U.S.S. ENTERPRISE", reg:"NCC-1701-A", cls:"CONSTITUTION CLASS",
   len:305, beam:141.7, height:71,
-  hull:[0.74,0.75,0.77], defl:[0.40,0.65,1.0], deck:3.2,
+  hull:[0.74,0.75,0.77], defl:[0.40,0.65,1.0], deck:2.04,
   callouts:[
     {text:"MAIN BRIDGE", at:[233.6,72.1,0]},
     {text:"SAUCER SECTION", at:[268,58.96,30]},
@@ -664,18 +838,22 @@ SHIPS.constitution={
     }
     // a raised panel on a surface: P(u,v) a surface point (u,v 0..1), C(u,v) a point inside the body;
     // the face stands d0 out along the normal, the walls run back to d1; own vertices keep edges crisp
+    // win:1 lights windows on the face (columns run along u, in meters); d1===d0 leaves out the walls
     function panel(o){
-      const mi=MAT[o.mat]||0, e=1e-3, nu=o.nu, nv=o.nv;
+      const mi=MAT[o.mat]||0, nu=o.nu, nv=o.nv, wn=o.win?1:0, S=[];
+      for(let i=0;i<=nu;i++){ const r=[]; for(let j=0;j<=nv;j++) r.push(o.P(i/nu,j/nv)); S.push(r); }
       (o.mirror?[1,-1]:[1]).forEach(mz=>{
-        const P=(u,v)=>{ const p=o.P(u,v); return [p[0],p[1],p[2]*mz]; }, Gd=[];
-        for(let i=0;i<=nu;i++){ const row=[]; for(let j=0;j<=nv;j++){
-          const u=i/nu, v=j/nv, p=P(u,v), c=o.C(u,v);
-          let n=unit(cross(sub(P(Math.min(1,u+e),v),P(Math.max(0,u-e),v)), sub(P(u,Math.min(1,v+e)),P(u,Math.max(0,v-e)))));
+        // normals from the grid's own neighbors
+        const Gd=S.map((r,i)=>r.map((p0,j)=>{
+          const p=[p0[0],p0[1],p0[2]*mz], q=(a,b)=>{ const t=S[a][b]; return [t[0],t[1],t[2]*mz]; }, c=o.C(i/nu,j/nv);
+          let n=unit(cross(sub(q(Math.min(nu,i+1),j),q(Math.max(0,i-1),j)), sub(q(i,Math.min(nv,j+1)),q(i,Math.max(0,j-1)))));
           if(dot(n,sub(p,[c[0],c[1],c[2]*mz]))<0) n=mul(n,-1);
-          row.push([add(p,mul(n,o.d0)), add(p,mul(n,o.d1))]); } Gd.push(row); }
-        const put=p=>{ M.p.push(p[0],p[1],p[2]); M.m.push(mi); M.w.push(0); M.c.push(0); return V()-1; };
-        const F=Gd.map(r=>r.map(q=>put(q[0])));
+          return [add(p,mul(n,o.d0)), add(p,mul(n,o.d1))]; }));
+        const L=[0]; for(let i=1;i<=nu;i++){ const a=Gd[i-1][nv>>1][0], b=Gd[i][nv>>1][0]; L.push(L[i-1]+Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2])); }
+        const put=(p,w,c)=>{ M.p.push(p[0],p[1],p[2]); M.m.push(mi); M.w.push(w||0); M.c.push(c||0); return V()-1; };
+        const F=Gd.map((r,i)=>r.map(q=>put(q[0],wn,L[i])));
         for(let i=0;i<nu;i++) for(let j=0;j<nv;j++) M.i.push(F[i][j],F[i+1][j],F[i][j+1], F[i][j+1],F[i+1][j],F[i+1][j+1]);
+        if(o.d1===o.d0) return;
         const E=[]; for(let j=0;j<nv;j++) E.push(Gd[0][j]); for(let i=0;i<nu;i++) E.push(Gd[i][nv]);
         for(let j=nv;j>0;j--) E.push(Gd[nu][j]); for(let i=nu;i>0;i--) E.push(Gd[i][0]); E.push(Gd[0][0]);
         for(let k=0;k<E.length-1;k++){ const a=put(E[k][0]), b=put(E[k+1][0]), c=put(E[k][1]), d=put(E[k+1][1]); M.i.push(a,c,b, b,c,d); }
@@ -736,38 +914,173 @@ SHIPS.constitution={
         if(below ? p[ax]<lim : p[ax]>lim) M.p[i*3+ax]=lim;
       }
     }
+    // rings over a plan outline: R[j] the outline's radius at angle j/seg about c=[x,z] (x along sin, z along cos,
+    // as lathe does); prof [[f, d, y, k]] top first, each ring at radius f*R-d; d and y may be functions
+    // (d of the angle, y of x,z); k:1 a hard edge; no smoothing
+    function plan(o){
+      const seg=o.R.length, R=[], run=[]; let ri=0;
+      o.prof.forEach((p,i)=>{
+        const ring=[];
+        for(let j=0;j<=seg;j++){
+          const a=(j%seg)/seg*Math.PI*2, d=typeof p[1]==="function"?p[1](a):p[1], r=Math.max(0,p[0]*o.R[j%seg]-d);
+          const x=o.c[0]+Math.sin(a)*r, z=o.c[1]+Math.cos(a)*r;
+          ring.push([x, typeof p[2]==="function"?p[2](x,z):p[2], z]);
+        }
+        R.push(ring); run.push(ri);
+        if(p[3] && i<o.prof.length-1){ ri++; R.push(ring); run.push(ri); }
+      });
+      const L=R.map(r=>{ let s=0; return r.map((q,j)=>j?(s+=Math.hypot(q[0]-r[j-1][0],q[2]-r[j-1][2])):0); });
+      skin(R, run, o, (i,j)=>L[i][j]);
+    }
+    // an outline's radius at seg angles about c, by bisection on a point test
+    function outline(c, inside, seg){
+      return Array.from({length:seg},(_,j)=>{ const a=j/seg*Math.PI*2; let lo=0, hi=40;
+        for(let it=0;it<20;it++){ const m=(lo+hi)/2; if(inside(c[0]+Math.sin(a)*m, c[1]+Math.cos(a)*m)) lo=m; else hi=m; }
+        return lo; });
+    }
+    // the convex hull of two circles (plan x,z), as a point test
+    const capsule=(x1,r1,x2,r2)=>(x,z)=>{
+      for(let k=0;k<=32;k++){ const s=k/32, dx=x-(x1+(x2-x1)*s), r=r1+(r2-r1)*s; if(dx*dx+z*z<=r*r) return true; } return false; };
+    // one flat convex polygon with its own vertices
+    function poly(P, mat, out){
+      const mi=MAT[mat]||0, b=V(), N=[0,0,0], o=out||[0,1,0];
+      P.forEach((p,k)=>{ const q=P[(k+1)%P.length]; N[0]+=(p[1]-q[1])*(p[2]+q[2]); N[1]+=(p[2]-q[2])*(p[0]+q[0]); N[2]+=(p[0]-q[0])*(p[1]+q[1]);
+        M.p.push(p[0],p[1],p[2]); M.m.push(mi); M.w.push(0); M.c.push(0); });
+      const f=dot(N,o)>=0;
+      for(let k=1;k<P.length-1;k++){ if(f) M.i.push(b,b+k,b+k+1); else M.i.push(b,b+k+1,b+k); }
+    }
+    // a convex polygon (2D) pushed out by g on every side
+    function grow(P, g){
+      let A=0; const n=P.length; P.forEach((p,i)=>{ const q=P[(i+1)%n]; A+=p[0]*q[1]-q[0]*p[1]; });
+      const s=A>0?1:-1;
+      return P.map((p,i)=>{ const a=P[(i+n-1)%n], b=P[(i+1)%n];
+        const e1=unit([p[0]-a[0],p[1]-a[1],0]), e2=unit([b[0]-p[0],b[1]-p[1],0]);
+        const n1=[s*e1[1],-s*e1[0]], n2=[s*e2[1],-s*e2[0]], k=g/(1+n1[0]*n2[0]+n1[1]*n2[1]);
+        return [p[0]+(n1[0]+n2[0])*k, p[1]+(n1[1]+n2[1])*k]; });
+    }
+    // a box: center c, half-axis vectors X, Y, Z; flat faces
+    function blk(c, X, Y, Z, mat){
+      const P=(i,j,k)=>add(c,add(mul(X,i),add(mul(Y,j),mul(Z,k))));
+      [[X,Y,Z],[Y,Z,X],[Z,X,Y]].forEach((_,f)=>[1,-1].forEach(sg=>{
+        const q=f===0?[[sg,-1,-1],[sg,1,-1],[sg,1,1],[sg,-1,1]]:f===1?[[-1,sg,-1],[-1,sg,1],[1,sg,1],[1,sg,-1]]:[[-1,-1,sg],[1,-1,sg],[1,1,sg],[-1,1,sg]];
+        const pts=q.map(([i,j,k])=>P(i,j,k)), b=V(), n=cross(sub(pts[1],pts[0]),sub(pts[2],pts[0])), out=dot(n,sub(pts[0],c))>0;
+        pts.forEach(p=>{ M.p.push(p[0],p[1],p[2]); M.m.push(MAT[mat]||0); M.w.push(0); M.c.push(0); });
+        if(out) M.i.push(b,b+1,b+2, b,b+2,b+3); else M.i.push(b,b+2,b+1, b,b+3,b+2);
+      }));
+    }
 
     // ---- saucer: center x 234, radius 71 fore and aft, 72.3 across ----
-    lathe({ x:234, fwd:71, aft:71, side:72.3, win:1, seg:144, prof:[
+    const SC=234, SF=71, SS=72.3, SP=[
       [0,65.0],[6,64.9],[12,64.6],[17,64.1],[21,63.5],[25,62.4],[29,61.3],[33,60.5],[37,59.85],[41,59.4],
       [46,58.85],[52,58.5],[60,58.35],[67,58.3],[69.6,58.2],[70.6,57.8],[71,57.0],[71,56.2],[70.6,55.0],
       [70.1,53.9],[69.4,52.3],[68.3,51.2],[66,50.95],[50,50.92],[37,50.88],[33,50.65],[29,50.05],[25,49.1],
       [21,47.85],[17,46.5],[13,44.7],[10,43.45],[8.2,42.85],[7.4,42.45],[6.6,41.7],[5.4,40.75],[3.8,40.0],[2,39.6],[0,39.45]]
-      .map(([r,y])=>[r/71,y]) });
-    // B/C deck: a teardrop, round end forward; bridge tier and dome on top
-    loft({ win:1, seg:48, st:[
-      {x:212.3,y:62.5,w:0,t:0,b:0},
-      {x:213,y:62.5,w:2.8,t:1.3,b:0.5,nt:2.2},
-      {x:215,y:62.5,w:6.8,t:3.1,b:0.5,nt:2.4},
-      {x:218,y:62.5,w:9.4,t:5.1,b:0.5,nt:2.6},
-      {x:221,y:62.5,w:11.2,t:5.9,b:0.5,nt:2.8},
-      {x:226,y:62.5,w:12.8,t:6.0,b:0.5,nt:3},
-      {x:233,y:62.5,w:13.3,t:6.0,b:0.5,nt:3},
-      {x:239,y:62.5,w:12.6,t:5.5,b:0.5,nt:2.8},
-      {x:243,y:62.5,w:10.2,t:4.3,b:0.5,nt:2.6},
-      {x:246,y:62.5,w:6.8,t:2.6,b:0.5,nt:2.4},
-      {x:248,y:62.5,w:2.6,t:1.6,b:0.5,nt:2.2},
-      {x:248.6,y:62.5,w:0,t:0,b:0}] });
-    loft({ win:1, seg:40, st:[
-      {x:223.6,y:67.5,w:0,t:0,b:0},
-      {x:224.2,y:67.5,w:4.5,t:1.6,b:0.5,nt:3},
-      {x:225.4,y:67.5,w:6.6,t:2.9,b:0.5,nt:3.5},
-      {x:229,y:67.5,w:7.3,t:3.1,b:0.5,nt:3.5},
-      {x:236,y:67.5,w:7.3,t:3.2,b:0.5,nt:3.5},
-      {x:239.5,y:67.5,w:6,t:2.1,b:0.5,nt:3},
-      {x:241.5,y:67.5,w:3.5,t:0.9,b:0.5,nt:2.5},
-      {x:242.4,y:67.5,w:0,t:0,b:0}] });
-    lathe({ x:233.6, fwd:3.6, aft:3.6, side:3.6, seg:40, prof:[[0,72.1],[0.45,71.95],[0.75,71.6],[0.95,71.0],[1,70.4],[1,69.6,1],[0.8,69.4]] });
+      .map(([r,y])=>[r/SF,y]);
+    lathe({ x:SC, fwd:SF, aft:SF, side:SS, seg:144, prof:SP });
+    // the same dense profile the lathe made: the top surface (center out) and the rim (top down)
+    const SD=smooth(SP.map(p=>({r:p[0],y:p[1]})),["r","y"],3), stop=[], rim=[];
+    for(let i=0;i<SD.length && SD[i].r<0.995;i++) stop.push(SD[i]);
+    SD.forEach((s,i)=>{ if(i && s.r>0.94 && s.y<58.3 && s.y>51.3) rim.push(s); });
+    const lerp=(a,b,f)=>a+(b-a)*f;
+    // the saucer's top surface height over a plan point
+    const ground=(x,z)=>{ const r=Math.hypot((x-SC)/SF, z/SS);
+      for(let i=0;i<stop.length-1;i++) if(stop[i+1].r>=r) return lerp(stop[i].y, stop[i+1].y, (r-stop[i].r)/((stop[i+1].r-stop[i].r)||1));
+      return stop[stop.length-1].y; };
+    // a point on the rim at plan angle a (lathe convention) and height y, pushed d out
+    const rimAt=(a,y,d)=>{ let r=1;
+      for(let i=0;i<rim.length-1;i++){ const p=rim[i], q=rim[i+1]; if((p.y-y)*(q.y-y)<=0){ r=lerp(p.r,q.r,(y-p.y)/((q.y-p.y)||1)); break; } }
+      return [SC+Math.sin(a)*(r*SF+d), y, Math.cos(a)*(r*SS+d)]; };
+    // rim: three grooves, then lit windows in two rows, in runs with gaps (angles in degrees, 90 the bow)
+    [57.25,55.12,52.95].forEach(y=>panel({ mat:"hull2", nu:144, nv:1, d0:0.04, d1:0.04,
+      P:(u,v)=>rimAt(u*Math.PI*2, y+(v-0.5)*0.32, 0), C:()=>[SC,y,0] }));
+    const winRun=(y,a0,a1)=>panel({ win:1, nu:Math.max(2,Math.round((a1-a0)/1.5)), nv:1, d0:0.06, d1:0.06,
+      P:(u,v)=>rimAt((a0+(a1-a0)*u)*Math.PI/180, y+(v-0.5)*1.25, 0), C:()=>[SC,y,0] });
+    [[14,40],[50,130],[140,166],[194,220],[230,252],[288,310],[320,346]].forEach(([a,b])=>winRun(55.98,a,b));
+    [[20,38],[60,80],[100,120],[142,160],[200,218],[232,248],[292,308],[322,340]].forEach(([a,b])=>winRun(53.94,a,b));
+    // RCS thruster blocks over the rim edge at the four diagonals
+    [45,135,225,315].forEach(g=>{ const a=g*Math.PI/180, o=[Math.sin(a),0,Math.cos(a)], t=[Math.cos(a),0,-Math.sin(a)];
+      blk(add([SC,58.35,0],mul(o,70.2)), mul(o,1.7), [0,0.55,0], mul(t,2.3), "paint");
+      [-1,1].forEach(s=>blk(add([SC,58.35,0],add(mul(o,71.95),mul(t,s*1.1))), mul(o,0.2), [0,0.32,0], mul(t,0.55), "dark")); });
+
+    // ---- B/C deck: a teardrop wall (round end forward) on a fillet, a capped top, the bridge tier and dome ----
+    const BC=[231,0], BR=outline(BC, capsule(235.2,11.2,216.9,3.0), 96);
+    const aftw=a=>Math.pow(Math.max(0,-Math.sin(a)),2);   // 1 straight aft
+    const dw=a=>0.45+3.0*aftw(a), wy0=65.3, wy1=66.9, foot=(f)=>(x,z)=>lerp(wy0,ground(x,z),f);
+    plan({ c:BC, R:BR, win:0, prof:[[0,0,68.42],[1,a=>dw(a)+3.6,68.4],[1,a=>dw(a)+2.3,68.3],[1,a=>dw(a)+1.3,68.0],
+      [1,a=>dw(a)+0.6,67.6],[1,a=>dw(a)+0.15,67.05],[1,dw,wy1,1],[1,0,wy0,1],[1,-0.45,foot(0.45)],[1,-1.2,foot(0.78)],
+      [1,-2.0,foot(0.95)],[1,-2.8,(x,z)=>ground(x,z)-0.25]] });
+    // windows on the wall, and a red pinstripe along its top and its foot
+    const wallD=y=>a=>dw(a)*(y-wy0)/(wy1-wy0)-0.05;
+    plan({ c:BC, R:BR, win:1, cap:false, prof:[[1,wallD(66.75),66.75],[1,wallD(65.55),65.55]] });
+    [[66.8,66.62],[65.5,65.33]].forEach(([y0,y1])=>plan({ c:BC, R:BR, mat:"trim", cap:false, prof:[[1,a=>wallD(y0)(a)-0.02,y0],[1,a=>wallD(y1)(a)-0.02,y1]] }));
+    // bridge tier: a squared block aft of the dome, and a sloped ring skirt round it
+    loft({ seg:32, st:[
+      {x:224.2,y:69.0,w:0,t:0,b:0},
+      {x:224.3,y:69.0,w:3.8,t:1.25,b:1.2,n:5},
+      {x:225.2,y:69.0,w:4.5,t:1.5,b:1.2,n:5},
+      {x:231.5,y:69.0,w:4.5,t:1.5,b:1.2,n:5},
+      {x:232.5,y:69.0,w:4.2,t:1.5,b:1.2,n:5}] });
+    lathe({ x:234.2, fwd:1, aft:1, side:1, seg:64, mat:"hull2", prof:[[4.0,70.62],[4.6,70.5],[7.3,68.75],[7.6,68.45],[7.6,68.1]] });
+    // the dome, warm, ringed at its foot
+    lathe({ x:234.2, fwd:3.85, aft:3.85, side:3.85, seg:48, mat:"paint", prof:[[0,72.02],[0.4,71.93],[0.68,71.66],[0.87,71.25],[0.97,70.85],[1,70.55]] });
+    lathe({ x:234.2, fwd:1, aft:1, side:1, seg:48, mat:"hull2", cap:false, prof:[[3.8,70.82],[4.15,70.68],[4.2,70.45]] });
+
+    // ---- markings on the saucer top: panel rings, the registry and name (dark, red edged), escape pods, phaser banks ----
+    [30.6,37.8,45.0,52.3,59.6,66.8].forEach(r=>panel({ mat:"hull2", nu:144, nv:1, d0:0.03, d1:0.03,
+      P:(u,v)=>{ const a=u*Math.PI*2, rr=r+(v-0.5)*0.34, x=SC+Math.cos(a)*rr, z=Math.sin(a)*rr*SS/SF; return [x,ground(x,z),z]; }, C:()=>[SC,40,0] }));
+    // and sixteen radial seams, one every 22.5 degrees from the bow
+    for(let k=0;k<16;k++){ const g=k*Math.PI/8, c=Math.cos(g), s=Math.sin(g);
+      panel({ mat:"hull2", nu:20, nv:1, d0:0.03, d1:0.03, P:(u,v)=>{ const r=24+43.6*u, t=(v-0.5)*0.3, x=SC+c*r-s*t, z=(s*r+c*t)*SS/SF;
+        return [x,ground(x,z),z]; }, C:()=>[SC,40,0] }); }
+    const GS=0.2, GC=0.3, Q=(u0,v0,u1,v1)=>[[u0,v0],[u1,v0],[u1,v1],[u0,v1]];
+    const K=(u,v,su,sv)=>[[u,v+sv*GC],[u+su*GS,v+sv*GC],[u+su*GC,v+sv*GS],[u+su*GC,v]];
+    const ring0=w=>[Q(0,GC,GS,1-GC),Q(w-GS,GC,w,1-GC),Q(GC,1-GS,w-GC,1),Q(GC,0,w-GC,GS),K(0,1,1,-1),K(w,1,-1,-1),K(0,0,1,1),K(w,0,-1,1)];
+    const FONT={
+      N:[0.9,[Q(0,0,GS,1),Q(0.7,0,0.9,1),[[0,1],[0.27,1],[0.9,0],[0.63,0]]]],
+      C:[0.82,[Q(0,GC,GS,1-GC),K(0,1,1,-1),Q(GC,1-GS,0.82,1),K(0,0,1,1),Q(GC,0,0.82,GS)]],
+      "-":[0.55,[Q(0.06,0.4,0.49,0.6)]],
+      "1":[0.45,[Q(0.25,0,0.45,1),[[0.02,0.6],[0.25,0.82],[0.25,1],[0.02,0.78]]]],
+      "7":[0.82,[Q(0,0.8,0.82,1),[[0.22,0],[0.47,0],[0.82,0.8],[0.57,0.8]]]],
+      "0":[0.9,ring0(0.9)],
+      A:[0.92,[[[0,0],[0.24,0],[0.58,1],[0.34,1]],[[0.68,0],[0.92,0],[0.58,1],[0.34,1]],Q(0.17,0.25,0.75,0.43)]],
+      U:[0.75,[Q(0,GC,GS,1),Q(0.55,GC,0.75,1),Q(GC,0,0.45,GS),K(0,0,1,1),K(0.75,0,-1,1)]],
+      S:[0.75,[Q(GC,0.8,0.75,1),K(0,1,1,-1),Q(0,0.5,GS,1-GC),Q(0,0.4,0.75,0.6),Q(0.55,GC,0.75,0.5),Q(0,0,0.45,GS),K(0.75,0,-1,1)]],
+      ".":[0.3,[Q(0.05,0,0.25,0.2)]], " ":[0.35,[]],
+      E:[0.7,[Q(0,0,GS,1),Q(GS,0.8,0.7,1),Q(GS,0.4,0.6,0.6),Q(GS,0,0.7,GS)]],
+      T:[0.75,[Q(0,0.8,0.75,1),Q(0.275,0,0.475,0.8)]],
+      R:[0.75,[Q(0,0,GS,1),Q(GS,0.8,0.45,1),K(0.75,1,-1,-1),Q(0.55,0.4,0.75,1-GC),Q(GS,0.4,0.55,0.6),[[0.33,0.4],[0.58,0.4],[0.75,0],[0.5,0]]]],
+      P:[0.72,[Q(0,0,GS,1),Q(GS,0.8,0.42,1),K(0.72,1,-1,-1),Q(0.52,0.4,0.72,1-GC),Q(GS,0.4,0.52,0.6)]],
+      I:[0.2,[Q(0,0,GS,1)]]};
+    // a line of text on the saucer top along a circle of radius r about the saucer center, centered at plan angle
+    // g (degrees, 0 the bow, positive to starboard), tops toward the center: it reads from the bow
+    function text(str, o){
+      const h=o.h, gap=o.gap||0.16, ws=[...str].map(ch=>FONT[ch][0]), tot=ws.reduce((s,w)=>s+w,0)+gap*(ws.length-1);
+      let u0=-tot/2;
+      [...str].forEach((ch,i)=>{
+        const w=ws[i], f=o.g*Math.PI/180-(u0+w/2)*h/o.r;   // glyph center angle: u runs starboard to port
+        const cx=SC+Math.cos(f)*o.r, cz=Math.sin(f)*o.r, T=[Math.sin(f),-Math.cos(f)], N=[-Math.cos(f),-Math.sin(f)];
+        const map=([u,v])=>{ const x=cx+(u-w/2)*h*T[0]+(v-0.5)*h*N[0], z=cz+(u-w/2)*h*T[1]+(v-0.5)*h*N[1]; return [x,ground(x,z),z]; };
+        FONT[ch][1].forEach(P=>{
+          if(o.edge) poly(grow(P,o.edge/h).map(map).map(p=>[p[0],p[1]+0.05,p[2]]),"trim");
+          poly(P.map(map).map(p=>[p[0],p[1]+0.09,p[2]]),o.mat||"dark");
+        });
+        u0+=w+gap;
+      });
+    }
+    text("NCC-1701-A",{ r:40.1, g:0, h:8.2, edge:0.32 });
+    text("U.S.S. ENTERPRISE",{ r:22.9, g:0, h:3.0, gap:0.2 });
+    text("ENTERPRISE",{ r:25.5, g:180, h:1.7, gap:0.2 });
+    text("NCC-1701-A",{ r:28.0, g:180, h:2.2 });
+    // a flat square or rectangle on the saucer top: center at radius r, angle g, half sizes along and across the radius
+    const pad=(r,g,hr,ht,dy,mat)=>{ const f=g*Math.PI/180, R=[Math.cos(f),Math.sin(f)], T=[-Math.sin(f),Math.cos(f)];
+      poly([[-1,-1],[1,-1],[1,1],[-1,1]].map(([i,j])=>{ const x=SC+(r+i*hr)*R[0]+j*ht*T[0], z=(r+i*hr)*R[1]+j*ht*T[1]; return [x,ground(x,z)+dy,z]; }),mat); };
+    // escape pods: a ring of sixteen, four more further out
+    for(let k=0;k<16;k++){ const g=3.4+22.5*k; if(Math.abs(((g+180)%360)-180)>160) continue; pad(54.5,g,1.12,1.12,0.05,"trim"); pad(54.5,g,0.9,0.9,0.09,"hull2"); }
+    [-3.5,86.5,-93.5].forEach(g=>{ pad(61.5,g,1.12,1.12,0.05,"trim"); pad(61.5,g,0.9,0.9,0.09,"hull2"); });
+    // phaser banks: a warm pad with two dark emitter domes, fore, port and starboard, and aft by the impulse deck
+    [[29.5,0],[29.4,90],[29.4,-90],[38.7,180]].forEach(([r,g])=>{ pad(r,g,1.1,1.9,0.14,"paint");
+      [-0.85,0.85].forEach(s=>{ const f=g*Math.PI/180, x=SC+r*Math.cos(f)-s*Math.sin(f), z=r*Math.sin(f)+s*Math.cos(f);
+        lathe({ x, z, fwd:0.55, aft:0.55, side:0.55, seg:12, mat:"dark", prof:[[0,ground(x,z)+0.5],[0.7,ground(x,z)+0.42],[1,ground(x,z)+0.18]] }); }); });
 
     // ---- impulse deck: a square-cornered box aft, the dome, then a round-nosed tab (keyhole plan) ----
     loft({ seg:36, st:[
@@ -796,18 +1109,18 @@ SHIPS.constitution={
 
     // ---- secondary hull: ends in the deflector housing face at x 186.4 ----
     let v0=V();
-    loft({ win:1, seg:48, st:[
+    const SEC=loft({ seg:48, st:[
       {x:76,  y:22.0, w:4.0,  t:6.0,  b:4.6,  n:2.4},
       {x:79,  y:21.8, w:5.4,  t:6.2,  b:4.5,  n:2.4},
       {x:81.5,y:21.6, w:7.0,  t:6.4,  b:5.3,  n:2.4},
       {x:84.5,y:21.4, w:9.0,  t:6.6,  b:6.1,  n:2.5},
-      {x:88,  y:21.3, w:10.2, t:6.6,  b:6.6,  n:2.5},
-      {x:97,  y:21.2, w:10.9, t:7.0,  b:7.3,  n:2.4},
-      {x:104, y:20.8, w:11.7, t:8.1,  b:8.6,  n:2.3},
-      {x:109, y:20.0, w:12.3, t:9.6,  b:9.2,  n:2.2},
-      {x:113, y:19.0, w:12.9, t:11.2, b:11.4, n:2.15},
-      {x:117, y:18.0, w:13.6, t:12.9, b:13.0, n:2.1},
-      {x:126, y:18.0, w:15.0, t:14.3, b:14.2, n:2.05},
+      {x:88,  y:21.3, w:10.2, t:6.2,  b:6.6,  n:2.5},
+      {x:97,  y:21.2, w:10.9, t:6.6,  b:7.3,  n:2.4},
+      {x:104, y:20.8, w:11.7, t:7.7,  b:8.6,  n:2.3},
+      {x:109, y:20.0, w:12.3, t:9.2,  b:9.2,  n:2.2},
+      {x:113, y:19.0, w:12.9, t:10.8, b:11.4, n:2.15},
+      {x:117, y:18.0, w:13.6, t:12.5, b:13.0, n:2.1},
+      {x:126, y:18.0, w:15.0, t:14.0, b:14.2, n:2.05},
       {x:136, y:17.6, w:16.1, t:16.2, b:15.2, n:2},
       {x:148, y:17.5, w:16.9, t:16.9, b:16.4, n:2},
       {x:160, y:17.6, w:17.3, t:16.8, b:16.8, n:2},
@@ -817,13 +1130,40 @@ SHIPS.constitution={
       {x:184.5,y:17.7,w:11.6, t:11.0, b:10.9, n:2.3},
       {x:186.4,y:17.8,w:10.6, t:10.4, b:10.3, n:2.4}] });
     // stern: the shuttlebay face is a flat slope, bottom further aft
-    flat(v0, 0, p=>78.4+(p[1]-17.2)*0.86, true);
-    // two sparse porthole rows (deck rows at y 20.2-21.1 and 26.6-27.5)
-    for(let i=v0;i<V();i++){ const x=M.p[i*3], y=M.p[i*3+1]; if(x<104||x>176||!((y>19.2&&y<22.2)||(y>25.6&&y<28.4))) M.w[i]=0; }
-    // shuttlebay doors on the stern slope
-    G.sweep(M,{ mat:"hull2", seg:24, side:[0,0,1], st:[
-      {x:82.53+0.25*0.758,y:22-0.25*0.652,w:6.4,t:5.6,b:5.6,n:4},
-      {x:82.53-0.3*0.758,y:22+0.3*0.652,w:6.2,t:5.4,b:5.4,n:4}] });
+    const SX=y=>79.0+(y-17.2)*0.86;
+    flat(v0, 0, p=>SX(p[1]), true);
+    // a point on the hull's flank at height y: o 1 starboard, -1 port
+    const flankOf=D=>{ const X=D.map(s=>s.x), sI=x=>{ let lo=0, hi=X.length-1;
+        while(hi-lo>1){ const m=(lo+hi)>>1; if(X[m]>=x) hi=m; else lo=m; } return lo+(x-X[lo])/((X[hi]-X[lo])||1); };
+      return (x,y,o)=>{ const q=at(D,sI(x)), up=y>q.y, n=up?q.nt:q.nb,
+        sa=spow(Math.max(-1,Math.min(1,(y-q.y)/(up?q.t:q.b))),n/2);
+        return [x, y, q.z+o*spow(Math.sqrt(Math.max(0,1-sa*sa)),2/n)*q.w]; }; };
+    const SF2=flankOf(SEC), secTop=x=>{ const q=at(SEC,sAt(SEC,x)); return q.y+q.t; };
+    // lit window runs on both flanks: [row height, x from, x to]
+    [[21.3,100,112],[21.3,118,134],[21.3,139,156],[21.3,160,172],[13.14,140,152],[13.14,160,171],
+     [17.22,110,122],[25.38,150,158],[25.38,164,171]].forEach(([y,x0,x1])=>panel({ win:1, mirror:true, nu:Math.ceil((x1-x0)/1.5), nv:1, d0:0.05, d1:0.05,
+      P:(u,v)=>SF2(x0+(x1-x0)*u, y+(v-0.5)*1.2, 1), C:u=>[x0+(x1-x0)*u, 18, 0] }));
+    // the pennant along each flank, widening forward, and the arrowhead insignia in a red disc
+    panel({ mirror:true, mat:"trim", nu:24, nv:1, d0:0.05, d1:0.05,
+      P:(u,v)=>SF2(132+40*u, 18.3+(v-0.5)*(0.06+0.5*u*u), 1), C:u=>[132+40*u, 18, 0] });
+    panel({ mirror:true, mat:"trim", nu:20, nv:3, d0:0.06, d1:0.06,
+      P:(u,v)=>{ const a=u*Math.PI*2, r=0.08+1.72*v; return SF2(174.6+Math.cos(a)*r, 18.3+Math.sin(a)*r, 1); }, C:()=>[174.6,18.3,0] });
+    [[[1.45,0],[-1.0,1.0],[-0.45,0]],[[1.45,0],[-0.45,0],[-1.0,-1.0]]].forEach(T=>[1,-1].forEach(o=>{
+      const pts=T.map(([a,b])=>{ const p=SF2(174.6+a,18.3+b*1.05,1); return [p[0],p[1],o*(p[2]+0.09)]; });
+      poly(pts,"paint",[0,0,o]); }));
+    // six dark panes low on each flank, forward
+    for(let k=0;k<6;k++){ const x0=156+k*1.75; panel({ mirror:true, mat:"dark", nu:2, nv:2, d0:0.05, d1:0.05,
+      P:(u,v)=>SF2(x0+1.45*u, 8.25+1.85*v, 1), C:()=>[x0,17,0] }); }
+    // a dorsal spine from the shuttlebay hood to the neck, a light at its aft end
+    loft({ seg:20, st:[90.4,91,94,100,106,112,118,124,130,136,141].map((x,i)=>({ x, y:secTop(x)+0.05, w:i?1.25:0.6, t:i?0.6:0.3, b:0.9, n:2.6 })) });
+    lathe({ x:90.6, fwd:0.45, aft:0.45, side:0.45, seg:12, mat:"lamp", prof:[[0,secTop(90.6)+0.95],[0.8,secTop(90.6)+0.75],[1,secTop(90.6)+0.45],[0.6,secTop(90.6)+0.1]] });
+    // shuttlebay: clamshell doors, a half cone on the stern slope with its foot level, apex at the top
+    const DA=[SX(26.8),26.8,0], DB=[SX(18.4),18.4,0], DRb=4.2, DDb=1.5;
+    const door=(t,th)=>{ const b=[DB[0]-DDb*Math.sin(th), DB[1], DRb*Math.cos(th)]; return add(DA,mul(sub(b,DA),t)); };
+    panel({ mat:"hull", nu:28, nv:8, d0:0, d1:0, P:(u,v)=>door(v,Math.PI*u), C:(u,v)=>add(door(v,Math.PI/2),[3,0,0]) });
+    poly(Array.from({length:15},(_,k)=>door(1,Math.PI*k/14)),"hull2",[0,-1,0]);
+    for(let k=1;k<7;k++) panel({ mat:"dark", nu:1, nv:6, d0:0.04, d1:0.04,
+      P:(u,v)=>door(0.1+0.9*v, Math.PI*k/7+(u-0.5)*0.05), C:(u,v)=>add(door(v,Math.PI/2),[3,0,0]) });
 
     // ---- main deflector: a ring on the housing face, a concave ribbed dish, the antenna ----
     const DY=17.8, DR=7.95, dishX=r=>188.3+(r/DR)*(r/DR), O=(x,r,k)=>({x,y:DY,w:r,t:r,b:r,k});
@@ -848,8 +1188,7 @@ SHIPS.constitution={
     });
 
     // ---- dorsal neck: a slab leaning forward, saucer to secondary hull ----
-    v0=V();
-    loft({ win:1, seg:32, st:[
+    const NECK=loft({ seg:32, st:[
       {x:137,  y:29,   w:1.5, t:1.0, b:1.0, n:3},
       {x:140.5,y:30.8, w:2.6, t:3.2, b:3.3, n:3},
       {x:145,  y:32.7, w:2.9, t:5.15,b:5.2, n:3.5},
@@ -867,12 +1206,14 @@ SHIPS.constitution={
       {x:203,  y:51.4, w:2.7, t:3.3, b:3.3, n:3},
       {x:208,  y:51.6, w:2.2, t:2.6, b:3.2, n:3},
       {x:212,  y:51.6, w:0.6, t:1.4, b:1.4, n:3}] });
-    // windows: one vertical strip near the leading edge, plus the top where it meets the saucer
-    for(let i=v0;i<V();i++){ const x=M.p[i*3], y=M.p[i*3+1]; if(!((x>176.5&&x<180.5&&y>35)||y>50)) M.w[i]=0; }
-    // photon torpedo housing at the neck's foot
+    // windows in a strip up each flank near the leading edge
+    const NF=flankOf(NECK);
+    panel({ win:1, mirror:true, nu:3, nv:8, d0:0.05, d1:0.05, P:(u,v)=>NF(176.7+3.6*u, 36.6+13.9*v, 1), C:(u,v)=>[178.5,36.6+13.9*v,0] });
+    // photon torpedo housing at the neck's foot, two launcher ports in its face
     loft({ seg:28, st:[
       {x:172,y:33.4,w:5.6,t:2.4,b:2.4,n:5},{x:183.3,y:33.4,w:6.2,t:2.5,b:2.5,n:5,k:1},
       {x:184,y:33.4,w:5.6,t:1.9,b:1.9,n:5}] });
+    [-2.3,2.3].forEach(z=>poly([[184.05,32.75,z-1.2],[184.05,32.75,z+1.2],[184.05,34.0,z+1.2],[184.05,34.0,z-1.2]],"dark",[1,0,0]));
 
     // ---- nacelles ----
     const NZ=49.15;
@@ -881,7 +1222,7 @@ SHIPS.constitution={
       [9.5,69.25,56.4,5.67,50.33],[13,69.3,56.4,5.95,50.05],[24,69.6,56.5,6.55,49.45],[38,70.0,56.6,6.85,48.95],
       [46,70.1,55.6,6.6,49.15],[54,70.3,55.2,6.45,49.15],[64,70.9,55.2,6.45,49.15],[100,71.1,55.2,6.45,49.15],
       [122,71.2,55.3,6.45,49.15],[125,71.3,55.4,7.05,49.15],[143,71.3,55.9,7.05,49.15],[145.2,71.25,56.6,6.92,49.15],[146.4,71.15,57.9,6.7,49.15]]
-      .map(([x,tp,bt,w,z])=>{ const yc=Math.max(bt+0.3,tp-5.5); return { x, y:yc, z, w, t:tp-yc, b:yc-bt, nt:2.3, nb:3, r:x<13?8:undefined }; });
+      .map(([x,tp,bt,w,z])=>{ const yc=Math.max(bt+0.3,tp-5.5); return { x, y:yc, z, w, t:tp-yc, b:yc-bt, nt:2.3, nb:3, r:x<13?8:undefined, k:x===9.5?1:0 }; });
     v0=V();
     const NAC=loft({ mirror:true, seg:44, st:nac });
     // aft end: a flat chisel, the top reaching furthest back
@@ -922,11 +1263,19 @@ SHIPS.constitution={
     const flank=(x,y,o)=>{ const q=at(NAC,nS(x)), up=y>q.y, n=up?q.nt:q.nb,
       sa=spow(Math.max(-1,Math.min(1,(y-q.y)/(up?q.t:q.b))),n/2);
       return [x, y, q.z+o*spow(Math.sqrt(Math.max(0,1-sa*sa)),2/n)*q.w]; };
-    // warp grilles on both faces: round aft end, forward end cut on the nose rake
-    [1,-1].forEach(o=>panel({ mirror:true, mat:"grille", nu:32, nv:12, d0:0.22, d1:-0.3,
-      P:(u,v)=>{ const y=63.1-2.85*Math.cos(Math.PI*v), x0=47+3.5*(1-Math.sin(Math.PI*v)), x1=119.3+(y-63.1)*1.05;
-        return flank(x0+(x1-x0)*u,y,o); },
-      C:u=>[47+75*u,63.1,NZ] }));
+    // warp grilles on both faces: round aft end, forward end cut on the nose rake; a dark frame round
+    // each, and five dark ribs along it
+    const gx0=y=>47+3.5*(1-Math.sqrt(Math.max(0,1-Math.pow((y-63.1)/2.85,2)))), gx1=y=>119.3+(y-63.1)*1.05;
+    [1,-1].forEach(o=>{
+      panel({ mirror:true, mat:"dark", nu:32, nv:12, d0:0.05, d1:-0.3,
+        P:(u,v)=>{ const y=63.1-3.25*Math.cos(Math.PI*v), x0=46.6+3.9*(1-Math.sin(Math.PI*v)), x1=119.7+(y-63.1)*1.05;
+          return flank(x0+(x1-x0)*u,y,o); }, C:u=>[47+75*u,63.1,NZ] });
+      panel({ mirror:true, mat:"grille", nu:32, nv:12, d0:0.1, d1:0.1,
+        P:(u,v)=>{ const y=63.1-2.85*Math.cos(Math.PI*v), x0=gx0(y), x1=gx1(y); return flank(x0+(x1-x0)*u,y,o); }, C:u=>[47+75*u,63.1,NZ] });
+      [-1.9,-0.95,0,0.95,1.9].forEach(dy=>{ const y=63.1+dy;
+        panel({ mirror:true, mat:"dark", nu:24, nv:1, d0:0.16, d1:0.16,
+          P:(u,v)=>{ const yy=y+(v-0.5)*0.24, x0=gx0(y)+0.4, x1=gx1(y)-0.3; return flank(x0+(x1-x0)*u,yy,o); }, C:u=>[47+75*u,63.1,NZ] }); });
+    });
     // intercooler vent ahead of each grille: a raked parallelogram with round corners
     [1,-1].forEach(o=>panel({ mirror:true, mat:"dark", nu:20, nv:10, d0:0.2, d1:-0.3,
       P:(u,v)=>{ const s=-0.995*Math.cos(Math.PI*u), y=63.15+2.75*(2*v-1)*Math.pow(1-Math.pow(Math.abs(s),5),0.2);
@@ -941,13 +1290,35 @@ SHIPS.constitution={
       {x:110,y:56.5,z:NZ,w:4.0,t:1.5,b:3.1,n:2.5},
       {x:114,y:56.5,z:NZ,w:2.6,t:1.5,b:2.0,n:2.5},
       {x:115.2,y:56.5,z:NZ,w:0,t:0,b:0}] });
+    // a long panel down the top of each nacelle, pointed aft
+    panel({ mirror:true, mat:"hull2", nu:40, nv:4, d0:0.08, d1:-0.25,
+      P:(u,v)=>{ const x=20+88*u, w=1.9*Math.sqrt(Math.max(0,Math.min(1,(x-20)/40)))*Math.sqrt(Math.max(0,1-Math.pow(Math.max(0,x-100)/8,2)));
+        return hi(at(NAC,nS(x)),(2*v-1)*Math.max(0.05,w)); }, C:u=>[20+88*u,64,NZ] });
+    // the registry on both flanks of both nacelles, toward the aft end; each reads from outside
+    [1,-1].forEach(o=>[1,-1].forEach(mz=>{
+      const dir=o*mz, h=1.1, str="NCC-1701-A", ws=[...str].map(ch=>FONT[ch][0]), gap=0.16, tot=ws.reduce((a,w)=>a+w,0)+gap*(ws.length-1);
+      let u0=-tot/2;
+      [...str].forEach((ch,i)=>{ const w=ws[i];
+        FONT[ch][1].forEach(P=>{ const pts=P.map(([u,v])=>{ const x=15+dir*(u0+u)*h, y=67.0+v*h, p=flank(x,y,o), q=flank(x,y+0.05,o);
+            const n=unit(cross([1,0,0],sub(q,p))), m=o>0?n:mul(n,-1); return [p[0]+m[0]*0.06*o, p[1]+m[1]*0.06*o, (p[2]+m[2]*0.06*o)*mz]; });
+          poly(pts,"dark",[0,0.4,o*mz]); });
+        u0+=w+gap; });
+    }));
 
     // ---- pylons: hull top sides up and out to the nacelle keels ----
     const LE=y=>[106.9+(50-y)*1.5, y, 41.2-((106.9+(50-y)*1.5)-108)*1.04];
     const TE=y=>[70.6+(53-y)*2.25, y, 37.8-((70.6+(53-y)*2.25)-81)*0.74];
-    blade({ mirror:true, n:3, seg:28, st:[
-      [LE(26.5),TE(28.5),1.3],[LE(30),TE(31.5),1.3],[LE(42),TE(42),1.3],[LE(55),TE(55),1.3],
-      [add(LE(55),[-0.6,3.5,0]),add(TE(55),[0,3.5,0]),1.3]] });
+    const PST=[[LE(26.5),TE(28.5),1.3],[LE(30),TE(31.5),1.3],[LE(42),TE(42),1.3],[LE(55),TE(55),1.3],
+      [add(LE(55),[-0.6,3.5,0]),add(TE(55),[0,3.5,0]),1.3]];
+    blade({ mirror:true, n:3, seg:28, st:PST });
+    // a darker panel down the aft half of each pylon face
+    const PC=PST.map(s=>mul(add(s[0],s[1]),0.5)), PN=unit(cross(sub(PC[PC.length-1],PC[0]), PST.reduce((a,s)=>add(a,sub(s[0],s[1])),[0,0,0])));
+    const pyl=(y,f,sd)=>{ const l=LE(y), t=TE(y), a=1-2*f;
+      return add(add(mul(add(l,t),0.5),mul(sub(l,t),0.5*a)), mul(PN,sd*1.3*Math.cbrt(Math.max(0,1-Math.abs(a*a*a))))); };
+    [1,-1].forEach(sd=>panel({ mirror:true, mat:"hull2", nu:10, nv:4, d0:0.05, d1:-0.2,
+      P:(u,v)=>pyl(42+12.5*u, 0.42+0.42*v, sd), C:u=>{ const y=42+12.5*u; return mul(add(LE(y),TE(y)),0.5); } }));
+    // beacons on the aft tops of the nacelles
+    lathe({ x:2.6, z:NZ, mirror:true, fwd:0.4, aft:0.4, side:0.4, seg:12, mat:"lamp", prof:[[0,70.25],[0.8,70.1],[1,69.85],[0.6,69.5]] });
     // running lights on the saucer rim
     [[234,56.6,72.3],[234,56.6,-72.3]].forEach(([x,y,z])=>lathe({ x, z, fwd:0.6, aft:0.6, side:0.6, seg:12, mat:"lamp",
       prof:[[0,y+0.6],[0.7,y+0.42],[1,y],[0.7,y-0.42],[0,y-0.6]] }));
@@ -1075,6 +1446,7 @@ SHIPS.intrepid={
         return (2*t3-3*t2+1)*V[lo]+(t3-2*t2+t)*h*m[lo]+(-2*t3+3*t2)*V[hi]+(t3-t2)*h*m[hi]; };
     }
     const lerp=(a,b,f)=>a+(b-a)*f, clamp=(v,a,b)=>Mt.max(a,Mt.min(b,v));
+    const hsh=(a,b)=>{ const v=Mt.sin(a*12.9898+b*78.233)*43758.5453; return v-Mt.floor(v); };
     // the front of a sweep along +x (path at height yp, K from skin): the forward-most x of its skin at (y,z)
     const fx=(K,yp,y,z)=>{ const D=K.D, dy=y-yp, up=dy>=0, g=s=>{ const h=up?s.t:s.b, e=up?s.nt:s.nb;
         return s.w<1e-6||h<1e-6 ? 1 : Mt.pow(Mt.abs(z)/s.w,e)+Mt.pow(Mt.abs(dy)/h,e)-1; };
@@ -1104,39 +1476,61 @@ SHIPS.intrepid={
       [338.9,17.7],[340.5,15.2],[341.5,12.7],[342.5,10.1],[343.2,7.6],[343.7,5],[344,0]]);
     // the saucer's plan less the rim band, which stands 0.45 m proud of it
     const W=x=>Mt.max(0,W0(x)-0.4*clamp((x-124)/22,0,1));
+    const RIDGE=mono([[30,0],[36,0.8],[44,1.2],[130,1.2],[150,1.5],[162,1.2],[170,0.3],[174,0],[344,0]]);
+    // the bow: from x 275 the saucer alone carries the dorsal line, one smooth curve to x 315 (Hermite with the
+    // neighboring profile's end slopes), so nothing bends across the nose
+    const BOWTOP=[];
+    for(let x=277;x<315;x+=2){ const t=(x-275)/40, t2=t*t, t3=t2*t;
+      BOWTOP.push([x, (2*t3-3*t2+1)*20.2+(t3-2*t2+t)*40*-0.15+(-2*t3+3*t2)*11.8+(t3-t2)*40*-0.3]); }
     const TOP=mono([[0,-14.6],[1,-12.5],[2,-11.8],[3,-11.3],[10,-11.1],[12,-10.7],[14,-9.7],[17,-8.7],[20,-7.4],[23,-4.9],
       [26,-2.4],[28.5,-1.6],[34.5,-0.3],[40,0.4],[46,1],[51,1.6],[57,2.3],[63,2.7],[69,3.2],[74,3.6],[80,4.1],[86,4.6],
       [92,5.2],[97,6.2],[103,7.3],[109,8.6],[114,10.3],[120,12.3],[126,14.8],[132,18.2],[137,20.6],[143,23],[149,25.1],
       [155,26.7],[160,27.7],[166,28.2],[172,28.3],[190,28.2],[210,28],[218,27.7],[223,27.3],[229,26.1],[235,24.7],[240,23.9],
-      [246,23.5],[252,23.1],[258,22.6],[264,21.8],[269,21.1],[275,20.2],[281,19.4],[286,18.6],[292,17.6],[296,17.36],[298,17.15],[300,16.15],
-      [302,15.47],[304,15.13],[306,14.71],[308,14.15],[310,13.5],[312,12.8],[315,11.8],[321,10.1],[326.5,8.6],[332,7],[338,5.2],[341,4.1],[343,3.1],[343.7,2.5],[344,0.85]]);
+      [246,23.5],[252,23.1],[258,22.6],[264,21.8],[269,21.1],[275,20.2],...BOWTOP,[315,11.8],[321,10.1],[326.5,8.6],[332,7],[338,5.2],[341,4.1],[343,3.1],[343.7,2.5],[344,0.85]]);
     const BOT=mono([[0,1.3],[3,2.3],[6,2.4],[12,2.4],[17,3.4],[23,4],[28.5,4.5],[35,5],[103,5],[126,4],[150,3],[180,2.6],
       [200,2],[206,1.9],[212,2.5],[218,3.8],[225,5.4],[232,6.3],[240,6.8],[258,6.8],[264,6.6],[275,6.2],[281,6],[286,5.4],
       [292,4.8],[298,4.2],[303.5,3.6],[309,3.2],[321,3.1],[326.5,2.9],[332.4,2.4],[338,2.3],[341,1.8],[343,1.4],[343.7,1.1],[344,0]]);
-    const RIDGE=mono([[30,0],[36,0.8],[44,1.2],[130,1.2],[150,1.5],[178,2.2],[296,2.2],[298,2.05],[300,1.2],[302,0.62],[306,0.38],
-      [310,0.15],[312,0],[344,0]]);
     const NT=mono([[0,2.5],[28,2.5],[34,2.6],[100,2.6],[114,2.35],[126,2.05],[137,1.8],[150,1.6],[162,1.55],[344,1.55]]);
     const xs=[0,0.6,1.2,2,3,4.5,6,8,10,12,14,16,18,20,22,24,26,28.5,31];
-    for(let x=34;x<330;x+=3) xs.push(x);
+    for(let x=34;x<264;x+=3) xs.push(x);
+    for(let x=264;x<330;x++) xs.push(x);
     xs.push(330,332.5,334.5,336.5,338,339.5,340.7,341.7,342.5,343.1,343.5,343.8,344);
     const ust=xs.map(x=>({ x, y:Y(x), w:W(x), t:Mt.max(0,TOP(x)-Y(x)-RIDGE(x)), b:BOT(x), nt:NT(x), nb:x<30?2.5:2 }));
-    const UH=skin(ust,2);
-    G.sweep(M,{ st:ust, seg:72, res:2, win:1 });
+    const UH=skin(ust,1);
+    const uh0=M.p.length/3;
+    G.sweep(M,{ st:ust, seg:192, res:1, win:1 });
+    const uh1=M.p.length/3;
 
-    // ---- dorsal spine and the raised center of the saucer ----
-    // it runs on past the bow knee at x 300 and tapers out at x 312.5, so it ends with no flat cap
-    const SPW=mono([[30,3],[36,6.5],[60,7],[130,7.5],[150,10],[172,15],[190,17.5],[240,17.5],[270,12.5],[286,9],[300,7.5],
-      [306,6.4],[310,4.6],[312.5,0]]);
+    // ---- recesses cut into the nose (the studio model's): the upper sensor palette, a shallow lozenge full of
+    // greebles, and the auxiliary deflector, a deep oval opening near the tip with a lit interior. The skin's
+    // vertices inside each outline drop straight down, so the walls and floor are the hull itself ----
+    const PALT={ x0:274, x1:307.5, d:0.85 }, AUX={ cx:323.5, a:8.5, b:5.3, n:2.6, d:2.6 };
+    const palW=x=>{ const s=(x-PALT.x0)/(PALT.x1-PALT.x0); return s<=0||s>=1 ? 0 : Mt.min(1,2.6*s,2.6*(1-s))*4.1+0.25; };
+    const auxR=(x,z)=>Mt.pow(Mt.pow(Mt.abs(x-AUX.cx)/AUX.a,AUX.n)+Mt.pow(Mt.abs(z)/AUX.b,AUX.n),1/AUX.n);
+    // how deep the cut is at plan (x,z); the walls take half a meter
+    const cut=(x,z)=>{ let d=0; const w=palW(x);
+      if(w>0) d=PALT.d*clamp((w-Mt.abs(z))/0.5,0,1);
+      const r=auxR(x,z); if(r<1) d=Mt.max(d, AUX.d*clamp((1-r)*AUX.b/0.5,0,1));
+      return d; };
+    for(let k=uh0;k<uh1;k++){ const x=M.p[k*3], y=M.p[k*3+1], z=M.p[k*3+2];
+      if(x<272 || y<Y(x)+0.5) continue;
+      const d=cut(x,z); if(d>0){ M.p[k*3+1]=y-d; M.w[k]=0; } }
+
+    // ---- dorsal spine: a flat band along the neck, ending where the bridge deck begins; from there the saucer's
+    // own dome carries the dorsal line, falling smoothly from the bridge to the nose ----
+    const SPW=mono([[30,3],[36,6.5],[60,7],[130,7.5],[150,10],[162,8],[170,3],[174,0]]);
     const sst=[];
-    for(let x=30;x<=312.5;x=x<297?x+3:x<312?x+1:x+0.5){ const u=UH.ux(x), top=UH.at(u,Mt.PI/2)[1];
-      sst.push({ x, y:top+RIDGE(x)-0.6, w:SPW(x), t:0.6, b:4.5, nt:3.5, nb:2 }); }
-    const SP=skin(sst,1);
+    for(let x=30;x<=174;x+=(x<165?3:1)){ const u=UH.ux(x), tt=UH.at(u,Mt.PI/2)[1]+RIDGE(x);
+      sst.push({ x, y:tt-0.6, w:SPW(x), t:0.6, b:4.5, nt:3.5, nb:2 }); }
+    const SP=skin(sst,1), SPX=mono(sst.map(s=>[s.x,s.w]));
     G.sweep(M,{ st:sst, seg:32, res:1 });
-    // the raised plateau around the bridge: rounded in plan, its front a 45 degree face (officers' mess) at x 231-234.6
-    const pst=[[160,6,2.6],[168,15,3.3],[176,19,3.5],[200,19.5,3.4],[214,19.5,3.1],[222,19,3],[227,17.5,3],[230,14.5,2.95],
-      [231.4,12.4,2.55],[232.4,9.9,1.8],[233.4,5.8,0.75],[234.3,2.2,0.25],[234.6,0,0]].map(r=>({ x:r[0], y:25, w:r[1], t:r[2], b:7, nt:6, nb:6 }));
-    const PL=skin(pst,3);
-    G.sweep(M,{ seg:40, res:3, st:pst });
+    // the bridge deck: a low rounded rise 0.8 m proud of the dome; it ends in a short steep face, curved in plan,
+    // the indent that holds the officers' mess windows under a lip
+    const PT=x=>TOP(Mt.min(x,226))+0.8-25;
+    const pst=[[160,5],[168,12],[176,15.5],[200,16.5],[214,16.5],[222,16],[226,15],[229,13.2],[231,11],[232.6,8.4],[233.7,5.4],
+      [234.4,2.4],[234.6,0]].map(r=>({ x:r[0], y:25, w:r[1], t:r[1]?PT(r[0]):0, b:7, nt:2.3, nb:6 }));
+    const PL=skin(pst,3), PLW=mono(pst.map(r=>[r.x,r.w]));
+    G.sweep(M,{ seg:48, res:3, st:pst });
 
     // ---- secondary hull: the belly under the chine, its top inside the upper hull ----
     const KEEL=mono([[14,-16],[16,-17.2],[20,-18],[35,-18.5],[55,-19.2],[66,-20],[70,-21.2],[74,-23.4],[77,-25.6],[80,-27.1],
@@ -1151,8 +1545,8 @@ SHIPS.intrepid={
     for(let x=180;x<205;x+=1.5) bx.push(x);
     bx.push(205);
     const bst=bx.map(x=>({ x, y:Y(x), w:BW(x), t:x<204?3:0, b:Mt.max(0,Y(x)-KEEL(x)), nt:4, nb:2.3 }));
-    const BH=skin(bst,2);
-    G.sweep(M,{ st:bst, seg:56, res:2, win:1 });
+    const BH=skin(bst,1);
+    G.sweep(M,{ st:bst, seg:56, res:1, win:1 });
 
     // the red pinstripe along the belly, level with the nacelles
     patch(BH,{ n:[48,2], off:0.2, mat:"trim", mirror:true,
@@ -1161,14 +1555,22 @@ SHIPS.intrepid={
     // ---- bridge module and dome; the module ends in a face over the plateau ----
     const mst=[[178,5,1.5],[180,10.5,4],[182,13,5],[190,14.6,5.1],[205,14.6,5],[211,13.8,4.4],[213.5,12.8,3.3],[216,11.5,3.15],
       [217.5,9.5,3.05],[218.3,6.5,2.3],[218.8,3,1],[219,0,0]].map(r=>({ x:r[0], y:26, w:r[1], t:r[2], b:r[2]?5:0, nt:4 }));
-    const MD=skin(mst,4);
+    const MD=skin(mst,4), MDW=mono(mst.map(r=>[r.x,r.w]));
     G.sweep(M,{ seg:48, st:mst });
     G.saucer(M,{ x:205, fwd:8.5, aft:8, side:8, seg:48, prof:[[0,33.3],[0.5,33.15],[0.8,32.4],[1,30.6],[1,28.5]] });
     // window rows on the two tier faces (studio front photo): five on the plateau, three pairs on the module front
-    face(PL,25,-9.5,9.5,26.2,27.4,0.3,"dark",16);
-    [-7.2,-3.6,0,3.6,7.2].forEach(z=>face(PL,25,z-1.15,z+1.15,26.4,27.2,0.45,"lamp",2));
+    face(PL,25,-9,9,25.95,26.85,0.15,"dark",18);
+    [-7.5,-5,-2.5,0,2.5,5,7.5].forEach(z=>face(PL,25,z-0.8,z+0.8,26.15,26.65,0.3,"lamp",2));
+    const lip=[]; for(let k=0;k<=24;k++){ const z=lerp(-8.6,8.6,k/24); lip.push([fx(PL,25,26.95,z)+0.3, 26.95, z]); }
+    bar(lip,{ side:[0,1,0], w:0.16, t:0.5, mat:"hull" });
     face(MD,26,-6,6,28.15,28.85,0.3,"dark",12);
     [-4.9,-3.1,-0.9,0.9,3.1,4.9].forEach(z=>face(MD,26,z-0.7,z+0.7,28.25,28.75,0.45,"lamp",2));
+    // and three on each front corner of the module (studio front photo)
+    [213.7,214.9,216.1].forEach(x=>{ const u=MD.ux(x), a=MD.ay(u,2.3), p=MD.at(u,a), n=MD.nrm(u,a), q=MD.at(u+0.05,a), r=MD.at(u-0.05,a);
+      const T=norm(sub(q,r)), B=cross(n,T), V=[], N=[];
+      for(let i=0;i<2;i++) for(let j=0;j<2;j++){ const e=(i-0.5)*0.75, f=(j-0.5)*0.55;
+        V.push([p[0]+n[0]*0.15+T[0]*e+B[0]*f, p[1]+n[1]*0.15+T[1]*e+B[1]*f, p[2]+n[2]*0.15+T[2]*e+B[2]*f]); N.push(n); }
+      sheet(V,N,1,1,"lamp",true); });
 
     // ---- nacelles ----
     const nrows=[[14.4,-14.5,2.5,2,2,59.8],[15.2,-14.5,5.5,4,4,59.8],[16.8,-14.5,7.7,5.1,5.1,59.8],[20,-14.4,8.4,5.6,5.6,59.8],
@@ -1228,7 +1630,7 @@ SHIPS.intrepid={
     const band=rim.map(q=>{ const f=clamp((q.x-124)/22,0,1), xc=Mt.min(q.x,342.8);
       const hi=Mt.min(3.6,0.5*(TOP(xc)-Y(xc)-RIDGE(xc)))*f, lo=Mt.min(2.2,0.6*BOT(xc))*f;
       return { x:q.x, y:q.y+(hi-lo)/2, z:q.z, w:(hi+lo)/2, t:0.45*f, b:2.2*f*Mt.min(1,(344-q.x)/8+0.35), n:6, r:1 }; });
-    G.sweep(M,{ st:band, side:[0,1,0], seg:24, res:1, win:1 });
+    G.sweep(M,{ st:band, side:[0,1,0], seg:16, res:1, win:1 });
     // RCS thruster blocks on the rim, two dark louvers across each
     [172.5,298].forEach(x0=>[-1,1].forEach(sd=>{
       const pts=rim.filter(q=>Mt.abs(q.x-x0)<4.5 && Mt.sign(q.z)===sd);
@@ -1253,22 +1655,32 @@ SHIPS.intrepid={
       });
     });
 
-    // ---- upper sensor palette (a long greebled lozenge on the spine's forward end) and the auxiliary deflector ----
-    const onTop=(K,x0,x1,hw,o)=>patch(K,Object.assign({ n:[16,8], map:(s,t)=>{ const x=lerp(x0,x1,s), u=K.ux(x); return [u, K.az(u,(2*t-1)*hw(s))]; } },o));
-    onTop(SP,274,310.5,s=>Mt.min(1,3*s,3*(1-s))*4.8+0.5,{ n:[30,8], off:0.15, mat:"dark" });
-    [[277,281,-2.6,1.2],[279,284,1.4,3.6],[283.5,287,-4.2,-1.4],[286,292,0.6,3.2],[290,293,-3.4,-0.6],[293.5,298,-2,1.6],
-     [297,300,2.2,4.2],[300.5,304,-2.6,-0.4],[303,306,0.4,1.8]].forEach(r=>onTop(SP,r[0],r[1],()=>1,
-      { n:[2,2], off:0.32, mat:"hull2", map:(s,t)=>{ const u=SP.ux(lerp(r[0],r[1],s)); return [u, SP.az(u,lerp(r[2],r[3],t))]; } }));
-    // aux deflector: flat aft end with rounded corners, round front; a dark recess split by a copper frame
-    // (outline, aft bar and two struts that splay toward the bow) into three panels
-    const adf=h=>s=>h*Mt.sqrt(Mt.max(0,1-Mt.max(0,(s-0.4)/0.6)**2))*Mt.sqrt(1-(1-Mt.min(1,s/0.07))**2);
-    onTop(UH,313.6,332.6,adf(6),{ n:[24,8], off:0.12, mat:"dark" });
-    onTop(UH,315.2,331.2,adf(4.7),{ n:[24,8], off:0.2, mat:"dark" });
-    const af=adf(4.7), afm=(t0,t1,s1)=>(s,t)=>{ const q=s*(s1||1), u=UH.ux(lerp(315.2,331.2,q)); return [u, UH.az(u,(2*lerp(t0,t1,t)-1)*af(q))]; };
-    [[0,0.12],[0.88,1]].forEach(r=>patch(UH,{ n:[24,1], off:0.3, mat:"trim", map:afm(r[0],r[1]) }));
-    patch(UH,{ n:[3,6], off:0.3, mat:"trim", map:afm(0,1,0.07) });
-    [-1,1].forEach(sd=>patch(UH,{ n:[6,1], off:0.3, mat:"trim",
-      map:(s,t)=>{ const u=UH.ux(lerp(316,328.8,s)); return [u, UH.az(u,sd*(lerp(1.6,3.05,s)+(t-0.5)*0.8))]; } }));
+    // ---- the recesses' insides: sheets laid on the cut floor, lifted h above it ----
+    const onFloor=(f,o)=>{ const nu=o.n[0], na=o.n[1], V=[], N=[];
+      for(let i=0;i<=nu;i++) for(let j=0;j<=na;j++){ const q=f(i/nu,j/na), u=UH.ux(q[0]), a=UH.az(u,q[1]), p=UH.at(u,a);
+        V.push([p[0], p[1]-cut(q[0],q[1])+o.h, p[2]]); N.push(UH.nrm(u,a)); }
+      sheet(V,N,nu,na,o.mat); };
+    // a lip around an outline on the surface: plan points [x,z], pushed out by e
+    const lipAt=(pts,o)=>bar(pts.map(q=>{ const u=UH.ux(q[0]), a=UH.az(u,q[1]), p=UH.at(u,a), n=UH.nrm(u,a);
+      return [p[0]+n[0]*o.lift, p[1]+n[1]*o.lift, p[2]+n[2]*o.lift]; }),{ side:[0,1,0], w:o.w, t:o.t, n:3, seg:8, mat:o.mat });
+    // upper sensor palette: a dark floor packed with greeble blocks at a few heights, all below the rim
+    onFloor((s,t)=>{ const x=lerp(PALT.x0+0.6,PALT.x1-0.6,s); return [x, (2*t-1)*Mt.max(0,palW(x)-0.55)]; },{ n:[40,8], h:0.04, mat:"dark" });
+    for(let k=0;k<70;k++){ const x=lerp(PALT.x0+2,PALT.x1-2,hsh(k,3)), w=palW(x)-0.75; if(w<0.6) continue;
+      const lx=0.6+1.5*hsh(k,8), lz=Mt.min(2*w,0.45+1.2*hsh(k,9)), z=(2*hsh(k,5)-1)*(w-lz/2), m=hsh(k,11);
+      onFloor((s,t)=>[x+(s-0.5)*lx, z+(t-0.5)*lz],{ n:[1,1], h:0.12+0.5*hsh(k,13), mat:m<0.45?"hull2":m<0.7?"hull":m<0.85?"paint":"dark" }); }
+    const pl=[]; for(let k=0;k<=24;k++){ const x=lerp(PALT.x0,PALT.x1,k/24); pl.push([x, palW(x)+0.15]); }
+    lipAt(pl,{ lift:0.05, w:0.18, t:0.16, mat:"hull" });
+    lipAt(pl.map(q=>[q[0],-q[1]]),{ lift:0.05, w:0.18, t:0.16, mat:"hull" });
+    // auxiliary deflector: a deep oval opening, lit warm inside, a grey lattice across it and a round dark port aft
+    const ovalZ=(x,k)=>AUX.b*k*Mt.pow(Mt.max(0,1-Mt.pow(Mt.abs(x-AUX.cx)/(AUX.a*k),AUX.n)),1/AUX.n);
+    onFloor((s,t)=>{ const x=lerp(AUX.cx-AUX.a*0.86,AUX.cx+AUX.a*0.86,s); return [x, (2*t-1)*ovalZ(x,0.86)]; },{ n:[24,10], h:0.05, mat:"amber" });
+    onFloor((s,t)=>{ const a=t*2*Mt.PI, r=1.9*s; return [AUX.cx-AUX.a*0.5+r*Mt.cos(a), r*Mt.sin(a)]; },{ n:[3,24], h:0.12, mat:"dark" });
+    [-3.2,0.2,3.6].forEach(dx=>{ const x=AUX.cx+dx, w=ovalZ(x,0.86);
+      onFloor((s,t)=>[x+(s-0.5)*0.55, (2*t-1)*w],{ n:[1,8], h:0.75, mat:"hull2" }); });
+    onFloor((s,t)=>{ const x=lerp(AUX.cx-AUX.a*0.2,AUX.cx+AUX.a*0.8,s); return [x, (t-0.5)*0.5]; },{ n:[10,1], h:0.75, mat:"hull2" });
+    const al=[]; for(let k=0;k<=48;k++){ const a=k/48*2*Mt.PI, c=Mt.cos(a), sn=Mt.sin(a);
+      al.push([AUX.cx+(AUX.a+0.2)*Mt.sign(c)*Mt.pow(Mt.abs(c),2/AUX.n), (AUX.b+0.2)*Mt.sign(sn)*Mt.pow(Mt.abs(sn),2/AUX.n)]); }
+    lipAt(al,{ lift:0.05, w:0.22, t:0.2, mat:"hull" });
 
     // ---- dorsal phaser arcs ----
     const arc=[[193,41],[205,42.5],[220,42.7],[235,41.5],[250,38],[263,33],[275,26.5],[285,19],[292,11]];
@@ -1285,15 +1697,118 @@ SHIPS.intrepid={
     // their inboard sill, the two dark wedges ahead of the arcs, escape pod hatches turned with the rim ----
     const deck=(f,o)=>patch(UH,Object.assign({ n:[2,2], mirror:true, map:(s,t)=>{ const q=f(s,t), u=UH.ux(q[0]); return [u, UH.az(u,q[1])]; } },o));
     [[207,219,-56.5,-52],[234,242.5,-47,-44],[255,266.5,-58,-54],[210,222,-30.5,-25.5]].forEach(r=>{
-      deck((s,t)=>[lerp(r[0],r[1],s), lerp(r[2],r[3],t)],{ n:[3,2], off:0.15, mat:"dark" });
+      deck((s,t)=>[lerp(r[0],r[1],s), lerp(r[2],r[3],t)],{ n:[3,2], off:0.12, mat:"dark" });
+      deck((s,t)=>[lerp(r[0]+0.5,r[1]-0.5,s), lerp(r[2]+0.45,r[3]-1.4,t)],{ n:[3,2], off:0.2, mat:"hull2" });
       const l=(r[1]-r[0])/3;
-      for(let k=0;k<3;k++) deck((s,t)=>[r[0]+l*(k+0.15+0.7*s), r[3]-0.25+0.5*t],{ off:0.25, mat:"lamp" });
+      for(let k=0;k<3;k++) deck((s,t)=>[r[0]+l*(k+0.15+0.7*s), r[3]-1.15+0.75*t],{ off:0.26, mat:"lamp" });
     });
     deck((s,t)=>{ const a=[lerp(288.5,290.8,t), lerp(-22.6,-20.3,t)]; return [lerp(a[0],293.3,s), lerp(a[1],-27.4,s)]; },{ off:0.15, mat:"dark" });
     const dW=x=>(W(x+1)-W(x-1))/2;
-    [[152.6,-19.1],[157.3,-22.2],[195.3,-59.3],[200.7,-59.6],[218,-61],[223.8,-54.4],[229.6,-53.4],[244.2,-51.5],
-     [263.6,-38.8],[302.4,-39.8],[316,-30]].forEach(h=>{ const g=dW(h[0]), l=Mt.hypot(1,g);
-      deck((s,t)=>[h[0]+((s-0.5)*3.4+(t-0.5)*3.2*g)/l, h[1]+(-(s-0.5)*3.4*g+(t-0.5)*3.2)/l],{ off:0.12, mat:"hull2" }); });
+    // escape pod hatches: light cream squares turned with the rim
+    const HT=[[152.6,-19.1],[157.3,-22.2],[195.3,-59.3],[200.7,-59.6],[218,-61],[223.8,-54.4],[229.6,-53.4],[244.2,-51.5],
+     [263.6,-38.8],[302.4,-39.8],[316,-30]];
+    HT.forEach(h=>{ const g=dW(h[0]), l=Mt.hypot(1,g);
+      [[4.5,4.3,0.1,"hull2"],[3.8,3.6,0.18,"paint"]].forEach(q=>
+        deck((s,t)=>[h[0]+((s-0.5)*q[0]+(t-0.5)*q[1]*g)/l, h[1]+(-(s-0.5)*q[0]*g+(t-0.5)*q[1])/l],{ off:q[2], mat:q[3] })); });
+    // short aft phaser strips (cream, dark rim) and the tan sensor grids, as plan quads
+    const pq=(C,o)=>deck((s,t)=>{ const a=[lerp(C[0][0],C[1][0],s),lerp(C[0][1],C[1][1],s)], b=[lerp(C[3][0],C[2][0],s),lerp(C[3][1],C[2][1],s)];
+      return [lerp(a[0],b[0],t), lerp(a[1],b[1],t)]; },o);
+    const cap=(x0,z0,x1,z1,hw)=>{ const l=Mt.hypot(x1-x0,z1-z0), nx=-(z1-z0)/l*hw, nz=(x1-x0)/l*hw;
+      return [[x0-nx,z0-nz],[x1-nx,z1-nz],[x1+nx,z1+nz],[x0+nx,z0+nz]]; };
+    pq(cap(145.2,-33.4,154.9,-42,1.35),{ n:[6,2], off:0.12, mat:"dark" });
+    pq(cap(145.9,-34.1,154.2,-41.3,0.85),{ n:[6,2], off:0.22, mat:"paint" });
+    [[[183.8,-34.8],[188.1,-35],[192,-24.4],[187.5,-24]],[[312,-17.85],[315.6,-17.9],[321.5,-12.3],[316.3,-11.9]]].forEach(C=>{
+      pq(C,{ n:[2,4], off:0.12, mat:"paint" });
+      for(let k=1;k<5;k++){ const f=k/5, a=[lerp(C[0][0],C[3][0],f),lerp(C[0][1],C[3][1],f)], b=[lerp(C[1][0],C[2][0],f),lerp(C[1][1],C[2][1],f)];
+        pq(cap(a[0],a[1],b[0],b[1],0.12),{ off:0.18, mat:"hull2" }); } });
+
+    // ---- dorsal windows (studio model): ones, pairs and threes in rings that follow the rim, between the aft
+    // grooves and on both sides of the phaser arcs; port side placed, mirrored ----
+    const dW0=x=>(W0(x+0.25)-W0(x-0.25))*2;
+    const offC=(d,x)=>{ const g=dW0(x), l=Mt.hypot(1,g); return [x+d*g/l, -(W0(x)-d/l)]; };
+    const segD=(P,x,z)=>{ let m=1e9; for(let i=0;i<P.length-1;i++){ const a=P[i], b=P[i+1], dx=b[0]-a[0], dz=b[1]-a[1],
+      f=clamp(((x-a[0])*dx+(z-a[1])*dz)/(dx*dx+dz*dz||1),0,1); m=Mt.min(m,Mt.hypot(x-a[0]-f*dx,z-a[1]-f*dz)); } return m; };
+    const arcP=arc.map(q=>[q[0],-q[1]]);
+    const KO=[[205.5,220.5,-58,-50.5],[232.5,244,-48.5,-42.5],[253.5,268,-59.5,-52.5],[208.5,223.5,-32,-24],[286.5,295,-28.5,-19],
+      [142.5,157.5,-44,-31.5],[182,194,-36.5,-22.5],[310.5,323,-19.5,-10.5],[165,181,-64,-51],[288,304,-57,-44],[261,274,-23,0],[272,309,-6.5,0],[311,336,-8.5,0]];
+    const free=(x,z)=>{
+      if(KO.some(b=>x>b[0]&&x<b[1]&&z>b[2]&&z<b[3])) return false;
+      if(HT.some(h=>Mt.hypot(x-h[0],z-h[1])<3.6)) return false;
+      if(x>30 && x<313 && -z<SPX(x)+2.5) return false;
+      if(x>158 && x<236.5 && -z<PLW(x)+2.5) return false;
+      return segD(arcP,x,z)>2.3; };
+    const WV=[], WN=[];
+    for(let r=0;r<9;r++){
+      const d=4+5.5*r, P=[];
+      for(let x=124;x<344;x+=0.5){ const q=offC(d,x); if(q[0]<344-d && W0(q[0])+q[1]>0.55*d) P.push(q); }
+      let acc=hsh(r,1)*7.5, k=0;
+      for(let i=1;i<P.length;i++){
+        const a=P[i-1], b=P[i], l=Mt.hypot(b[0]-a[0],b[1]-a[1]); acc+=l;
+        if(acc<7.5) continue; acc-=7.5; k++;
+        const h=hsh(r*31+k,7), n=h<0.18?0:h<0.42?1:h<0.86?2:3; if(!n) continue;
+        const tx=(b[0]-a[0])/l, tz=(b[1]-a[1])/l, g=1.12*(n-1)/2;
+        if(!free(b[0]-tx*(g+0.6),b[1]-tz*(g+0.6)) || !free(b[0]+tx*(g+0.6),b[1]+tz*(g+0.6))) continue;
+        for(let j=0;j<n;j++){ const o=(j-(n-1)/2)*1.12, x=b[0]+tx*o, z=b[1]+tz*o, u=UH.ux(x), an=UH.az(u,z), p=UH.at(u,an), nn=UH.nrm(u,an);
+          const kk=tx*nn[0]+tz*nn[2], T=norm([tx-nn[0]*kk,-nn[1]*kk,tz-nn[2]*kk]), B=cross(nn,T);
+          for(let ii=0;ii<2;ii++) for(let jj=0;jj<2;jj++){ const s=(ii-0.5)*0.7, q=(jj-0.5)*1.1;
+            WV.push([p[0]+nn[0]*0.12+T[0]*s+B[0]*q, p[1]+nn[1]*0.12+T[1]*s+B[1]*q, p[2]+nn[2]*0.12+T[2]*s+B[2]*q]); WN.push(nn); } }
+      }
+    }
+    for(let i=0;i<WV.length;i+=4) sheet(WV.slice(i,i+4),WN.slice(i,i+4),1,1,"lamp",true);
+    // the aft grooves: dark lines on the rings between the window rows
+    [[149.2,180.7],[154.8,183.3],[161.8,185.9],[172.8,182.3]].forEach((g,r)=>{
+      const d=6.75+5.5*r, V=[], N=[], m=24;
+      for(let i=0;i<=m;i++){ const x0=lerp(g[0],g[1],i/m), c=offC(d,x0);
+        [-0.22,0.22].forEach(e=>{ const q=offC(d+e,x0), u=UH.ux(q[0]), a=UH.az(u,q[1]), p=UH.at(u,a), nn=UH.nrm(u,a);
+          V.push([p[0]+nn[0]*0.1,p[1]+nn[1]*0.1,p[2]+nn[2]*0.1]); N.push(nn); }); }
+      sheet(V,N,m,1,"dark",true);
+    });
+
+    // ---- registry on the dorsal saucer, read from the bow: letter tops aft, running from starboard to port ----
+    // glyphs in a unit box (u across, v up), polylines; widths in letter heights
+    const c4=0.25, GLY={
+      N:[1.2,[[0,0,0,1,1,0,1,1]]], C:[1.1,[[1,1,c4,1,0,1-c4,0,c4,c4,0,1,0]]], "-":[0.45,[[0,0.5,1,0.5]]],
+      7:[1.05,[[0,1,1,1,0.3,0]]], 4:[1.1,[[0.74,0,0.74,1,0,0.36,1,0.36]]],
+      6:[1.1,[[1,1,c4,1,0,1-c4,0,c4,c4,0,1-c4,0,1,c4,1,0.3,1-c4,0.55,0,0.55]]],
+      5:[1.1,[[1,1,0,1,0,0.56,1-c4,0.56,1,0.31,1,c4,1-c4,0,0,0]]],
+      U:[1.1,[[0,1,0,c4,c4,0,1-c4,0,1,c4,1,1]]], S:[1.1,[[1,1,c4,1,0,1-c4,0,0.62,0.15,0.5,0.85,0.5,1,0.38,1,c4,1-c4,0,0,0]]],
+      ".":[0.17,[[0.5,0,0.5,0]]], " ":[0.4,[]], V:[1.15,[[0,1,0.5,0,1,1]]],
+      O:[1.15,[[c4,1,1-c4,1,1,1-c4,1,c4,1-c4,0,c4,0,0,c4,0,1-c4,c4,1]]], Y:[1.15,[[0,1,0.5,0.48,1,1],[0.5,0.48,0.5,0]]],
+      A:[1.15,[[0,0,0.5,1,1,0],[0.21,0.38,0.79,0.38]]], G:[1.1,[[1,1,c4,1,0,1-c4,0,c4,c4,0,1-c4,0,1,c4,1,0.48,0.55,0.48]]],
+      E:[1,[[1,1,0,1,0,0,1,0],[0,0.5,0.82,0.5]]], R:[1.1,[[0,0,0,1,1-c4,1,1,1-c4,1,0.68,1-c4,0.45,0,0.45],[0.55,0.45,1,0]]] };
+    // the top-most dorsal skin at plan (x, z): saucer, crown, plateau or bridge module
+    const TOPS=[[SP,SPX,30,174],[PL,PLW,160,234.6],[MD,MDW,178,219]];
+    const topAt=(x,z)=>{ let u=UH.ux(x), a=UH.az(u,z), p=UH.at(u,a), K=UH, b=a;
+      TOPS.forEach(T=>{ if(x>T[2] && x<T[3] && Mt.abs(z)<T[1](x)-0.05){ const v=T[0].ux(x), c=T[0].az(v,z), q=T[0].at(v,c); if(q[1]>p[1]){ p=q; K=T[0]; u=v; b=c; } } });
+      return [p,K.nrm(u,b)]; };
+    const label=(txt,xb,H,gap)=>{
+      const sw=0.19, hw=sw/2*H; let tw=-gap; for(const ch of txt) tw+=GLY[ch][0]+gap;
+      let u0=tw/2;
+      for(const ch of txt){ const g=GLY[ch], w=g[0];
+        g[1].forEach(pl=>{ for(let i=0;i+3<pl.length;i+=2){
+          const P=[pl[i],pl[i+1],pl[i+2],pl[i+3]].map((v,k)=>k%2?sw/2+v*(1-sw):sw/2+v*(w-sw));
+          const z0=(u0-P[0])*H, x0=xb-P[1]*H, z1=(u0-P[2])*H, x1=xb-P[3]*H, l=Mt.hypot(x1-x0,z1-z0);
+          const dx=l?(x1-x0)/l:0, dz=l?(z1-z0)/l:1, m=Mt.max(1,Mt.ceil(l/1.2)), V=[], N=[];
+          for(let j=0;j<=m;j++){ const f=-hw+(l+2*hw)*j/m;
+            [-1,1].forEach(e=>{ const q=topAt(x0+dx*f-dz*hw*e, z0+dz*f+dx*hw*e), p=q[0], n=q[1];
+              V.push([p[0]+n[0]*0.1,p[1]+n[1]*0.1,p[2]+n[2]*0.1]); N.push(n); }); }
+          sheet(V,N,m,1,"dark");
+        } });
+        u0-=w+gap;
+      }
+    };
+    label("NCC-74656",271,3.35,0.32);
+    label("U.S.S. VOYAGER",265.9,1.7,0.3);
+    const pTop=(C,off,mat)=>{ const V=[], N=[];
+      for(let i=0;i<=2;i++) for(let j=0;j<=2;j++){ const s=i/2, t=j/2, a=[lerp(C[0][0],C[1][0],s),lerp(C[0][1],C[1][1],s)],
+        b=[lerp(C[3][0],C[2][0],s),lerp(C[3][1],C[2][1],s)], q=topAt(lerp(a[0],b[0],t),lerp(a[1],b[1],t)), p=q[0], n=q[1];
+        V.push([p[0]+n[0]*off,p[1]+n[1]*off,p[2]+n[2]*off]); N.push(n); }
+      sheet(V,N,2,2,mat); };
+    const box=(x0,x1,z0,z1)=>[[x0,z0],[x1,z0],[x1,z1],[x0,z1]];
+    [box(181.4,185,-4.9,-0.9),box(186.1,189.9,-5,-1),box(191,194.9,-5,-1),box(181.8,185,1.4,5.2),
+     [[185.9,1],[195.8,1],[193.5,6.2],[185.9,6.2]],box(181.4,198.1,-0.2,0.9),[[196.8,-9],[199.5,-11.8],[201.9,-8],[199,-5.6]],
+     box(200.8,204.5,-12.4,-8.6),box(212.3,216.3,-13,-8.8),box(217.4,221.6,-12.1,-7.8),box(212.5,216.6,8.7,12.9),
+     box(217.6,221.8,8.4,12.6),[[196.2,-5.4],[199.7,-5.4],[198.4,-0.9],[196.2,-0.9]],box(172.4,175.4,-5.6,6)].forEach(C=>pTop(C,0.1,"paint"));
 
     // ---- nacelle details: outboard warp grilles (narrow strip, wide bulb aft of the collar), the ribbed collar,
     // red bussard strips on the nose's upper corners ----
@@ -1309,6 +1824,9 @@ SHIPS.intrepid={
     // red pinstripe along the top, just inboard of center, 0.35 m wide
     patch(NH,{ n:[30,1], off:0.2, mat:"trim", mirror:true, map:(s,t)=>{ const u=NH.ux(lerp(30,88,s)), p=NH.at(u,1.74), q=NH.at(u,1.76);
       return [u, 1.75+(2*t-1)*0.175*0.02/Mt.hypot(p[0]-q[0],p[1]-q[1],p[2]-q[2])]; } });
+    // the top lid: a dark groove outlining it
+    [0.86,Mt.PI-0.86].forEach(a0=>patch(NH,{ n:[30,1], off:0.18, mat:"dark", mirror:true, map:(s,t)=>[NH.ux(lerp(23.5,87.5,s)), a0+(t-0.5)*0.05] }));
+    [23.5,87.5].forEach(x=>patch(NH,{ n:[1,12], off:0.18, mat:"dark", mirror:true, map:(s,t)=>[NH.ux(x+(s-0.5)*0.3), lerp(0.86,Mt.PI-0.86,t)] }));
 
     // ---- impulse engines: flat-topped boxes on the pylon roots; glowing vertical fins in a dark recess aft,
     // a red vent on the squared front ----
@@ -1325,9 +1843,22 @@ SHIPS.intrepid={
       G.sweep(M,{ mirror:true, seg:8, res:1, mat:"impulse", st:[{x:x-1.9, y:-12.8, z, w:0.18, t:2.2, b:1.7, n:6},{x:x+0.1, y:-12.8, z, w:0.18, t:2.2, b:1.7, n:6}] }); }
     G.sweep(M,{ mirror:true, seg:16, res:1, mat:"trim", st:[{x:52.5, y:-8.7, z:ZI, w:3.1, t:0.3, b:0.3, n:6},{x:57.2, y:-8.7, z:ZI, w:3.1, t:0.3, b:0.3, n:6}] });
 
-    // ---- shuttlebay door on the stern slope ----
-    patch(UH,{ n:[10,16], off:0.15, mat:"dark",
-      map:(s,t)=>{ const x=lerp(13.5,26.5,s), u=UH.ux(x), hw=lerp(8.5,11,s); return [u, UH.az(u,(2*t-1)*hw)]; } });
+    // ---- shuttlebay on the stern slope: a dark D-shaped opening, rounded forward, with the light door (landing
+    // stripes) filling its aft part; tan shield grids on the stern flanks ----
+    const onUH=(f,o)=>patch(UH,Object.assign({ map:(s,t)=>{ const q=f(s,t), u=UH.ux(q[0]); return [u, UH.az(u,q[1])]; } },o));
+    onUH((s,t)=>{ const z=(2*t-1)*12.7; return [lerp(11,13.4+15.6*Mt.sqrt(Mt.max(0,1-Mt.pow(Mt.abs(z)/12.8,2.2))),s), z]; },{ n:[6,32], off:0.15, mat:"dark" });
+    onUH((s,t)=>{ const e=Mt.abs(2*s-1); return [lerp(7.5,24.8,s), (2*t-1)*11.2*Mt.pow(1-Mt.pow(e,8),1/8)]; },{ n:[12,12], off:0.25, mat:"paint" });
+    [[9.6,21.5,-7.9,-6.9],[9.6,21.5,6.9,7.9],[11.5,20.5,-0.5,0.5],[19.5,20.5,-7.9,7.9],[9.6,10.6,-7.9,7.9]].forEach(r=>
+      onUH((s,t)=>[lerp(r[0],r[1],s), lerp(r[2],r[3],t)],{ n:[3,3], off:0.32, mat:"hull2" }));
+    pq([[17.4,-16.4],[28.3,-19.6],[28.3,-22.2],[17.4,-19]],{ n:[4,2], off:0.12, mat:"paint", mirror:true });
+    for(let k=1;k<6;k++){ const x=lerp(17.4,28.3,k/6); pq(cap(x,-16.4-3.2*k/6,x,-19-3.2*k/6,0.12),{ off:0.18, mat:"hull2", mirror:true }); }
+
+    // ---- dorsal spine: the twin red pinstripes down its center, the aft torpedo launchers, a dark hatch to port ----
+    const onSP=(f,o)=>patch(SP,Object.assign({ map:(s,t)=>{ const q=f(s,t), u=SP.ux(q[0]); return [u, SP.az(u,q[1])]; } },o));
+    [-0.65,0.65].forEach(z=>onSP((s,t)=>[lerp(37,158,s), z+(t-0.5)*0.32],{ n:[40,1], off:0.1, mat:"trim" }));
+    onSP((s,t)=>[lerp(129.5,138.4,s), (2*t-1)*6.6],{ n:[3,6], off:0.12, mat:"dark" });
+    [-2.6,2.6].forEach(z=>onSP((s,t)=>[lerp(131,136.5,s), z+(2*t-1)*1.5],{ n:[2,2], off:0.22, mat:"paint" }));
+    onSP((s,t)=>[lerp(146,154,s), lerp(-6.4,-1.6,t)],{ n:[2,2], off:0.12, mat:"dark" });
     return M;
   }
 };
@@ -1340,7 +1871,7 @@ SHIPS.intrepid={
 SHIPS.defiant={
   name:"U.S.S. DEFIANT", reg:"NX-74205", cls:"DEFIANT CLASS",
   len:170.68, beam:134.11, height:30.1,
-  hull:[0.46,0.48,0.51], defl:[0.55,0.8,1.0], deck:3,
+  hull:[0.54,0.56,0.59], defl:[0.36,0.64,1.0], deck:3,
   callouts:[
     { text:"MAIN BRIDGE", at:[0.5,13.7,0] },
     { text:"WARP NACELLE", at:[-15.92,5.6,48.17] },
@@ -1424,6 +1955,9 @@ SHIPS.defiant={
       }
       if(v<0) for(let t=i0;t<I.length;t+=3){ const x=I[t+1]; I[t+1]=I[t+2]; I[t+2]=x; }
     }
+    // the skins paint and lettering are laid on: [from, to, open] triangle ranges of M.i, for the top and each
+    // side (a closed loft faces outward, so only its faces toward the ray are kept; an open one keeps both)
+    const SK={ top:[], s1:[], s2:[] }, skin=(k,f,o)=>{ const a=M.i.length; f(); SK[k].push(a,M.i.length,o?1:0); };
     // stations from a list of [from, to, step] runs
     // how far a span [a,b] pulls in at X to round its ends with radius r
     const rnd=(a,b,r,X)=>{ const d=Math.min(X-a,b-X); return d<r ? r-Math.sqrt(Math.max(0,r*r-(r-d)*(r-d))) : 0; };
@@ -1464,20 +1998,20 @@ SHIPS.defiant={
       return { dt:l=>{ const a=Math.abs(l)-27; return ht+0.13*(a>3?a:a>-3?(a+3)*(a+3)/12:0); },
                db:l=>hc+(hb-hc)*sstep(13.6,16.2,Math.abs(l))+(ho-hb)*sstep(21.5,26,Math.abs(l)) }; };
     const HBOT=(X,z)=>hsec(X).db(z), HTOP=(X,z)=>hsec(X).dt(z);
-    // two window cells (3.45 m) on each side wall at X 96.6-103.5, aft of the targeting sensors
-    // (the hull's window coordinate runs 6.9 m behind X: it puts two lit cells of the renderer's pattern there)
+    // one row of window cells (3.45 m) low on each side wall of the forward hull, from abreast of the bridge to the
+    // targeting sensors (the hull's window coordinate runs 6.9 m behind X, which shifts the renderer's lit pattern)
     const hwin={ win:1, wf:q=>{ const X=q[0]+X0, D=Y0-q[1];
-      return X>96 && X<103 && Math.abs(q[2])>HW(X)-1.2 && Math.abs(D-15.7)<0.8 ? 1 : 0; } };
+      return X>89.6 && X<114 && Math.abs(q[2])>HW(X)-1.2 && Math.abs(D-15.7)<0.8 ? 1 : 0; } };
     const SLOT=127.5, SZ=14;
     // the stern center sits back between two corner nubs
     const C0=M.c.length;
-    xbody(stations([[2.3,9.3,1.2],[9.3,9.7,0.4],[9.7,28.4,1.2],[28.4,28.9,0.5],[28.9,SLOT,1.25]]),
-      X=>Object.assign(hsec(X),{ w:HW(X), rt:HR(X), nh:48, nv:4, nc:6 }), hwin, [9.3,9.7,28.4,28.9]);
+    skin("top",()=>xbody(stations([[2.3,9.3,1.2],[9.3,9.7,0.4],[9.7,28.4,1.2],[28.4,28.9,0.5],[28.9,SLOT,1.25]]),
+      X=>Object.assign(hsec(X),{ w:HW(X), rt:HR(X), nh:48, nv:4, nc:6 }), hwin, [9.3,9.7,28.4,28.9]));
     for(let i=C0;i<M.c.length;i++) M.c[i]-=6.9;
     [1,-1].forEach(mz=>xbody([0.45,1.2,1.9,2.6], X=>{ const W=HW(X); return Object.assign(hsec(X),{ lc:(W+10.3)/2, w:(W-10.3)/2, r4:[HR(X),0.3,0.3,HR(X)], nh:6, nv:3, nc:5 }); }, { mz }));
     const jaw=X=>{ const W=Math.max(SZ+0.25,HW(X)), r=Math.min(HR(X),(W-SZ)*0.95);
       return Object.assign(hsec(X),{ lc:(SZ+W)/2, w:(W-SZ)/2, r4:[r,0.25,0.25,r] }); };
-    [1,-1].forEach(mz=>xbody(stations([[SLOT,142,1],[142,144.8,0.4]]), X=>Object.assign(jaw(X),{ nh:14, nv:4, nc:6 }), Object.assign({ mz, cap0:false },hwin)));
+    [1,-1].forEach(mz=>skin("top",()=>xbody(stations([[SLOT,142,1],[142,144.8,0.4]]), X=>Object.assign(jaw(X),{ nh:14, nv:4, nc:6 }), Object.assign({ mz, cap0:false },hwin))));
 
     /* skins laid on the hull's outboard rim: hside(X) walks the section from the
        keel round the side to the deck as [l, D, nl, nD] (n the outward normal);
@@ -1532,13 +2066,13 @@ SHIPS.defiant={
     const SPN=tab([[21.4,12.8],[29,13.7],[50,16.7],[61,18.8],[72,20.8],[80,21.6],[86,0]]);
     const SW=X=>Math.max(X<86?SPN(X):0, 22.5*Math.sqrt(Math.max(0,1-Math.pow((X-86)/22.5,2))));
     const ST=tab([[21.4,5.0],[22.6,3.1],[24,1.8],[30,1.6],[38,1.35],[42,1.25],[45,1.0],[58,1.0],[62,0.85],[70,0.7],[75,0.6],[90,0.6],[95,0.95],[99,1.35],[102,1.8],[105.6,2.4],[108.6,3.6]]);
-    xbody(stations([[21.4,24,0.4],[24,104,1.2],[104,108.5,0.45]]), X=>({ w:Math.max(0.4,SW(X)), dt:ST(X), db:8.5, rt:1.2, rb:0.5, tt:0.05, nh:16, nv:3, nc:4 }), {});
+    skin("top",()=>xbody(stations([[21.4,24,0.4],[24,104,1.2],[104,108.5,0.45]]), X=>({ w:Math.max(0.4,SW(X)), dt:ST(X), db:8.5, rt:1.2, rb:0.5, tt:0.05, nh:16, nv:3, nc:4 }), {}));
     const SF=X=>0.95*(SW(X)-1.2);   // edge of the spine's flat top
 
     /* ---------------- forward deck: the raised inner ellipse, cut by the slot ---------------- */
     const FW=tab([[90,24],[100,23.5],[110,21],[118,17.5],[124,15.2],[SLOT,14.2]]);
     const FT=tab([[90,4.0],[100,4.6],[108.9,5.2],[112.6,5.7],[116,6.2],[119.3,6.7],[122.7,7.2],[126,7.5],[SLOT,7.6]]);
-    xbody(stations([[90,SLOT,1]]), X=>({ w:FW(X), dt:FT(X), db:12, rt:1.2, rb:0.5, nh:16, nv:3, nc:4 }), {});
+    skin("top",()=>xbody(stations([[90,SLOT,1]]), X=>({ w:FW(X), dt:FT(X), db:12, rt:1.2, rb:0.5, nh:16, nv:3, nc:4 }), {}));
     // sensor pallets flanking the centerline: dark greebled wells, stepped aft-inboard, the outer fore corner cut
     { const zi=tab([[112.3,10.2],[114.9,10.2],[115.3,5.4],[120.1,5.4]]), zo=X=>Math.min(17.6-1.2*Math.max(0,X-116.3),FW(X)-1);
       const box=(x0,x1,z0,z1,h,mz)=>xbody([x0,x1], X=>({ lc:(z0+z1)/2, w:(z1-z0)/2, dt:FT(X)-0.1-h, db:FT(X), rt:0.08, nh:1, nv:1, nc:1 }), { mat:"hull2", mz });
@@ -1556,7 +2090,7 @@ SHIPS.defiant={
     // narrow below (front view: a trapezoid with open notches beside it), a little fuller where it clears the jaws
     const MK=X=>0.35+0.15*sstep(141,146.5,X), MLW=tab([[18.3,14],[18.9,10.6],[19.6,10.25],[21.4,9.35],[22.8,8.35],[23.5,7.75],[24.1,6.4],[24.7,4.6],[25.3,0.5]]);
     const xsM=stations([[124,166,1],[166,170.6,0.4]]), MN=2*14+2*7+4*5, T0=M.i.length;
-    xbody(xsM, X=>({ w:MW(X), dt:MT(X), db:MB(X), rt:1.2, rb:3.5, taper:MK(X), nh:14, nv:7, nc:5 }), { lim:MLW });
+    skin("top",()=>xbody(xsM, X=>({ w:MW(X), dt:MT(X), db:MB(X), rt:1.2, rb:3.5, taper:MK(X), nh:14, nv:7, nc:5 }), { lim:MLW }));
     /* the deflector: lenses laid on the module's lower front along rays cast aft
        from the front view: a rim, the glow inside it, a Y strut across the glow */
     const cast=(()=>{
@@ -1633,11 +2167,13 @@ SHIPS.defiant={
     function nacelle(mz){
       const Q=(u,v,D)=>P(NX(u,v),D,NZ(u,v)*mz);
       const vs=stations([[-5,-2,0.5],[-2,18,1],[18,22.9,0.35]]);
+      const i0=M.i.length;
       loft(vs.map(v=>{
         const [u0,u1]=endsB(v), hh=(NBOT(v)-NTOP(v))/2;
         return { p:sec({ lc:(u0+u1)/2, w:(u1-u0)/2, dt:u=>NT(u,v), db:u=>NB(u,v), r4:[NR(hh,RFT(v)),NR(hh,RRT),NR(hh,RRB),NR(hh,RFB(v))], nh:26, nv:6, nc:6 },
           (u,D)=>Q(u,v,D)), c:v };
       }),{});
+      SK.top.push(i0,M.i.length,0); SK[mz>0?"s1":"s2"].push(i0,M.i.length,0);
       /* a plate pr proud of the front (f) or rear face, v from va to vb, D from top(v) to bot(v)
          kept on the flat face, its ends rounded with radius rc */
       const fp=(f,va,vb,top,bot,pr,rc,mat)=>loft(stations([[va,va+rc,rc/3],[va+rc,vb-rc,1.1],[vb-rc,vb,rc/3]]).map(v=>{
@@ -1675,10 +2211,7 @@ SHIPS.defiant={
       // registry stripe and chevron along the outboard edge
       const RD=(NTOP(VO)+NBOT(VO))/2, sd=[-sn,0,ct*mz], rs=(u,d,o)=>{ const q=Q(u,VO+0.1,RD+d); return Object.assign({ x:q[0], y:q[1], z:q[2], w:0.06, n:4 },o); };
       G.sweep(M,{ side:sd, seg:8, res:1, mat:"trim", st:stations([[10,41.2,3.1]]).map(u=>rs(u,0,{ t:0.6, b:0.6 })) });
-      G.sweep(M,{ side:sd, seg:8, res:1, mat:"trim", st:[rs(41.6,-0.95,{ t:0.3, b:0.3 }), rs(46,0,{ t:0.3, b:0.3, k:1 }), rs(41.6,0.95,{ t:0.3, b:0.3 })] });
-      // a darker panel on the inboard top
-      loft(stations([[0.5,13,0.5]]).map(v=>({ p:sec({ lc:33, w:12, dt:NTOP(v)-0.07, db:NTOP(v)+0.6, rt:0.6, rb:0.1, nh:4, nv:2, nc:3 },
-        (u,D)=>Q(u,v,D)) })),{ mat:"hull2" });
+      G.sweep(M,{ side:sd, seg:8, res:1, mat:"paint", st:stations([[13,37,3]]).map(u=>rs(u,0,{ w:0.09, t:0.12, b:0.12 })) });
       // fairing on the inboard rear of the pod (the fin in the side view)
       const FH=tab([[2.5,6.6],[5,4.4],[9,3.9],[13,4.3],[19,6.4]]), FV=tab([[2.5,1.0],[6,2.4],[13,2.4],[19,0.9]]);
       loft(stations([[2.5,19,0.6]]).map(u=>({ p:sec({ lc:0.2, w:FV(u), dt:FH(u), db:8, rt:1.1, rb:0.2, tt:0.2, nh:6, nv:3, nc:4 },
@@ -1689,7 +2222,7 @@ SHIPS.defiant={
     /* ---------------- bridge platform: two terraces and the bridge block ---------------- */
     const BC=86;
     [[13.6,0.1,0],[9.0,0.2,0.1]].forEach(([R,h,h0])=>{
-      plate(BC,[[0,h],[4,h],[7.5,h],[11,h]].filter(q=>q[0]<R-1).concat([[R-0.35,h,1],[R,h0+0.02,1],[R,h0-0.3]]),ST,1,{ n:Math.round(R*7), cap:false });
+      skin("top",()=>plate(BC,[[0,h],[4,h],[7.5,h],[11,h]].filter(q=>q[0]<R-1).concat([[R-0.35,h,1],[R,h0+0.02,1],[R,h0-0.3]]),ST,1,{ n:Math.round(R*7), cap:false }),1);
       plate(BC,[[R,h0-0.1],[R,h0+0.05,1],[R+0.4,h0+0.05,1],[R+0.4,h0-0.1]],ST,1,{ mat:"dark", n:Math.round(R*7), cap:false });
     });
     const BW=tab([[76.8,0.8],[77.4,4.3],[78.6,4.9],[84,5.0],[87,4.4],[89.3,3.0],[90.3,1.5],[90.6,0.5]]);
@@ -1698,6 +2231,149 @@ SHIPS.defiant={
     xbody(bx, X=>({ w:BW(X), dt:ST(X)-0.3, db:ST(X)-0.05, rt:0.3, rb:0.05, tt:0.15, nh:8, nv:2, nc:4 }), { mat:"hull2" });
     xbody([76.5].concat(bx.slice(1,-1),[90.9]), X=>({ w:BW(Math.min(90.6,Math.max(76.8,X)))+0.35, dt:ST(X)-0.225, db:ST(X)-0.05, rt:0.05, nh:8, nv:1, nc:2 }), { mat:"dark" });
     disc(81.2,0,[[0,-0.08],[0.8,-0.07],[1.3,-0.045],[1.6,-0.01],[1.75,0.03,1],[1.75,0.2]].map(([r,d,k])=>[r,ST(81.2)-0.3+d,k]),{ n:28 });
+
+    /* ---------------- paint and lettering, laid on the hull by rays cast along one axis ----------------
+       caster(ax, sg, R): the triangles in the ranges R of M.i, binned by centroid on a 2 m grid across
+       axis ax; it maps a point (a, b) of that plane to the outermost hit seen from the sg side,
+       [x,y,z, nx,ny,nz] with the normal toward that side (a hit is searched in the 3 x 3 cells around) */
+    function caster(ax,sg,R){
+      const p=M.p, I=M.i, A=ax===0?2:0, B=ax===1?2:1, a0=-45, b0=-36, na=90, nb=72, st=new Int32Array(na*nb+1), fs=ax===2?sg:-sg;
+      let n=0; for(let r=0;r<R.length;r+=3) n+=(R[r+1]-R[r])/3;
+      const C=new Int32Array(n), T=new Int32Array(n);
+      let m=0;
+      for(let r=0;r<R.length;r+=3) for(let t=R[r], open=R[r+2];t<R[r+1];t+=3){
+        const a=I[t]*3, b=I[t+1]*3, c=I[t+2]*3, xa=p[a+A], ya=p[a+B], xb=p[b+A], yb=p[b+B], xc=p[c+A], yc=p[c+B];
+        if(!open && fs*((xb-xa)*(yc-ya)-(yb-ya)*(xc-xa))<=0) continue;
+        const i=Math.floor((xa+xb+xc)/6)-a0, j=Math.floor((ya+yb+yc)/6)-b0;
+        if(i<0||j<0||i>=na||j>=nb) continue;
+        const k=i*nb+j; C[m]=k; T[m++]=t; st[k+1]++;
+      }
+      for(let k=1;k<st.length;k++) st[k]+=st[k-1];
+      const L=new Int32Array(m), cur=st.slice(0,-1);
+      for(let s=0;s<m;s++) L[cur[C[s]]++]=T[s];
+      return (qa,qb)=>{
+        const i0=Math.floor(qa/2)-a0, j0=Math.floor(qb/2)-b0;
+        let best=null, bv=-1e9;
+        for(let i=Math.max(0,i0-1);i<=Math.min(na-1,i0+1);i++) for(let j=Math.max(0,j0-1);j<=Math.min(nb-1,j0+1);j++)
+        for(let k=st[i*nb+j];k<st[i*nb+j+1];k++){
+          const t=L[k], a=I[t]*3, b=I[t+1]*3, c=I[t+2]*3;
+          const ua=p[b+A]-p[a+A], ub=p[b+B]-p[a+B], va=p[c+A]-p[a+A], vb=p[c+B]-p[a+B], det=ua*vb-ub*va;
+          if(Math.abs(det)<1e-9) continue;
+          const wa=qa-p[a+A], wb=qb-p[a+B], s=(wa*vb-wb*va)/det, r=(ua*wb-ub*wa)/det;
+          if(s<-1e-6||r<-1e-6||s+r>1+1e-6) continue;
+          const h=p[a+ax]+s*(p[b+ax]-p[a+ax])+r*(p[c+ax]-p[a+ax]);
+          if(sg*h<=bv) continue; bv=sg*h;
+          const e=[p[b]-p[a],p[b+1]-p[a+1],p[b+2]-p[a+2]], f=[p[c]-p[a],p[c+1]-p[a+1],p[c+2]-p[a+2]];
+          const n=[e[1]*f[2]-e[2]*f[1], e[2]*f[0]-e[0]*f[2], e[0]*f[1]-e[1]*f[0]], l=Math.hypot(n[0],n[1],n[2])*(n[ax]*sg<0?-1:1);
+          best=[0,0,0,n[0]/l,n[1]/l,n[2]/l]; best[A]=qa; best[B]=qb; best[ax]=h;
+        }
+        return best;
+      };
+    }
+    // ship-frame wrappers: top (X, z) from above; sides (X, D) from starboard or port
+    // @t casters
+    const CT=caster(1,1,SK.top), CS=[caster(2,1,SK.s1), caster(2,-1,SK.s2)];
+    const top=(X,z)=>CT(X-X0,z), side=sg=>(X,D)=>CS[sg>0?0:1](X-X0,Y0-D);
+    const lay=(cs,q,o)=>{ const h=cs(q[0],q[1]); return h ? [h[0]+o*h[3],h[1]+o*h[4],h[2]+o*h[5]] : null; };
+    // a paint panel: convex outline C (plane points) laid off m proud, its rim sunk into the hull
+    function panel(cs,C,mat,off){
+      const O=poly(C,0.9), c=[0,0]; O.forEach(q=>{ c[0]+=q[0]/O.length; c[1]+=q[1]/O.length; });
+      const rm=Math.max(...O.map(q=>Math.hypot(q[0]-c[0],q[1]-c[1]))), K=Math.max(1,Math.ceil(rm/1.3)), H=O.map(q=>cs(q[0],q[1])), m=lay(cs,c,off);
+      if(!m || H.some(h=>!h)) return;
+      const at=o=>({ p:H.map(h=>[h[0]+o*h[3],h[1]+o*h[4],h[2]+o*h[5]]) }), R=[{ p:O.map(()=>m) }];
+      for(let k=1;k<K;k++){ const s=k/K; R.push({ p:O.map(q=>lay(cs,[c[0]+(q[0]-c[0])*s,c[1]+(q[1]-c[1])*s],off)) }); }
+      R.push(Object.assign(at(off),{ k:1 }), at(-0.25));
+      if(R.every(r=>r.p.every(q=>q))) loft(R,{ mat, cap:false });
+    }
+    // rows of points -> a quad strip
+    function strip(R,mat){
+      const m=G.MATS[mat], s0=M.p.length/3, n=R[0].length;
+      R.forEach(r=>r.forEach(q=>{ M.p.push(q[0],q[1],q[2]); M.m.push(m); M.w.push(0); M.c.push(0); }));
+      for(let i=0;i<R.length-1;i++) for(let j=0;j<n-1;j++){ const a=s0+i*n+j, b=a+n; M.i.push(a,b,a+1, a+1,b,b+1); }
+    }
+    // a squared, extended sans: [advance, polylines]; cap height 1, stroke centerlines
+    const FONT={ "N":[1.2,[[0,0,0,1,1.2,0,1.2,1]]], "X":[1.2,[[0,0,1.2,1],[0,1,1.2,0]]], "-":[0.6,[[0,0.5,0.6,0.5]]],
+      "7":[1.15,[[0,1,1.15,1,0.4,0]]], "4":[1.2,[[0.9,0,0.9,1,0,0.32,1.2,0.32]]], " ":[0.35,[]], ".":[0,[[0,0.06,0.001,0.06]]],
+      "2":[1.2,[[0,1,1.02,1,1.2,0.82,1.2,0.68,1.02,0.5,0.18,0.5,0,0.32,0,0,1.2,0]]],
+      "0":[1.2,[[0.18,0,1.02,0,1.2,0.18,1.2,0.82,1.02,1,0.18,1,0,0.82,0,0.18,0.18,0]]],
+      "5":[1.2,[[1.2,1,0,1,0,0.5,1.02,0.5,1.2,0.32,1.2,0.18,1.02,0,0,0]]],
+      "U":[1.2,[[0,1,0,0.18,0.18,0,1.02,0,1.2,0.18,1.2,1]]], "S":[1.2,[[1.2,1,0.18,1,0,0.82,0,0.68,0.18,0.5,1.02,0.5,1.2,0.32,1.2,0.18,1.02,0,0,0]]],
+      "D":[1.2,[[0,0,0,1,0.95,1,1.2,0.75,1.2,0.25,0.95,0,0,0]]], "E":[1.1,[[1.1,1,0,1,0,0,1.1,0],[0,0.5,0.9,0.5]]],
+      "F":[1.1,[[1.1,1,0,1,0,0],[0,0.5,0.9,0.5]]], "I":[0,[[0,0,0,1]]], "A":[1.3,[[0,0,0.65,1,1.3,0],[0.26,0.4,1.04,0.4]]],
+      "T":[1.2,[[0,1,1.2,1],[0.6,1,0.6,0]]] };
+    /* a line of text centered on s=0: cap height h; L(s, t) maps text space (s along the line, t up, m) to the
+       caster's plane; each stroke is a strip off m proud, cut every 0.5 m so it follows the hull */
+    function text(cs,str,h,L,off,o){
+      o=o||{}; const w=(o.w||0.17), sp=o.sp||0.32, ch=[...str], W=ch.reduce((s,c)=>s+FONT[c][0]+w+sp,-sp);
+      let x=-W/2;
+      ch.forEach(c=>{ const g=FONT[c];
+        g[1].forEach(pl=>{ for(let i=0;i+3<pl.length;i+=2){
+          const p=[(x+w/2+pl[i])*h,(w/2+pl[i+1]*(1-w))*h], q=[(x+w/2+pl[i+2])*h,(w/2+pl[i+3]*(1-w))*h];
+          let d=[q[0]-p[0],q[1]-p[1]]; const l=Math.hypot(d[0],d[1]); d=l>1e-6?[d[0]/l,d[1]/l]:[1,0];
+          const hw=w*h/2, n=[-d[1]*hw,d[0]*hw], a=[p[0]-d[0]*hw,p[1]-d[1]*hw], tl=l+2*hw, k=Math.max(1,Math.ceil(tl/0.5)), R=[];
+          for(let j=0;j<=k;j++){ const s=tl*j/k, m=[a[0]+d[0]*s,a[1]+d[1]*s];
+            R.push([lay(cs,L(m[0]+n[0],m[1]+n[1]),off), lay(cs,L(m[0]-n[0],m[1]-n[1]),off)]); }
+          if(R.every(r=>r[0]&&r[1])) strip(R,o.mat||"dark");
+        } });
+        x+=g[0]+w+sp; });
+    }
+    // @t paint
+    // darker panels (port outlines in X, z; mirrored), from the studio model's paint
+    const arc=(r0,r1,f0,f1,n)=>{ const C=[]; for(let k=0;k<=n;k++){ const f=(f0+(f1-f0)*k/n)*PI/180; C.push([BC+r1*Math.cos(f),r1*Math.sin(f)]); }
+      for(let k=n;k>=0;k--){ const f=(f0+(f1-f0)*k/n)*PI/180; C.push([BC+r0*Math.cos(f),r0*Math.sin(f)]); } return C; };
+    const PAN=[
+      // the band across the forward hull, from the spine's nose out to the nacelle's front
+      [[106.4,-16.6],[111,-16.6],[111,-19.2],[106.4,-20.4]], [[106.2,-23.2],[110.9,-22.4],[110.9,-30.4],[105.6,-30.8]],
+      [[105.6,-30.8],[110.9,-30.4],[106.6,-39.2],[101.6,-39.6]],
+      // the forward deck's tip and the jaws beside the module
+      [[121,-7.2],[126.6,-7.2],[126.6,-12.8],[121.6,-14.6]], [[129,-16.6],[137.5,-16.6],[135,-24.5],[128.6,-25.5]],
+      [[117.6,-20.8],[124,-19.2],[126.6,-24.2],[119.2,-26.8]],
+      // aft hull and stern
+      [[12,-15],[21,-15],[21,-21],[12,-20.4]], [[23.5,-19.2],[34,-19.6],[34,-24.5],[23.5,-24]], [[10,-6.5],[16,-6.5],[16,-12.6],[10,-12.6]],
+      // spine: a patch aft of the platform, the band round it outside the stripe
+      [[63.5,-14.6],[70.4,-15.6],[70.4,-19.2],[63.5,-18]], arc(19.9,20.9,-118,-96,4), arc(19.9,20.9,-96,-70,4),
+      // two arrows on the spine, pointing forward
+      [[54,-9.7],[58.4,-9.7],[60.6,-10.95],[58.4,-12.2],[54,-12.2]],
+      // the module: two plates either side of the targeting array's root
+      [[131,-3.4],[139,-3.4],[139,-10.4],[132.6,-10.4]]];
+    [1,-1].forEach(sg=>PAN.forEach(C=>panel(top,C.map(q=>[q[0],q[1]*sg]),"hull2",0.05)));
+    // the light panels: the module's targeting array and two arcs aft on the platform
+    const LIT=[[[140,-7.4],[149.4,-7.4],[149.4,-1.5],[141.8,-1.5]], [[150.5,-6.3],[154.3,-6.3],[154.3,-1.5],[150.5,-1.5]],
+      [[155.2,-6.3],[165.2,-6.3],[166.6,-4.8],[166.6,-1.5],[155.2,-1.5]], arc(14.6,19,-172,-153,4)];
+    [1,-1].forEach(sg=>LIT.forEach(C=>panel(top,C.map(q=>[q[0],q[1]*sg]),"paint",0.05)));
+    // nacelle tops ([u, v] outlines): the big dark triangle forward, the vent plate aft
+    const NP=[[[31,18.2],[51,18.2],[51,2]], [[6,7.4],[19,7.4],[19,13.6],[6,13.6]]];
+    [1,-1].forEach(mz=>{ const T=(u,v)=>[NX(u,v),mz*NZ(u,v)];
+      NP.forEach(C=>panel(top,C.map(q=>T(q[0],q[1])),"hull2",0.05));
+      for(let k=0;k<5;k++){ const v=8.4+k*1.05; panel(top,[T(7.5,v),T(17.5,v),T(17.5,v+0.4),T(7.5,v+0.4)],"dark",0.09); } });
+    // raised vent plates with ribs across them, and two round sensor domes (port X, z; mirrored)
+    const vent=(C,ax,n)=>{ panel(top,C,"hull2",0.2);
+      const [a,b,c]=C, e=[b[0]-a[0],b[1]-a[1]], f=[c[0]-b[0],c[1]-b[1]], d=ax?f:e, g=ax?e:f, w=0.12/Math.hypot(d[0],d[1]);
+      const at=(t,u)=>[a[0]+d[0]*t+g[0]*u, a[1]+d[1]*t+g[1]*u];
+      for(let k=0;k<n;k++){ const t=(k+0.6)/(n+0.2); panel(top,[at(t-w,0.12),at(t+w,0.12),at(t+w,0.88),at(t-w,0.88)],"dark",0.26); } };
+    [1,-1].forEach(sg=>{ const Z=q=>[q[0],q[1]*sg];
+      vent([[79.4,-25.6],[83.6,-25.6],[83.6,-28.8],[79.4,-28.8]].map(Z),0,6);
+      vent([[15.4,-8.6],[18.4,-8.6],[18.4,-12],[15.4,-12]].map(Z),1,5);
+      const T=(u,v)=>[NX(u,v),sg*NZ(u,v)];
+      panel(top,[T(4,4.6),T(12.5,4.6),T(12.5,7.2),T(4,7.2)],"hull2",0.22);
+      [[87.8,-28.3,1.05],[106.8,-20,0.85]].forEach(([X,z,r])=>{ const C=[]; for(let k=0;k<14;k++){ const a=k/14*2*PI; C.push([X+r*Math.cos(a),sg*z+r*Math.sin(a)]); }
+        panel(top,C,"hull2",0.3); panel(top,C.map(q=>[X+(q[0]-X)*0.55,sg*z+(q[1]-sg*z)*0.55]),"dark",0.36); }); });
+    // the module's ribbed center bar
+    panel(top,[[149.6,-0.6],[165.4,-0.6],[165.4,0.6],[149.6,0.6]],"hull2",0.05);
+    for(let X=150.4;X<165;X+=1.2) panel(top,[[X,-0.5],[X+0.4,-0.5],[X+0.4,0.5],[X,0.5]],"dark",0.08);
+    // @t text
+    // U.S.S. DEFIANT around the front of the platform, read from the bow; the letters stand inward
+    { const rb=19.5, h=2.8, rm=rb-h/2;
+      text(top,"U.S.S.DEFIANT",h,(s,t)=>{ const a=-s/rm, r=rb-t; return [BC+r*Math.cos(a), r*Math.sin(a)]; },0.08,{ w:0.2 }); }
+    // the registry across the module's tip, read from the bow
+    text(top,"NX-74205",1.25,(s,t)=>[168.8-t,-s],0.08,{ w:0.2 });
+    [1,-1].forEach(mz=>{
+      // on each nacelle top along its outboard edge, read from outboard
+      text(top,"NX-74205",1.8,(s,t)=>{ const u=23+mz*s, v=17-t; return [NX(u,v),mz*NZ(u,v)]; },0.08,{ w:0.2 });
+      // and on its outboard side, over and under the registry stripe
+      text(side(mz),"NX-74205",1.6,(s,t)=>[57.5+mz*s,16.6-t],0.08,{ w:0.2 });
+      text(side(mz),"U.S.S. DEFIANT",0.95,(s,t)=>[56.5+mz*s,20.6-t],0.08,{ w:0.2 });
+    });
 
     /* ---------------- dorsal trim: centerline stripes, the U around the platform, plasma vents ---------------- */
     // a stripe pair on the centerline over the surface top(X); sg -1 runs it under the keel instead
@@ -1721,7 +2397,11 @@ SHIPS.defiant={
       loft(R.concat([ring(51.15,0.12)]),{}); }
     const chev=(xa,xb,za,y,o)=>G.sweep(M,{ seg:12, res:1, mat:"trim", side:[0,1,0], st:[
       Object.assign({ x:xa-X0, y:y(xa), z:za },o), Object.assign({ x:xb-X0, y:y(xb), z:0, k:1 },o), Object.assign({ x:xa-X0, y:y(xa), z:-za },o)] });
-    chev(121,123.5,2.0,X=>Y0-FT(X)+0.05,{ w:0.06, t:0.33, b:0.33, n:4 });
+    // the arrowheads: a filled delta ahead of the dorsal stripes, and one at the end of each nacelle stripe
+    const delta=(cs,x0,x1,y,h,s,off)=>{ const t=[x1,y], n=[x0+(x1-x0)*0.3,y];
+      panel(cs,[t,[x0,y-h*s],n],"paint",off); panel(cs,[t,n,[x0,y+h*s]],"paint",off); };
+    delta(top,120.9,124.4,0,1.9,1,0.07);
+    { const RD=(NTOP(VO)+NBOT(VO))/2; [1,-1].forEach(mz=>delta(side(mz),79.2,83.6,RD,1.05,1,0.12)); }
     const UZ=tab([[25,11.6],[35,12.9],[45,14.0],[55,15.4],[62,16.5],[70,17.8],[76,18.7],[80,19.1],[84,19.3],[86,19.3]]);
     [1,-1].forEach(sg=>{
       const st=[], at=(X,z)=>st.push({ x:X-X0, y:Y0-ST(X)+0.04, z:sg*z, w:0.3, t:0.05, b:0.4, n:4 });
@@ -1765,14 +2445,21 @@ SHIPS.defiant={
 /* =========================================================================
    STARSHIP RENDERER (WebGL 1)
    One mesh, two looks:
-     * lit   a studio-model hull: key light, an accent-colored rim from
-             behind, panel tone, lit window rows, glowing grilles, bussards,
-             deflector and impulse engines;
+     * lit   a studio-model hull: a key lamp that falls off across the
+             model, an accent-colored rim from behind, a soft fill and an
+             overhead softbox; painted plates that differ in tone and sheen,
+             lit window rows, glowing grilles, bussards, deflector and
+             impulse engines;
      * holo  a tactical hologram in the HUD accent: dark glass with a
-             Fresnel rim, station and waterline contours, a scan band
-             running bow to stern, and a projector pad underneath.
+             Fresnel rim and an outline, station, waterline and deck
+             contours, a scan band running bow to stern, and a projector
+             pad underneath.
    Glow is real bloom: emissive surfaces are drawn again into a half-
    resolution target with the hull as an occluder, blurred, and added.
+   Both looks share an occlusion bake made once per hull on load (see
+   bake()): how open each vertex is, and toward where, so the saucer
+   shades the hull under it and joints and crevices stay dark, without a
+   shadow pass.
 
      const R=SHIPGL.create(canvas)        null when WebGL is unavailable
      R.load(geo, ship)                    geo = SHIPGEOM.finish(...)
@@ -1784,95 +2471,172 @@ SHIPS.defiant={
      R.project([x,y,z])                   last view: -> [px, py, near] in
                                           CSS-free device px from the canvas
                                           top-left; near > 0 faces the camera
+
+   Optional ship fields read here:
+     hull        [r,g,b] paint, default [0.62,0.64,0.68]
+     defl        [r,g,b] deflector glow, default [0.35,0.6,1.0]
+     deck        deck height in meters for the window rows, default 3.6
+     windows     false: no lit windows
+     winDensity  share of windows lit, 0..1, default 0.58
+     panel       plate height in meters (plates run twice as long), default hull
+                 length / 64, at least 4
+     aztec       plate tone and sheen strength, 0 flat paint .. 1.5; default 1 for
+                 a light hull, down to 0.3 for a dark one
+     occlusion   false: skip the occlusion bake
    ========================================================================= */
 const SHIPGL=(()=>{
   const VS=`
-attribute vec3 aP; attribute vec3 aN; attribute vec3 aX;
+attribute vec3 aP; attribute vec3 aN; attribute vec3 aX; attribute vec4 aO;
 uniform mat4 uMVP;
-varying vec3 vP; varying vec3 vN; varying vec3 vX;
-void main(){ vP=aP; vN=aN; vX=aX; gl_Position=uMVP*vec4(aP,1.0); }`;
+varying vec3 vP; varying vec3 vN; varying vec3 vX; varying vec4 vO;
+void main(){ vP=aP; vN=aN; vX=aX; vO=aO; gl_Position=uMVP*vec4(aP,1.0); }`;
   const FS=`
 #extension GL_OES_standard_derivatives : enable
 precision highp float;
-varying vec3 vP; varying vec3 vN; varying vec3 vX;
-uniform vec3 uCam, uKey, uRim, uAcc, uHull, uDefl, uLo, uHi;
-uniform float uLook, uPass, uT, uE, uLen, uDeck, uScan, uWinOn;
+varying vec3 vP; varying vec3 vN; varying vec3 vX; varying vec4 vO;
+uniform vec3 uCam, uKey, uKeyP, uSoft, uRim, uFill, uUp, uAcc, uHull, uDefl, uLo, uHi;
+uniform float uDbg, uKeyD, uLook, uPass, uT, uE, uLen, uDeck, uScan, uWinOn, uWinD, uPanel, uAzt, uOcc;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
 // past 1.0 an emitter keeps its hue: scale by the brightest channel, then whiten the core a little
 vec3 hue1(vec3 c){ float m=max(c.r,max(c.g,c.b)); return m>1.0 ? c/m+vec3((m-1.0)*0.1) : c; }
 float grid(float v){ float d=abs(fract(v+0.5)-0.5); float w=fwidth(v); return 1.0-smoothstep(0.0, w*1.25, d); }
+// contour lines fade out where they would be thinner than a pixel apart (moire)
+float lines(float v){ return grid(v)*(1.0-smoothstep(0.12,0.35,fwidth(v))); }
+// baked occlusion: how open the vertex is toward d, as a smooth function on the sphere (mean vO.w,
+// first moment vO.xyz), over what an unblocked face with normal n would see
+float vis(vec3 d, vec3 n){
+  float v=vO.w+dot(vO.xyz,d), v0=0.5+0.75*dot(n,d);
+  return mix(1.0, clamp(v/max(v0,0.3),0.0,1.0), uOcc);
+}
 void main(){
   vec3 N=normalize(vN); if(!gl_FrontFacing) N=-N;
   vec3 V=normalize(uCam-vP);
   float m=floor(vX.x+0.5);
   float ndv=clamp(dot(N,V),0.0,1.0);
-  vec3 emit=vec3(0.0);
   float pulse=1.0+0.55*uE;
-  if(m==2.0) emit=vec3(0.20,0.40,1.0)*1.45*pulse;
-  else if(m==3.0) emit=vec3(1.0,0.09,0.035)*1.6*(0.9+0.35*uE);
-  else if(m==4.0) emit=uDefl*1.45;
-  else if(m==5.0) emit=vec3(1.0,0.15,0.05)*1.4;
-  else if(m==8.0) emit=vec3(1.0,0.96,0.86)*1.5;
-  vec3 col;
-  float a=1.0;
-  if(uLook<0.5){
-    // ---- lit ----
-    vec3 alb=uHull;
-    if(m==1.0) alb=uHull*0.74;
-    else if(m==6.0) alb=uHull*0.18;
-    else if(m==7.0) alb=vec3(0.66,0.16,0.08);
-    else if(m>=2.0 && m<=5.0) alb=uHull*0.35;
-    // panel tone: a triplanar cell grid, a few percent either way, plus faint seams
-    vec3 an=abs(N); float cs=uLen/64.0;
-    vec2 q= an.y>max(an.x,an.z) ? vP.xz : (an.x>an.z ? vP.zy : vP.xy);
-    vec2 cell=floor(q/cs);
-    float h=hash(cell), h2=hash(floor(q/(cs*0.5))+7.3);
-    alb*=0.93+0.07*h+0.035*h2;
-    float pl=max(grid(q.x/cs), grid(q.y/cs))*(1.0-smoothstep(0.08,0.3,fwidth(q.x/cs)));
-    alb*=1.0-0.12*pl;
-    float ndl=dot(N,uKey);
-    float diff=max(ndl,0.0);
-    vec3 F=normalize(vec3(-uKey.x,-0.2,-uKey.z));
-    float fill=max(dot(N,F),0.0);
-    float hemi=mix(0.035,0.10,N.y*0.5+0.5);
-    vec3 H=normalize(uKey+V);
-    float nh=max(dot(N,H),0.0);
-    float spec=pow(nh,40.0)*0.42+pow(nh,8.0)*0.05;
-    col=alb*(hemi+1.35*diff*vec3(1.0,0.97,0.92)+0.16*fill*mix(vec3(1.0),uAcc,0.5))+vec3(spec)*(0.4+0.6*diff);
-    float fr=pow(1.0-ndv,2.6);
-    col+=uAcc*fr*(0.12+1.1*max(dot(N,uRim),0.0));
-    // lit windows on the near-vertical faces
-    if(uWinOn>0.5 && vX.y>0.5 && abs(N.y)<0.6){
-      float dy=vP.y/uDeck, dx=vX.z/(uDeck*1.15);
-      float fy=fract(dy), fx=fract(dx);
-      float sw=fwidth(dy);
-      float on=step(0.42,hash(vec2(floor(dy),floor(dx))))*(1.0-smoothstep(0.25,0.6,sw));
-      float wy=smoothstep(0.30-sw,0.30+sw,fy)*(1.0-smoothstep(0.58-sw,0.58+sw,fy));
-      float fw=fwidth(dx);
-      float wx=smoothstep(0.18-fw,0.18+fw,fx)*(1.0-smoothstep(0.78-fw,0.78+fw,fx));
-      emit+=vec3(1.0,0.88,0.66)*on*wy*wx*1.1;
-    }
-    col=vec3(1.0)-exp(-col*1.3);
-    col+=hue1(emit);
-  }else{
+  float glow=(m>=2.0 && m<=5.0 || m==8.0 || m==10.0) ? 1.0 : 0.0;
+  float ao=vis(N,N);
+  if(uLook>0.5){
     // ---- holo ----
-    float fr=pow(1.0-ndv,3.4);
-    float ndl=max(dot(N,uKey),0.0);
-    float sv=vP.x/(uLen/30.0), wv=vP.y/(uLen/70.0);
-    // contour lines fade out where they would be thinner than a pixel apart (moire)
-    float st=grid(sv)*(1.0-smoothstep(0.12,0.35,fwidth(sv)));
-    float wl=grid(wv)*(1.0-smoothstep(0.12,0.35,fwidth(wv)));
-    float lines=max(st*0.6,wl*0.45)*(0.45+0.55*fr);
+    // the Fresnel rim, held back on big flat faces seen edge on (they would wash out) and kept
+    // full where the hull curves away (curvature: how fast the normal turns, per hull length)
+    float cv=length(fwidth(N))/max(length(fwidth(vP)),1e-5)*uLen;
+    float fr=pow(1.0-ndv,3.4)*mix(0.5,1.0,smoothstep(3.0,14.0,cv));
+    // and an outline a few pixels wide wherever the hull turns away from the camera
+    fr+=0.55*(1.0-smoothstep(1.0,3.5,ndv/max(fwidth(ndv),1e-4)));
+    float ndl=max(dot(N,uKey),0.0)*vis(uKey,N);
+    float sv=vP.x/(uLen/30.0), wv=vP.y/(uLen/70.0), bv=vP.z/(uLen/15.0);
+    // stations and waterlines; on near-flat decks, where waterlines never reach, buttock lines at
+    // twice the station spacing; every fifth station is a major one
+    float dk=smoothstep(0.82,0.97,abs(N.y));
+    float ln=max(lines(sv)*0.55, lines(wv)*0.42);
+    ln=max(ln, lines(bv)*0.36*dk);
+    ln=max(ln, lines(sv/5.0)*0.95);
+    ln*=0.45+0.55*fr;
     float band=exp(-pow((vP.x-mix(uLo.x,uHi.x,uScan))/(uLen*0.03),2.0));
-    float glow=(m>=2.0 && m<=5.0 || m==8.0) ? 1.0 : 0.0;
-    col=uAcc*(0.025+0.05*ndl) + uAcc*fr*1.25 + uAcc*lines*0.62 + uAcc*band*(0.08+0.25*fr);
     vec3 hot=mix(uAcc,vec3(1.0),0.45);
+    vec3 emit=uAcc*(fr*0.45+ln*0.25+band*0.12) + hot*glow*0.9*pulse;
+    if(uPass>0.5){ gl_FragColor=vec4(emit,1.0); return; }
+    vec3 col=uAcc*(0.026+0.11*ndl)*ao + uAcc*fr*1.25 + uAcc*ln*0.62 + uAcc*band*(0.08+0.25*fr);
     col+=hot*glow*0.65*pulse;
-    emit=uAcc*(fr*0.45+lines*0.25+band*0.12) + hot*glow*0.9*pulse;
-    a=0.92;
+    gl_FragColor=vec4(col*0.92,0.92);
+    return;
+  }
+  // ---- lit ----
+  // emitters: hotter where they face the camera
+  vec3 emit=vec3(0.0);
+  float core=ndv*ndv;
+  if(m==2.0) emit=vec3(0.18,0.40,1.0)*(1.15+0.6*core)*pulse;
+  else if(m==3.0) emit=mix(vec3(1.0,0.06,0.025), vec3(1.0,0.11,0.045), core)*(1.1+0.5*core)*(0.9+0.35*uE);
+  else if(m==4.0) emit=uDefl*(1.1+0.8*core);
+  else if(m==5.0) emit=vec3(1.0,0.15,0.05)*(1.1+0.6*core);
+  else if(m==10.0) emit=vec3(1.0,0.40,0.14)*(0.7+0.4*core);   // a lit interior seen through an opening
+  else if(m==8.0){
+    // window lamps the ship file lays on: rooms of a few meters share a tone, a few burn cooler
+    float h=hash(floor(vP.xz/(uDeck*3.0))+floor(vP.y/uDeck)*7.3);
+    emit=mix(vec3(1.0,0.93,0.80), vec3(0.88,0.94,1.0), step(0.82,fract(h*7.0)))*(1.25+0.5*h);
+  }
+  // lit windows on the near-vertical faces (which window is lit is the same pattern ship files are
+  // fitted to); rooms of a few windows share a brightness, a few rooms burn cooler, and rows too
+  // fine to draw fade to their average
+  if(uWinOn>0.5 && vX.y>0.5 && abs(N.y)<0.6){
+    float dy=vP.y/uDeck, dx=vX.z/(uDeck*1.15);
+    float sw=fwidth(dy), fw=fwidth(dx);
+    float row=floor(dy), rm=floor(dx/5.0+hash(vec2(row,3.1)));
+    float on=step(1.0-uWinD,hash(vec2(row,floor(dx))));
+    float hr=hash(vec2(rm,row)+9.7);
+    vec3 wc=mix(vec3(1.0,0.85,0.62), vec3(0.86,0.92,1.0), step(0.84,hash(vec2(rm,row)+5.1)))*(0.7+0.6*hr);
+    float fy=fract(dy), fx=fract(dx);
+    float wy=smoothstep(0.30-sw,0.30+sw,fy)*(1.0-smoothstep(0.58-sw,0.58+sw,fy));
+    float wx=smoothstep(0.18-fw,0.18+fw,fx)*(1.0-smoothstep(0.78-fw,0.78+fw,fx));
+    float far=smoothstep(0.22,0.55,max(sw,fw*0.6));
+    emit+=mix(wc*on*wy*wx, vec3(1.0,0.85,0.62)*0.07*uWinD, far)*1.15;
   }
   if(uPass>0.5){ gl_FragColor=vec4(emit,1.0); return; }
-  gl_FragColor=vec4(col*a,a);
+  vec3 alb=uHull; float sk=1.0;
+  if(m==1.0) alb=uHull*0.74;
+  else if(m==6.0){ alb=uHull*0.18; sk=0.6; }
+  else if(m==7.0) alb=vec3(0.66,0.16,0.08);
+  else if(m==9.0) alb=uHull*vec3(1.10,1.06,0.96);
+  else if(glow>0.5){ alb=uHull*0.1; sk=0.4; }   // dark glass over the emitter, so its hue stays
+  // plates: staggered rows of plates twice as long as they are high on the face's main plane, each
+  // split once; plates differ a little in tone and more in sheen, as the paint on a model does
+  vec3 an=abs(N);
+  vec2 q=(an.y>max(an.x,an.z) ? vP.xz : (an.x>an.z ? vP.zy : vP.xy))/uPanel*vec2(0.5,1.0);
+  float pw=max(fwidth(q.x)*2.0,fwidth(q.y));
+  float pf=1.0-smoothstep(0.1,0.3,pw);
+  q.x+=hash(vec2(floor(q.y),7.0));
+  vec2 c=floor(q), f=fract(q);
+  float k1=0.3+0.4*hash(c+31.7), s1=step(k1,f.x);
+  float id=hash(c+vec2(s1*1.7,5.3));
+  float tone=id<0.55 ? 0.0 : (id<0.8 ? 0.022 : (id<0.94 ? -0.02 : 0.04));
+  float gloss=id<0.55 ? 0.5 : (id<0.8 ? 0.85 : (id<0.94 ? 0.2 : 1.0));
+  // seams: row and plate edges, in pixels
+  float ex=min(min(f.x,1.0-f.x),abs(f.x-k1))/max(fwidth(q.x),1e-5), ey=min(f.y,1.0-f.y)/max(fwidth(q.y),1e-5);
+  float seam=1.0-smoothstep(0.5,1.5,min(ex,ey));
+  float sf=1.0-smoothstep(0.04,0.12,pw);
+  // aztec: blocks three plates long and two rows high share a tone, so the paint reads in stepped
+  // patches from further off than single plates do
+  float pf2=1.0-smoothstep(0.3,0.9,pw);
+  float bt=hash(floor(c/vec2(3.0,2.0))+vec2(4.1,8.7));
+  float at=bt<0.5 ? 0.0 : (bt<0.78 ? 0.035 : -0.03);
+  alb*=1.0+uAzt*(pf*tone+pf2*at);
+  alb*=1.0-0.09*seam*sf;
+  sk*=(1.0+uAzt*pf*(gloss-0.5)*0.9)*(1.0+uAzt*pf2*(bt-0.5)*0.3);
+  // a broad drift in the paint, as on a hand-finished model
+  vec3 u=vP/uLen;
+  alb*=1.0+0.035*sin(u.x*17.0+2.0*sin(u.z*23.0))*sin(u.z*13.0+1.7*sin(u.y*29.0+u.x*7.0));
+  // light: the key is a lamp a couple of hull lengths off, so it falls off across the model and
+  // its highlight moves over parallel faces; then studio fill and sky, the highlight, the rim
+  vec3 Lk=uKeyP-vP; float dl=length(Lk); Lk/=dl;
+  float fall=mix(1.0, uKeyD*uKeyD/(dl*dl), 0.85);
+  float ndl=dot(N,Lk);
+  float vk=vis(Lk,N);
+  float diff=max(ndl,0.0)*vk*fall;
+  // the studio around the model, so faces turned from the key keep their form: a cool sky overhead
+  // that darkens toward the sides, a faint warm bounce off the floor and the fill card, each shaded
+  // by the occlusion toward it
+  float up=dot(N,uUp);
+  vec3 amb=vec3(0.075,0.085,0.10)*(0.3+0.7*smoothstep(-0.4,1.0,up))*vis(uUp,N)
+          +vec3(0.05,0.042,0.034)*smoothstep(0.1,-1.0,up)*vis(-uUp,N)
+          +0.11*max(dot(N,uFill)*0.8+0.2,0.0)*mix(vec3(0.85,0.9,1.0),uAcc,0.3)*ao;
+  vec3 H=normalize(Lk+V);
+  float nh=max(dot(N,H),0.0);
+  vec3 dn=fwidth(N);
+  float gp=mix(26.0,64.0,gloss*pf+0.5*(1.0-pf))/(1.0+dot(dn,dn)*80.0);   // wider where normals turn fast: no sparkle
+  float spec=(pow(nh,gp)*0.38+pow(nh,9.0)*0.06)*sk*vk*fall*smoothstep(-0.05,0.25,ndl);
+  // the big overhead softbox, seen as a broad sheen in the paint; it is what shows the plates
+  float sh=pow(max(dot(N,normalize(uSoft+V)),0.0),10.0)*0.11*sk*(1.0+uAzt*pf*(gloss-0.5)*0.6)*ao*min(1.0,0.2+dot(uHull,vec3(0.3,0.59,0.11)));
+  vec3 R=reflect(-V,N);
+  float env=pow(1.0-ndv,3.0)*(0.04+0.20*smoothstep(-0.2,0.8,dot(R,uUp)))*sk*ao;
+  vec3 col=alb*(amb*0.85+1.6*diff*vec3(1.0,0.96,0.9)) + vec3(spec+env+sh);
+  float fr=pow(1.0-ndv,2.6);
+  col+=uAcc*fr*(0.10+1.1*max(dot(N,uRim),0.0)*vis(uRim,N))*mix(1.0,ao,0.5);
+  // film response: an exposure curve with a soft shoulder, then a toe that deepens the shadows
+  col=vec3(1.0)-exp(-col*1.3);
+  col=col*col/(col+0.06)*1.06;
+  col+=hue1(emit);
+  gl_FragColor=vec4(col,1.0);
 }`;
   // projector pad under the hologram: a flat disc, rings and ticks drawn in polar coordinates
   const PVS=`
@@ -1895,9 +2659,9 @@ void main(){
   float v=ring(r,0.985,0.003)*0.55 + ring(r,0.88,0.0015)*0.30 + ring(r,0.6,0.0012)*0.16;
   v+=tick*0.28+mtk*0.5;
   v+=smoothstep(1.0,0.2,r)*0.05;
-  vec3 c=uAcc*v;
-  if(uPass>0.5){ gl_FragColor=vec4(c*0.35,1.0); return; }
-  gl_FragColor=vec4(c, clamp(v,0.0,1.0)*0.8);
+  vec3 c=uAcc*v*0.8;
+  if(uPass>0.5){ gl_FragColor=vec4(c*0.3,1.0); return; }
+  gl_FragColor=vec4(c, clamp(v,0.0,1.0)*0.7);
 }`;
   const QVS=`attribute vec2 aQ; varying vec2 vU; void main(){ vU=aQ*0.5+0.5; gl_Position=vec4(aQ,0.0,1.0); }`;
   const BLUR=`precision mediump float; varying vec2 vU; uniform sampler2D uTex; uniform vec2 uDir;
@@ -1932,6 +2696,76 @@ void main(){
   // inverse of a rigid rotation (transpose of the 3x3 block)
   function rotT(m,v){ return [m[0]*v[0]+m[1]*v[1]+m[2]*v[2], m[4]*v[0]+m[5]*v[1]+m[6]*v[2], m[8]*v[0]+m[9]*v[1]+m[10]*v[2]]; }
   const nrm=v=>{ const l=Math.hypot(v[0],v[1],v[2])||1; return [v[0]/l,v[1]/l,v[2]/l]; };
+
+  /* Occlusion bake, once per hull: the triangles are sampled into a voxel grid (160 cells along
+     the longest axis), then 24 rays from each vertex march it, out to 14% of that length. Rays
+     leave from 1.5 cells off the surface on their own side, so a hull's winding does not matter,
+     and rays along the surface count little (they would meet the surface's own cells). A ray that
+     hits counts as open in proportion to how far it got. Per vertex, over the sphere: the open
+     share (w) and its first moment (xyz), so the shader can ask how open the vertex is toward any
+     direction. Two passes of neighbor averaging smooth out the voxel grain. About 60-140 ms for a
+     50-85k vertex hull on a desktop CPU, then cached on the geometry. */
+  function bake(g){
+    const P=g.pos, Nn=g.nrm, I=g.idx, nv=P.length/3, lo=g.lo, hi=g.hi;
+    const L=Math.max(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2]), RES=160, iv=RES/L, pad=4;
+    const nx=Math.ceil((hi[0]-lo[0])*iv)+2*pad, ny=Math.ceil((hi[1]-lo[1])*iv)+2*pad, nz=Math.ceil((hi[2]-lo[2])*iv)+2*pad;
+    const ox=lo[0]-pad/iv, oy=lo[1]-pad/iv, oz=lo[2]-pad/iv, sy=nx, sz=nx*ny;
+    const G=new Uint8Array(nx*ny*nz);
+    for(let k=0;k<I.length;k+=3){
+      const a=I[k]*3, b=I[k+1]*3, c=I[k+2]*3;
+      const ax=(P[a]-ox)*iv, ay=(P[a+1]-oy)*iv, az=(P[a+2]-oz)*iv;
+      const ux=(P[b]-ox)*iv-ax, uy=(P[b+1]-oy)*iv-ay, uz=(P[b+2]-oz)*iv-az;
+      const wx=(P[c]-ox)*iv-ax, wy=(P[c+1]-oy)*iv-ay, wz=(P[c+2]-oz)*iv-az;
+      const e=Math.max(Math.hypot(ux,uy,uz),Math.hypot(wx,wy,wz),Math.hypot(wx-ux,wy-uy,wz-uz));
+      const m=Math.max(1,Math.ceil(e*1.5)), im=1/m;
+      for(let i=0;i<=m;i++) for(let j=0;j<=m-i;j++){
+        const s=i*im, t=j*im;
+        G[((ax+ux*s+wx*t)|0)+((ay+uy*s+wy*t)|0)*sy+((az+uz*s+wz*t)|0)*sz]=1;
+      }
+    }
+    // a thickened copy for the longer steps, so they cannot slip through a one-voxel shell
+    const T=new Uint8Array(G.length);
+    for(let z=1;z<nz-1;z++) for(let y=1;y<ny-1;y++){ let q=1+y*sy+z*sz;
+      for(let x=1;x<nx-1;x++,q++) if(G[q]||G[q-1]||G[q+1]||G[q-sy]||G[q+sy]||G[q-sz]||G[q+sz]) T[q]=1; }
+    const K=24, D=new Float32Array(K*3);
+    for(let i=0;i<K;i++){ const y=1-(i+0.5)/K*2, r=Math.sqrt(1-y*y), a=i*2.399963; D[i*3]=Math.cos(a)*r; D[i*3+1]=y; D[i*3+2]=Math.sin(a)*r; }
+    const tmax=RES*0.14, ST=[];
+    { let t=1.0; while(t<5.0){ ST.push(t); t+=0.85; } while(t<tmax){ ST.push(t); t+=Math.min(2.4,0.9+t*0.08); } }
+    const ns=ST.length, out=new Float32Array(nv*4);
+    for(let v=0;v<nv;v++){
+      const px=(P[v*3]-ox)*iv, py=(P[v*3+1]-oy)*iv, pz=(P[v*3+2]-oz)*iv;
+      const n0=Nn[v*3], n1=Nn[v*3+1], n2=Nn[v*3+2];
+      let sw=0, sv=0, bx=0, by=0, bz=0;
+      for(let k=0;k<K;k++){
+        const dx=D[k*3], dy=D[k*3+1], dz=D[k*3+2], c=dx*n0+dy*n1+dz*n2, ac=c<0?-c:c;
+        let w=ac>=0.3?1:ac/0.3; w=w*w*(3-2*w);
+        if(w<0.02) continue;
+        const o=c<0?-1.5:1.5, qx=px+n0*o, qy=py+n1*o, qz=pz+n2*o;
+        let hit=tmax;
+        for(let s=0;s<ns;s++){
+          const t=ST[s], X=(qx+dx*t)|0, Y=(qy+dy*t)|0, Z=(qz+dz*t)|0;
+          if(X<0||Y<0||Z<0||X>=nx||Y>=ny||Z>=nz) break;
+          const q=X+Y*sy+Z*sz;
+          if(t<5.0 ? G[q] : T[q]){ hit=t; break; }
+        }
+        const h=w*hit/tmax;
+        sw+=w; sv+=h; bx+=h*dx; by+=h*dy; bz+=h*dz;
+      }
+      const k=sw>0 ? 3/sw : 0;
+      out[v*4]=bx*k; out[v*4+1]=by*k; out[v*4+2]=bz*k; out[v*4+3]=sw>0 ? sv/sw : 1;
+    }
+    const acc=new Float32Array(nv*4), cnt=new Float32Array(nv);
+    for(let it=0;it<2;it++){
+      acc.set(out); cnt.fill(1);
+      for(let k=0;k<I.length;k+=3) for(let e=0;e<3;e++){
+        const a=I[k+e], b=I[k+(e+1)%3];
+        for(let j=0;j<4;j++){ acc[a*4+j]+=out[b*4+j]; acc[b*4+j]+=out[a*4+j]; }
+        cnt[a]++; cnt[b]++;
+      }
+      for(let v=0;v<nv;v++){ const r=1/cnt[v]; for(let j=0;j<4;j++) out[v*4+j]=acc[v*4+j]*r; }
+    }
+    return out;
+  }
 
   function create(cv){
     let gl=null;
@@ -1985,9 +2819,13 @@ void main(){
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     }
     function upload(){
-      const g=R.geo, n=g.pos.length/3, buf=new Float32Array(n*9);
+      const g=R.geo, n=g.pos.length/3, buf=new Float32Array(n*13), o=g.occ;
       for(let i=0;i<n;i++){
-        buf.set([g.pos[i*3],g.pos[i*3+1],g.pos[i*3+2], g.nrm[i*3],g.nrm[i*3+1],g.nrm[i*3+2], g.mat[i],g.win[i],g.wc[i]], i*9);
+        const b=i*13;
+        buf[b]=g.pos[i*3]; buf[b+1]=g.pos[i*3+1]; buf[b+2]=g.pos[i*3+2];
+        buf[b+3]=g.nrm[i*3]; buf[b+4]=g.nrm[i*3+1]; buf[b+5]=g.nrm[i*3+2];
+        buf[b+6]=g.mat[i]; buf[b+7]=g.win[i]; buf[b+8]=g.wc[i];
+        if(o){ buf[b+9]=o[i*4]; buf[b+10]=o[i*4+1]; buf[b+11]=o[i*4+2]; buf[b+12]=o[i*4+3]; } else buf[b+12]=0.5;
       }
       // a ship change replaces the buffers; free the old ones first
       if(R.vbo){ gl.deleteBuffer(R.vbo); gl.deleteBuffer(R.ibo); }
@@ -2003,6 +2841,11 @@ void main(){
 
     R.load=function(geo, ship){
       R.geo=geo; R.shipDef=ship||{};
+      // the bake rides on the geometry, so a ship shown again does not bake twice
+      if(geo.occ===undefined){
+        geo.occ=null;
+        if(R.shipDef.occlusion!==false){ try{ geo.occ=bake(geo); }catch(e){ console.warn("starship: occlusion bake failed", e); } }
+      }
       const c=[(geo.lo[0]+geo.hi[0])/2,(geo.lo[1]+geo.hi[1])/2,(geo.lo[2]+geo.hi[2])/2];
       R.center=c; R.len=Math.max(1e-3, geo.hi[0]-geo.lo[0]);
       if(R.ok) upload();
@@ -2021,10 +2864,14 @@ void main(){
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);
       R.glowK=0;
     };
+    const ATTR=[["aP",3,0],["aN",3,12],["aX",3,24],["aO",4,36]];
     function bindMesh(P){
       gl.bindBuffer(gl.ARRAY_BUFFER,R.vbo); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,R.ibo);
-      const loc=n=>gl.getAttribLocation(P.p,n);
-      [["aP",3,0],["aN",3,12],["aX",3,24]].forEach(([n,s,o])=>{ const l=loc(n); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l,s,gl.FLOAT,false,36,o); });
+      ATTR.forEach(([n,s,o])=>{ const l=gl.getAttribLocation(P.p,n); if(l<0) return;
+        gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l,s,gl.FLOAT,false,52,o); });
+    }
+    function unbindMesh(P){
+      ATTR.forEach(([n])=>{ const l=gl.getAttribLocation(P.p,n); if(l>=0) gl.disableVertexAttribArray(l); });
     }
     R.draw=function(o){
       if(!R.ok || !R.geo) return;
@@ -2045,21 +2892,30 @@ void main(){
       const proj=persp(fy,asp,Math.max(0.01,dist-1.2),dist+1.2);
       const VM=mul(view,model), MVP=mul(proj,VM);
       R.last={ MVP, vp, k };
-      // camera, key and rim lights in model space (meters)
-      const inv=v=>rotT(mul(view,model),v);
+      // camera and the studio's lights in model space (meters): key, rim, fill and up are fixed to the camera
+      const inv=v=>nrm(rotT(VM,nrm(v)));
       const camW=xform(invRigid(VM),[0,0,0]);
-      const key=nrm(inv(nrm([-0.72,0.42,0.55]))), rim=nrm(inv(nrm([0.3,0.35,-0.9])));
       gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE);
+      const hull=sh.hull||[0.62,0.64,0.68], lum=0.3*hull[0]+0.59*hull[1]+0.11*hull[2];
       const P=R.main; gl.useProgram(P.p); bindMesh(P);
       const u=P.u;
       gl.uniformMatrix4fv(u.uMVP,false,MVP);
-      gl.uniform3fv(u.uCam,camW.slice(0,3)); gl.uniform3fv(u.uKey,key); gl.uniform3fv(u.uRim,rim);
+      gl.uniform3fv(u.uCam,camW.slice(0,3));
+      const key=inv([-0.72,0.42,0.55]), kd=R.len*2.2;
+      gl.uniform3fv(u.uKey,key); gl.uniform3fv(u.uRim,inv([0.3,0.35,-0.9]));
+      gl.uniform3fv(u.uKeyP,[R.center[0]+key[0]*kd, R.center[1]+key[1]*kd, R.center[2]+key[2]*kd]); gl.uniform1f(u.uKeyD,kd);
+      gl.uniform3fv(u.uFill,inv([0.8,-0.25,0.45])); gl.uniform3fv(u.uUp,inv([0,1,0])); gl.uniform3fv(u.uSoft,inv([-0.3,0.9,0.3]));
       gl.uniform3fv(u.uAcc,o.accent||[0,0.85,0.91]);
-      gl.uniform3fv(u.uHull,sh.hull||[0.62,0.64,0.68]); gl.uniform3fv(u.uDefl,sh.defl||[0.35,0.6,1.0]);
+      gl.uniform3fv(u.uHull,hull); gl.uniform3fv(u.uDefl,sh.defl||[0.35,0.6,1.0]);
       gl.uniform3fv(u.uLo,g.lo); gl.uniform3fv(u.uHi,g.hi);
       gl.uniform1f(u.uLook,look); gl.uniform1f(u.uT,o.t||0); gl.uniform1f(u.uE,o.energy||0);
       gl.uniform1f(u.uLen,R.len); gl.uniform1f(u.uDeck,sh.deck||3.6); gl.uniform1f(u.uScan,o.scan===undefined?((o.t||0)/14)%1:o.scan);
       gl.uniform1f(u.uWinOn,sh.windows===false?0:1);
+      gl.uniform1f(u.uWinD,sh.winDensity===undefined?0.58:Math.min(1,Math.max(0,+sh.winDensity)));
+      gl.uniform1f(u.uPanel,sh.panel>0?+sh.panel:Math.max(4,R.len/64));
+      gl.uniform1f(u.uAzt,sh.aztec===undefined?Math.min(1,Math.max(0.3,lum*2.5-0.9)):Math.min(1.5,Math.max(0,+sh.aztec)));
+      gl.uniform1f(u.uOcc,g.occ?1:0);
+      if(u.uDbg) gl.uniform1f(u.uDbg,o.dbg||0);
       // main pass
       gl.viewport(vp[0],R.H-vp[1]-vp[3],vp[2],vp[3]);
       gl.uniform1f(u.uPass,0);
@@ -2072,6 +2928,7 @@ void main(){
       gl.disable(gl.BLEND);
       gl.uniform1f(u.uPass,1);
       gl.drawElements(gl.TRIANGLES,R.count,R.itype,0);
+      unbindMesh(P);
       // projector pad (holo only): flat, under the keel, turning with the ship
       if(look){
         const Q=R.pad; gl.useProgram(Q.p);
@@ -2255,16 +3112,21 @@ const STARSHIP=(()=>{
     const fs=clamp(B.h*0.021, 10, 30);
     const sp=v=>{ try{ c.letterSpacing=v.toFixed(1)+"px"; }catch(e){} };
     const hdg=((-P.yaw*180/Math.PI)%360+360)%360;
+    // the LCARS panel style redraws the caption and callouts as console buttons
+    const lc=document.body.classList.contains("hud-lcars");
     c.textAlign="center"; c.textBaseline="alphabetic";
-    c.font="600 "+fs.toFixed(1)+"px "+font; sp(fs*0.32);
-    c.fillStyle=PAL.bright; c.globalAlpha=0.88;
-    const y0=B.h*0.94;
-    c.fillText(S.name+"  "+DOT+"  "+S.reg, B.w/2, y0);
-    c.font=(fs*0.62).toFixed(1)+"px "+font; sp(fs*0.22);
-    c.fillStyle=PAL.accent; c.globalAlpha=0.72;
-    c.fillText(S.cls+"  "+DOT+"  "+S.len.toFixed(1)+" M  "+DOT+"  HDG "+hdg.toFixed(1)+DEG, B.w/2, y0+fs*1.25);
+    if(lc) lcCaption(c, S, B, fs, hdg, sp);
+    else{
+      c.font="600 "+fs.toFixed(1)+"px "+font; sp(fs*0.32);
+      c.fillStyle=PAL.bright; c.globalAlpha=0.88;
+      const y0=B.h*0.94;
+      c.fillText(S.name+"  "+DOT+"  "+S.reg, B.w/2, y0);
+      c.font=(fs*0.62).toFixed(1)+"px "+font; sp(fs*0.22);
+      c.fillStyle=PAL.accent; c.globalAlpha=0.72;
+      c.fillText(S.cls+"  "+DOT+"  "+S.len.toFixed(1)+" M  "+DOT+"  HDG "+hdg.toFixed(1)+DEG, B.w/2, y0+fs*1.25);
+    }
     sp(0); c.globalAlpha=1;
-    if(look!=="holo" || !S.callouts || !S.callouts.length) return;
+    if(look!=="holo" || !S.callouts || !S.callouts.length){ if(lc) lcFont(c, 0); return; }
 
     const ctr=R.project(R.center), cw=ctr ? ctr[3] : 0, k=R.last ? R.last.k : 1;
     const items=S.callouts.map((co,i)=>{
@@ -2281,7 +3143,9 @@ const STARSHIP=(()=>{
       ST.side[it.i]=s; it.side=s;
     });
     const lh=fs*1.7, fl=fs*0.62;
-    c.font=fl.toFixed(1)+"px "+font; sp(fl*0.2); c.textBaseline="middle";
+    if(lc){ lcFont(c, fl); sp(fl*0.08); }
+    else{ c.font=fl.toFixed(1)+"px "+font; sp(fl*0.2); }
+    c.textBaseline="middle";
     [-1,1].forEach(side=>{
       const col=items.filter(it=>it.side===side).sort((a,b)=>a.y-b.y);
       let yp=-1e9;
@@ -2292,6 +3156,7 @@ const STARSHIP=(()=>{
         ST.ly[it.i]=it.ly;
       });
       col.forEach(it=>{
+        if(lc){ lcCallout(c, it, side, B, fs, fl); return; }
         const tw=c.measureText(it.text).width;
         const lx=side<0 ? B.w*0.09 : B.w*0.91;
         const ex=side<0 ? lx+tw+fs*0.6 : lx-tw-fs*0.6;
@@ -2310,6 +3175,72 @@ const STARSHIP=(()=>{
       });
     });
     sp(0); c.globalAlpha=1;
+    if(lc) lcFont(c, 0);
+  }
+
+  /* LCARS overlay parts. The caption is a header run: bar, block, the name on
+     black, the registry on a button, bar to a rounded end, and a row of three
+     buttons under it. A callout is its label on a button, with the leader and
+     the marker in the button's color. lcFont(c, 0) puts the stretch back. */
+  const LC={ font:'"Bahnschrift Condensed","Bahnschrift SemiCondensed",Bahnschrift,"Arial Narrow",sans-serif',
+             or:"#FF9900", tan:"#FFCC99", pch:"#FF9966", lil:"#CC99CC", per:"#9999FF", bv:"#9999CC",
+             cyc:["#FF9900","#CC99CC","#9999FF","#FFCC99","#FF9966","#FFCC66","#9999CC"] };
+  function lcFont(c, px){
+    if(px) c.font="400 "+px.toFixed(1)+"px "+LC.font;
+    try{ c.fontStretch=px ? "condensed" : "normal"; }catch(e){}
+  }
+  function lcPill(c, x, y, w, h, l, r){
+    const k=h/2;
+    c.beginPath(); c.moveTo(l ? x+k : x, y);
+    if(r){ c.lineTo(x+w-k, y); c.arc(x+w-k, y+k, k, -TAU/4, TAU/4); }
+    else { c.lineTo(x+w, y); c.lineTo(x+w, y+h); }
+    if(l){ c.lineTo(x+k, y+h); c.arc(x+k, y+k, k, TAU/4, TAU*0.75); }
+    else c.lineTo(x, y+h);
+    c.closePath(); c.fill();
+  }
+  function lcCaption(c, S, B, fs, hdg, sp){
+    const g=Math.max(2, fs*0.2), bh=Math.round(fs*0.74), y=Math.round(B.h*0.905);
+    const run=fs*4.2, blk=fs*1.2, pad=fs*0.3;
+    lcFont(c, fs*1.05); sp(fs*0.05);
+    const nw=c.measureText(S.name).width;
+    lcFont(c, fs*0.56); sp(fs*0.05);
+    const rw=c.measureText(S.reg).width+fs*1.3;
+    const x0=Math.round(B.w/2-(2*run+2*g+blk+2*pad+nw+rw)/2);
+    let x=x0;
+    c.globalAlpha=0.94; c.textAlign="right";
+    c.fillStyle=LC.bv; lcPill(c, x, y, run, bh, true, false); x+=run+g;
+    c.fillStyle=LC.or; lcPill(c, x, y, blk, bh, false, false); x+=blk+pad;
+    c.fillStyle=LC.tan; lcPill(c, x+nw+pad, y, rw, bh, false, false);
+    c.fillStyle="#000"; c.fillText(S.reg, x+nw+pad+rw-fs*0.32, y+bh-fs*0.1);
+    lcFont(c, fs*1.05); sp(fs*0.05); c.textAlign="left";
+    c.fillStyle=LC.or; c.fillText(S.name, x, y+bh);
+    x+=nw+pad+rw+g;
+    c.fillStyle=LC.lil; lcPill(c, x, y, run, bh, false, true);
+    // class, length and heading on three buttons; the heading's is sized for
+    // its widest reading, so it never shifts as the ship turns
+    const t=[S.cls, S.len.toFixed(1)+" M", "HDG "+hdg.toFixed(1)+DEG], col=[LC.lil, LC.pch, LC.per];
+    lcFont(c, fs*0.5); sp(fs*0.06); c.textAlign="right";
+    const ws=[c.measureText(t[0]).width, c.measureText(t[1]).width, c.measureText("HDG 888.8"+DEG).width].map(v=>v+fs*1.4);
+    const ph=Math.round(fs*0.66), py=y+bh+Math.round(fs*0.3);
+    x=Math.round(B.w/2-(ws[0]+ws[1]+ws[2]+2*g)/2);
+    for(let i=0;i<3;i++){
+      c.fillStyle=col[i]; lcPill(c, x, py, ws[i], ph, i===0, i===2);
+      c.fillStyle="#000"; c.fillText(t[i], x+ws[i]-fs*(i===2 ? 0.55 : 0.4), py+ph-fs*0.13);
+      x+=ws[i]+g;
+    }
+  }
+  function lcCallout(c, it, side, B, fs, fl){
+    const col=LC.cyc[it.i%LC.cyc.length];
+    const tw=c.measureText(it.text).width, ph=Math.round(fl*1.5), pw=tw+fl*1.6;
+    const lx=side<0 ? B.w*0.09 : B.w*0.91-pw, y=Math.round(it.ly-ph/2);
+    const ix=side<0 ? lx+pw : lx, ex=ix-side*fs*0.6;
+    c.globalAlpha=it.a;
+    c.strokeStyle=col; c.lineWidth=1.5;
+    c.beginPath(); c.moveTo(ix, it.ly); c.lineTo(ex, it.ly); c.lineTo(it.x, it.y); c.stroke();
+    c.fillStyle=col; lcPill(c, lx, y, pw, ph, true, true);
+    c.fillRect(Math.round(it.x)-3, Math.round(it.y)-3, 6, 6);
+    c.fillStyle="#000"; c.textAlign="right"; c.textBaseline="alphabetic";
+    c.fillText(it.text, lx+pw-fl*0.62, y+ph-fl*0.36);
   }
 
   return {
