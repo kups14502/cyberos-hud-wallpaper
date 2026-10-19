@@ -47,6 +47,11 @@ adjustable live, no editing required:
 **Panels** — toggle any panel on/off independently: terminal, diagnostics,
 process list, system monitor, audio visualizer, time/location.
 
+**Process list**: shows CPU, memory and GPU share per process. Under Panels,
+**Process list rows** sets how many processes it lists (3 to 20), and **Sort
+processes by** orders them by CPU, memory or GPU. The GPU column needs the
+companion from v3.9 or later, on Windows; otherwise it shows a dash.
+
 **Now playing**: the audio visualizer shows the current track's title and artist
 above the bars. It reads whatever Windows' media controls see, such as Spotify or
 a browser tab. The line dims while the track is paused and goes away when playback
@@ -411,9 +416,10 @@ a JSON blob. (Simpler alternative: a shortcut to the same `pythonw` + script in
   light even at 4K.
 - **Companion footprint** is minimal. The once-per-second sample uses native APIs
   only — psutil for CPU / RAM / disk / network / drives, and the NVIDIA NVML
-  library for GPU — while the heavier top-process scan runs on a slower 2 s
-  thread. It sits around half a percent of total CPU and ~40 MB RAM and spawns
-  no subprocesses while running. (`nvidia-smi` and a one-time PowerShell query
+  library for GPU — while the process scan runs on a slower 2 s thread. On
+  Windows that scan is one system call for every process plus the GPU Engine
+  performance counters, a few milliseconds a pass. The companion spawns no
+  subprocesses while running. (`nvidia-smi` and a one-time PowerShell query
   remain as automatic fallbacks if NVML / WMI aren't available.)
 - **Resolution** scales automatically, from 720p up through 4K, ultrawide and
   portrait. On a single monitor the whole interface tracks the short edge; across a

@@ -1507,13 +1507,16 @@ body.hud-lcars .ptbl th{
 body.hud-lcars .ptbl th:nth-child(2){ text-align:left; background:var(--lc-tan); }
 body.hud-lcars .ptbl th:nth-child(3){ background:var(--lc-or); }
 body.hud-lcars .ptbl th:first-child{ border-radius:0.52rem 0 0 0.52rem; }
-body.hud-lcars .ptbl th:last-child{ border-radius:0 0.52rem 0.52rem 0; background:var(--lc-lil); }
+body.hud-lcars .ptbl th:nth-child(4){ background:var(--lc-lil); }
+body.hud-lcars .ptbl th:nth-child(5){ background:var(--lc-per); }
+body.hud-lcars .ptbl th:last-child{ border-radius:0 0.52rem 0.52rem 0; }
 body.hud-lcars .ptbl tbody tr:first-child td{ padding-top:0.45rem; }
 body.hud-lcars .ptbl td{ padding:0.2rem 0.32rem; letter-spacing:0.04em; font-variant-numeric:tabular-nums; }
 body.hud-lcars .ptbl td:nth-child(1){ color:var(--lc-bv); }
 body.hud-lcars .ptbl tr td:nth-child(2){ color:var(--lc-tan); }
 body.hud-lcars .ptbl td:nth-child(3){ color:var(--lc-or); }
 body.hud-lcars .ptbl td:nth-child(4){ color:var(--lc-lil); }
+body.hud-lcars .ptbl td:nth-child(5){ color:var(--lc-per); }
 body.hud-lcars .ptbl tbody tr:first-child td:nth-child(2){ color:var(--lc-or); }
 
 /* -------------------------------- TAILNET ---------------------------------- */
@@ -2376,7 +2379,7 @@ body.hud-minimal #mode-tag{
     <div class="bdy">
       <div class="sec-h"><span class="plus">+</span> PROCESS LIST</div>
       <table class="ptbl">
-        <thead><tr><th>PID</th><th>NAME</th><th style="text-align:right">CPU%</th><th style="text-align:right">MEM%</th></tr></thead>
+        <thead><tr><th>PID</th><th>NAME</th><th style="text-align:right">CPU%</th><th style="text-align:right">MEM%</th><th style="text-align:right">GPU%</th></tr></thead>
         <tbody id="proc-body"></tbody>
       </table>
     </div>
@@ -2745,6 +2748,8 @@ const CFG={
   autoLocation:true,
   uptimeBaseDays:42,
   panels:{ terminal:true, sysmon:true, diag:true, proc:true, tailnet:true, audio:true, tl:true },
+  procRows:5,                // process list length, PROC_ROWS_MAX at most
+  procSort:"cpu",            // process list order: cpu | mem | gpu
 
   /* ---- multi-monitor ---- */
   screenMode:"auto",         // auto | single | span
@@ -2777,11 +2782,26 @@ const M={
   gpuMemClk:9000, gpuMemClkMax:10500, ramMhz:6000,
   cpuHist:[], diskHist:[], netHist:[], gpuHist:[],
   procs:[
-    {pid:2150,name:"phantom", cpu:2.1, mem:1.2},
-    {pid:2203,name:"spectred",cpu:1.3, mem:0.7},
-    {pid:1542,name:"netd",    cpu:0.6, mem:0.3},
-    {pid:1891,name:"sysmon",  cpu:0.4, mem:0.2},
-    {pid:1103,name:"terminal",cpu:0.3, mem:0.2}
+    {pid:2150,name:"phantom",   cpu:2.1, mem:1.2, gpu:0.4},
+    {pid:2203,name:"spectred",  cpu:1.3, mem:0.7, gpu:0.0},
+    {pid:1542,name:"netd",      cpu:0.6, mem:0.3, gpu:0.0},
+    {pid:1891,name:"sysmon",    cpu:0.4, mem:0.2, gpu:0.1},
+    {pid:1103,name:"terminal",  cpu:0.3, mem:0.2, gpu:0.2},
+    {pid:1290,name:"compositor",cpu:0.9, mem:0.8, gpu:3.6},
+    {pid:3317,name:"renderd",   cpu:0.7, mem:2.4, gpu:6.2},
+    {pid:2488,name:"holod",     cpu:0.5, mem:3.1, gpu:1.9},
+    {pid:1764,name:"navcomp",   cpu:0.4, mem:1.6, gpu:0.0},
+    {pid:2911,name:"sensord",   cpu:0.3, mem:0.4, gpu:0.0},
+    {pid:1377,name:"dbsync",    cpu:0.3, mem:4.2, gpu:0.0},
+    {pid:3052,name:"cryptd",    cpu:0.2, mem:0.5, gpu:0.0},
+    {pid:2604,name:"indexer",   cpu:0.2, mem:2.8, gpu:0.0},
+    {pid:1418,name:"audiod",    cpu:0.2, mem:0.3, gpu:0.0},
+    {pid:2741,name:"telemetry", cpu:0.2, mem:0.6, gpu:0.0},
+    {pid:1955,name:"shieldd",   cpu:0.1, mem:0.4, gpu:0.0},
+    {pid:3186,name:"commsd",    cpu:0.1, mem:0.9, gpu:0.3},
+    {pid:1236,name:"watchdog",  cpu:0.1, mem:0.1, gpu:0.0},
+    {pid:2059,name:"subspace",  cpu:0.1, mem:1.1, gpu:0.0},
+    {pid:1680,name:"cron",      cpu:0.1, mem:0.1, gpu:0.0}
   ],
   bootTime: Date.now(),
   source:"SIM"
@@ -2826,6 +2846,9 @@ function simulate(dt){
   M.procs.forEach(p=>{
     p.cpu = clamp(p.cpu + rnd(-0.4,0.4)*k, 0.1, 28);
     p.mem = clamp(p.mem + rnd(-0.08,0.08)*k, 0.1, 18);
+    // a process the GPU never touched stays at zero, and an old companion's
+    // rows have no GPU reading to jitter
+    if(p.gpu>0) p.gpu = clamp(p.gpu + rnd(-0.3,0.3)*k, 0.1, 40);
   });
   M.procs[0].cpu = clamp(M.cpu*0.12 + rnd(-0.5,0.5), 0.2, 40); // top proc tracks load loosely
   M.source="SIM";
@@ -3014,8 +3037,12 @@ async function pollReal(){
       M.netDown = (typeof d.net_down_kbs==="number")? d.net_down_kbs : M.netDown;
       M.netUp   = (typeof d.net_up_kbs==="number")? d.net_up_kbs : M.netUp;
       M.net = M.netDown + M.netUp;
+      // The companion sends the top rows by CPU, by memory and by GPU, so any
+      // sort and length the list is set to can be cut from them here. An old
+      // companion sends five rows by CPU and no GPU reading.
       if(Array.isArray(d.procs) && d.procs.length){
-        M.procs = d.procs.slice(0,5).map(p=>({pid:p.pid,name:String(p.name||"").slice(0,12),cpu:p.cpu,mem:p.mem}));
+        M.procs = d.procs.slice(0,3*PROC_ROWS_MAX).map(p=>({pid:p.pid,name:String(p.name||"").slice(0,12),
+          cpu:+p.cpu||0, mem:+p.mem||0, gpu:(typeof p.gpu==="number")? p.gpu : null}));
       }
       if(typeof d.uptime_sec==="number")   M.realUptimeSec=d.uptime_sec;
       if(typeof d.ram_total_mb==="number") M._memTotalReal=Math.round(d.ram_total_mb);
@@ -3232,11 +3259,21 @@ function setHTML(el, html){
 /* =========================================================================
    PROCESS TABLE
    ========================================================================= */
+const PROC_ROWS_MAX=20;   // the companion's PROC_ROWS, and the slider's max
+const PROC_KEYS={cpu:["cpu","mem","gpu"], mem:["mem","cpu","gpu"], gpu:["gpu","cpu","mem"]};
 function renderProcs(){
   const tb=$("#proc-body"); if(!tb) return;
-  setHTML(tb, M.procs.map(p=>
+  // ties fall through to the next column, so a GPU sort with the GPU idle
+  // still reads as a CPU list rather than an arbitrary one
+  const keys=PROC_KEYS[CFG.procSort] || PROC_KEYS.cpu;
+  const rows=M.procs.slice().sort((a,b)=>{
+    for(const k of keys){ const d=(b[k]||0)-(a[k]||0); if(d) return d; }
+    return 0;
+  }).slice(0, CFG.procRows);
+  setHTML(tb, rows.map(p=>
     `<tr><td class="n">${p.pid}</td><td>${p.name}</td>`+
-    `<td class="n">${p.cpu.toFixed(1)}</td><td class="n">${p.mem.toFixed(1)}</td></tr>`
+    `<td class="n">${p.cpu.toFixed(1)}</td><td class="n">${p.mem.toFixed(1)}</td>`+
+    `<td class="n">${p.gpu==null ? "-" : p.gpu.toFixed(1)}</td></tr>`
   ).join(""));
 }
 
@@ -3336,7 +3373,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "3.8";
+const VERSION = "3.9";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -4894,6 +4931,8 @@ window.wallpaperPropertyListener = {
       // individual panel toggles
       const pk={p_terminal:"terminal",p_sysmon:"sysmon",p_diag:"diag",p_proc:"proc",p_tailnet:"tailnet",p_audio:"audio",p_tl:"tl"};
       Object.entries(pk).forEach(([k,v])=>{ if(p[k]!==undefined) CFG.panels[v]=asBool(p[k]); });
+      if(p.proc_rows)     CFG.procRows = clamp(Math.round(+p.proc_rows.value) || 5, 1, PROC_ROWS_MAX);
+      if(p.proc_sort)     CFG.procSort = PROC_KEYS[p.proc_sort.value] ? p.proc_sort.value : "cpu";
 
       // ---- multi-monitor ----
       if(p.screen_mode)     CFG.screenMode    = p.screen_mode.value;

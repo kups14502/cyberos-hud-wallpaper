@@ -307,13 +307,16 @@ body.hud-lcars .ptbl th{
 body.hud-lcars .ptbl th:nth-child(2){ text-align:left; background:var(--lc-tan); }
 body.hud-lcars .ptbl th:nth-child(3){ background:var(--lc-or); }
 body.hud-lcars .ptbl th:first-child{ border-radius:0.52rem 0 0 0.52rem; }
-body.hud-lcars .ptbl th:last-child{ border-radius:0 0.52rem 0.52rem 0; background:var(--lc-lil); }
+body.hud-lcars .ptbl th:nth-child(4){ background:var(--lc-lil); }
+body.hud-lcars .ptbl th:nth-child(5){ background:var(--lc-per); }
+body.hud-lcars .ptbl th:last-child{ border-radius:0 0.52rem 0.52rem 0; }
 body.hud-lcars .ptbl tbody tr:first-child td{ padding-top:0.45rem; }
 body.hud-lcars .ptbl td{ padding:0.2rem 0.32rem; letter-spacing:0.04em; font-variant-numeric:tabular-nums; }
 body.hud-lcars .ptbl td:nth-child(1){ color:var(--lc-bv); }
 body.hud-lcars .ptbl tr td:nth-child(2){ color:var(--lc-tan); }
 body.hud-lcars .ptbl td:nth-child(3){ color:var(--lc-or); }
 body.hud-lcars .ptbl td:nth-child(4){ color:var(--lc-lil); }
+body.hud-lcars .ptbl td:nth-child(5){ color:var(--lc-per); }
 body.hud-lcars .ptbl tbody tr:first-child td:nth-child(2){ color:var(--lc-or); }
 
 /* -------------------------------- TAILNET ---------------------------------- */

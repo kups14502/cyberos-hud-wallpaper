@@ -25,11 +25,11 @@ from other machines on your network. It serves read-only stats and nothing else.
 
 Performance: the once-per-second sample does NOT spawn any subprocess. GPU stats
 come from the NVIDIA NVML library (loaded once via ctypes), disk stats from
-psutil, and only the top processes get a memory lookup. The few things that do
-shell out — monitor list, GPU/CPU model, the logical→physical drive map — run
-once at startup; Tailscale runs on a slow 5 s thread. This keeps steady-state
-CPU to a few percent of one core. (nvidia-smi / a startup PowerShell remain as
-fallbacks, so nothing is lost if NVML or WMI is unavailable.)
+psutil, and on Windows the whole process table from one system call. The few
+things that do shell out — monitor list, GPU/CPU model, the logical→physical
+drive map — run once at startup; Tailscale runs on a slow 5 s thread. This
+keeps steady-state CPU to a few percent of one core. (nvidia-smi / a startup
+PowerShell remain as fallbacks, so nothing is lost if NVML or WMI is unavailable.)
 """
 
 import ctypes
@@ -595,6 +595,152 @@ class _GPU:
 GPU = _GPU()
 
 
+# ---------------------------------------------------------------------------
+# Process table on Windows: one NtQuerySystemInformation call returns every
+# process's name, CPU time and working set (~5 ms for ~370 processes). psutil
+# opens each process on its own and, for every protected one it cannot open,
+# re-reads that whole system table as a fallback: the same scan through psutil
+# measured ~850 ms of CPU a pass. GPU share per process comes from the PDH
+# "GPU Engine" counters, which are what Task Manager's GPU column reads.
+# Either one falls back cleanly: to psutil, or to rows without a GPU reading.
+# ---------------------------------------------------------------------------
+PROC_ROWS = 20      # top rows sent per sort key; the wallpaper's PROC_ROWS_MAX
+
+# SYSTEM_PROCESS_INFORMATION, 64-bit: NextEntryOffset @0, CreateTime @32,
+# UserTime @40, KernelTime @48, ImageName.Length @56, ImageName.Buffer @64,
+# UniqueProcessId @80, WorkingSetSize @144
+_SPI = "<I28xqqqH6xQ8xQ56xQ"
+
+
+class _NtProcs:
+    def __init__(self):
+        self.ok = False
+        self._prev = {}           # pid -> (create time, cpu time), to diff against
+        self._prev_t = None
+        if sys.platform != "win32" or ctypes.sizeof(ctypes.c_void_p) != 8:
+            return
+        try:
+            import struct
+            self._unpack = struct.Struct(_SPI).unpack_from
+            f = ctypes.WinDLL("ntdll").NtQuerySystemInformation
+            f.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+                          ctypes.POINTER(ctypes.c_ulong)]
+            f.restype = ctypes.c_long
+            self._q = f
+            self._buf = ctypes.create_string_buffer(1 << 20)
+            # also the CPU baseline: every process reads 0% on its first sample
+            self.ok = self.sample() is not None
+        except Exception:
+            self.ok = False
+
+    def _read(self):
+        need = ctypes.c_ulong(0)
+        for _ in range(4):
+            st = self._q(5, self._buf, len(self._buf), ctypes.byref(need)) & 0xFFFFFFFF
+            if st == 0:
+                return True
+            if st != 0xC0000004:      # STATUS_INFO_LENGTH_MISMATCH: grow and retry
+                return False
+            self._buf = ctypes.create_string_buffer(need.value + (64 << 10))
+        return False
+
+    def sample(self):
+        """[(pid, name, cpu, rss)] with cpu as a share of all cores, or None."""
+        if not self._read():
+            return None
+        now = time.monotonic()
+        dt = (now - self._prev_t) if self._prev_t else 0.0
+        scale = 100.0 / (1e7 * dt * NCORES) if dt > 0 else 0.0   # 100 ns ticks -> %
+        rows, seen, off = [], {}, 0
+        while True:
+            nxt, create, user, kernel, nlen, nptr, pid, rss = self._unpack(self._buf, off)
+            if pid:                   # 0 is the idle task
+                name = ctypes.wstring_at(nptr, nlen // 2) if nptr and nlen else "?"
+                t = user + kernel
+                prev = self._prev.get(pid)
+                cpu = (t - prev[1]) * scale if prev and prev[0] == create else 0.0
+                seen[pid] = (create, t)
+                if name.lower() not in IDLE_NAMES:
+                    rows.append((pid, name, max(cpu, 0.0), rss))
+            if not nxt:
+                break
+            off += nxt
+        self._prev, self._prev_t = seen, now
+        return rows
+
+
+class _PdhItem(ctypes.Structure):
+    # PDH_FMT_COUNTERVALUE_ITEM_W
+    _fields_ = [("szName", ctypes.c_wchar_p), ("FmtValue", _PdhValue)]
+
+
+class _GpuProcs:
+    """GPU share per process, the way Task Manager's GPU column computes it:
+    the busiest engine that process uses. The wildcard query picks up
+    processes started after it was opened, and drops ones that exit."""
+    # pid_1234_luid_0x00000000_0x0000C0D3_phys_0_eng_3_engtype_3D
+    _RX = re.compile(r"pid_(\d+)_luid_\w+?_phys_\d+_eng_\d+")
+
+    def __init__(self):
+        self.ok = False
+        if sys.platform != "win32":
+            return
+        try:
+            pdh = ctypes.WinDLL("pdh.dll")
+            self._q = ctypes.c_void_p()
+            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(self._q)) != 0:
+                return
+            self._c = ctypes.c_void_p()
+            path = r"\GPU Engine(*)\Utilization Percentage"
+            if pdh.PdhAddEnglishCounterW(self._q, path, 0, ctypes.byref(self._c)) != 0:
+                return
+            pdh.PdhCollectQueryData(self._q)  # prime: rate counters need two samples
+            self._pdh = pdh
+            self.ok = True
+        except Exception:
+            pass
+
+    def sample(self):
+        """{pid: percent}, or None when there is no reading this time."""
+        if not self.ok:
+            return None
+        try:
+            pdh = self._pdh
+            if pdh.PdhCollectQueryData(self._q) != 0:
+                return None
+            size, count = ctypes.c_ulong(0), ctypes.c_ulong(0)
+            # 0x8200 = PDH_FMT_DOUBLE | PDH_FMT_NOCAP100; the first call sizes the buffer
+            pdh.PdhGetFormattedCounterArrayW(self._c, 0x8200, ctypes.byref(size),
+                                             ctypes.byref(count), None)
+            if not size.value:
+                return {}
+            buf = ctypes.create_string_buffer(size.value)
+            if pdh.PdhGetFormattedCounterArrayW(self._c, 0x8200, ctypes.byref(size),
+                                                ctypes.byref(count), buf) != 0:
+                return None
+            items = ctypes.cast(buf, ctypes.POINTER(_PdhItem))
+            engines = {}
+            for i in range(count.value):
+                it = items[i]
+                if it.FmtValue.CStatus > 1:   # 0 valid, 1 new data
+                    continue
+                m = self._RX.match(it.szName or "")
+                if m:
+                    k = m.group(0)
+                    engines[k] = (int(m.group(1)),
+                                  engines.get(k, (0, 0.0))[1] + it.FmtValue.doubleValue)
+            per = {}
+            for pid, v in engines.values():
+                per[pid] = max(per.get(pid, 0.0), min(v, 100.0))
+            return per
+        except Exception:
+            return None
+
+
+NT_PROCS = _NtProcs()
+GPU_PROCS = _GpuProcs()
+
+
 def _ram_mhz():
     """Installed RAM speed in MT/s (what vendors label 'MHz'). Hardware-static,
     so it is read once at startup. ConfiguredClockSpeed is the speed the module
@@ -676,15 +822,17 @@ class Sampler:
         self._last_perdisk = {}        # drive letter -> cumulative (read, write) bytes
         self._tick = 0
         self._users = self._count_users()
-        # prime per-process CPU counters (first reading is meaningless)
-        for p in psutil.process_iter():
-            try:
-                p.cpu_percent(None)
-            except Exception:
-                pass
+        # prime per-process CPU counters (first reading is meaningless);
+        # the Windows bulk reader primed its own when it was created
+        if not NT_PROCS.ok:
+            for p in psutil.process_iter():
+                try:
+                    p.cpu_percent(None)
+                except Exception:
+                    pass
         # Tailnet is a separate CLI call on a slower cadence; cache it.
         self._tailnet = _tailnet()
-        # The all-process scan that ranks the top 5 is by far the heaviest part
+        # The all-process scan that ranks the top rows is the heaviest part
         # of a sample, so it runs on its own slower thread — the process table
         # doesn't need 1 Hz. The live gauges built below stay at 1 Hz and never
         # wait on it. Prime it once so the very first response already has rows.
@@ -704,7 +852,7 @@ class Sampler:
                 self._cache = snap
 
     def _procs_loop(self):
-        # Top-5 process table: refresh every 2 s. This is the one expensive scan
+        # Process table: refresh every 2 s. This is the one expensive scan
         # (one OS handle per process); keeping it off the 1 Hz path is what holds
         # steady-state CPU down without touching live-gauge freshness.
         while True:
@@ -861,37 +1009,54 @@ class Sampler:
         out.sort(key=lambda d: d["id"])
         return out
 
-    def _top_procs(self, total_bytes, n=5):
-        # First pass: cpu_percent for *every* process (cheap, and required to keep
-        # each process's CPU baseline current). Only the top N then pay for a
-        # memory lookup — Task-Manager-style, but ~60x fewer memory syscalls.
-        cand = []
+    def _top_procs(self, total_bytes, n=PROC_ROWS):
+        # The wallpaper picks the sort and the length, so send the top n rows by
+        # CPU, by memory and by GPU, each with all three readings. Ties fall
+        # through to the next column, the same order the wallpaper sorts in.
+        rows = NT_PROCS.sample() if NT_PROCS.ok else None
+        if rows is None:
+            rows = self._psutil_procs()
+        gpu = GPU_PROCS.sample()
+        out = []
+        for pid, name, cpu, rss in rows:
+            r = {"pid": pid, "name": name[:12], "cpu": cpu,
+                 "mem": rss / total_bytes * 100 if total_bytes else 0.0}
+            if gpu is not None:
+                r["gpu"] = gpu.get(pid, 0.0)
+            out.append(r)
+        orders = [("cpu", "mem", "gpu"), ("mem", "cpu", "gpu")]
+        if gpu is not None:
+            orders.append(("gpu", "cpu", "mem"))
+        keep = set()
+        for keys in orders:
+            ranked = sorted(range(len(out)), reverse=True,
+                            key=lambda i: tuple(out[i].get(k, 0.0) for k in keys))
+            keep.update(ranked[:n])
+        # CPU order: a wallpaper from before the sort option shows the first five
+        top = sorted((out[i] for i in keep), key=lambda r: r["cpu"], reverse=True)
+        for r in top:
+            for k in ("cpu", "mem", "gpu"):
+                if k in r:
+                    r[k] = round(r[k], 1)
+        return top
+
+    def _psutil_procs(self):
+        # Linux and macOS, or Windows when the bulk call failed: one memory read
+        # per process, which is cheap from /proc and slow on Windows.
+        rows = []
         for p in psutil.process_iter(["pid", "name"]):
             try:
                 pid = p.info["pid"]
                 name = p.info.get("name") or "?"
                 if pid == 0 or name.lower() in IDLE_NAMES:
                     continue
-                # per-process cpu_percent is per-core (can exceed 100);
-                # normalize to share of total CPU, like Task Manager.
-                cand.append((p.cpu_percent(None) / NCORES, pid, name, p))
+                with p.oneshot():
+                    # per-process cpu_percent is per-core (can exceed 100);
+                    # normalize to share of total CPU, like Task Manager.
+                    rows.append((pid, name, p.cpu_percent(None) / NCORES,
+                                 p.memory_info().rss))
             except Exception:
                 continue
-        cand.sort(key=lambda r: r[0], reverse=True)
-        rows = []
-        for cpu, pid, name, p in cand[:n]:
-            mem = 0.0
-            try:
-                if total_bytes:
-                    mem = p.memory_info().rss / total_bytes * 100
-            except Exception:
-                pass
-            rows.append({
-                "pid": pid,
-                "name": name[:12],
-                "cpu": round(cpu, 1),
-                "mem": round(mem, 1),
-            })
         return rows
 
     def _build(self):
