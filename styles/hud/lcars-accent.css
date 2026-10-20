@@ -1,0 +1,13 @@
+/* =========================================================================
+   HUD STYLE: LCARS (Accent)
+   The body carries hud-lcars too, so every rule in hud/lcars.css applies.
+   This only points its seven console colors at the ones hud/lcars-accent.js
+   builds from the accent; every tint in lcars.css is mixed from these, so
+   nothing else needs a rule. The fallbacks are the classic colors.
+   ========================================================================= */
+body.hud-lcars.hud-lcars-accent{
+  --lc-or:var(--lca-or,#FF9900);   --lc-tan:var(--lca-tan,#FFCC99);
+  --lc-pch:var(--lca-pch,#FF9966); --lc-lil:var(--lca-lil,#CC99CC);
+  --lc-per:var(--lca-per,#9999FF); --lc-bv:var(--lca-bv,#9999CC);
+  --lc-gold:var(--lca-gold,#FFCC66);
+}

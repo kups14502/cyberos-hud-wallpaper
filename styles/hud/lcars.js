@@ -5,21 +5,35 @@
    periwinkle), each bank standing on its own rounded rail. The loud top of
    the scale lights in the Alert color, and a short peak block holds over
    each column. The sparklines are column charts in the color of their group
-   in the System Monitor, the newest reading in tan. The palette is fixed, so
-   only the size invalidates the cached geometry; the per-frame work is a
-   handful of batched rect paths.
+   in the System Monitor, the newest reading in tan. The colors are the
+   stylesheet's --lc-* (LCARS (Accent) builds them from the accent), read
+   again when the palette changes; that and the size invalidate the cached
+   geometry. The per-frame work is a handful of batched rect paths.
    ========================================================================= */
 const LCARS_HUD={
   FONT:'"Bahnschrift Condensed","Bahnschrift SemiCondensed",Bahnschrift,"Arial Narrow",sans-serif',
-  // bank colors as r,g,b so the dim cells need no per-frame string work
-  BANK:[[255,153,0],[255,204,102],[255,204,153],[204,153,204],[153,153,255]],
   PER:8, GAP:1.25,                        // columns per bank, gap between banks in columns
-  // spark colors by canvas, and whether a reading of 90+ is an alert (traffic is not)
-  SPARK:{ "sp-cpu":[255,153,0,1], "sp-gpu":[153,153,255,1], "sp-net":[255,153,102,0] },
-  TAN:"#FFCC99",
+  C:null, cGen:-1,                        // console colors as r,g,b, and the PAL.gen they were read at
   g:null, peak:null, hold:null, tPrev:0,
 
   rgba(c,a){ return `rgba(${c[0]},${c[1]},${c[2]},${a})`; },
+
+  /* Bank colors bass to treble; spark colors by canvas, and whether a reading
+     of 90+ is an alert (traffic is not). r,g,b so the dim cells need no
+     per-frame string work. */
+  cols(){
+    if(this.C && this.cGen===PAL.gen) return this.C;
+    const cs=getComputedStyle(document.body), c={};
+    const CLASSIC={ or:"#FF9900", tan:"#FFCC99", pch:"#FF9966", lil:"#CC99CC", per:"#9999FF", gold:"#FFCC66" };
+    for(const k in CLASSIC){
+      const v=parseColor(cs.getPropertyValue("--lc-"+k).trim()||CLASSIC[k], parseColor(CLASSIC[k]));
+      c[k]=[v.r, v.g, v.b];
+    }
+    this.cGen=PAL.gen; this.g=null;
+    return (this.C={ BANK:[c.or, c.gold, c.tan, c.lil, c.per],
+                     SPARK:{ "sp-cpu":[...c.or,1], "sp-gpu":[...c.per,1], "sp-net":[...c.pch,0] },
+                     TAN:this.rgba(c.tan,1), OR:this.rgba(c.or,1) });
+  },
 
   font(ctx, px){
     ctx.font=`400 ${px}px ${this.FONT}`;
@@ -29,9 +43,9 @@ const LCARS_HUD={
   /* Columns, segments, the unlit cells and the rails depend only on the
      canvas size, so they are built once per size. */
   geo(w, h){
-    const G=this.g;
+    const BANK=this.cols().BANK, G=this.g;
     if(G && G.w===w && G.h===h) return G;
-    const B=this.BANK.length, P=this.PER, N=B*P;
+    const B=BANK.length, P=this.PER, N=B*P;
     const rail=Math.max(2, Math.round(h*0.045)), yb=h-rail-Math.max(2, Math.round(h*0.04));
     const nSeg=12, pitch=Math.max(3, Math.floor((yb-1)/nSeg));
     const seg=Math.max(2, pitch-Math.max(1, Math.round(pitch*0.3)));
@@ -54,8 +68,8 @@ const LCARS_HUD={
       p.closePath();
     }
     if(!this.peak || this.peak.length!==N){ this.peak=new Float32Array(N); this.hold=new Float32Array(N); }
-    const fill=this.BANK.map(c=>this.rgba(c,1)), dim=this.BANK.map(c=>this.rgba(c,0.11)),
-          park=this.BANK.map(c=>this.rgba(c,0.32)), railC=this.BANK.map(c=>this.rgba(c,0.85));
+    const fill=BANK.map(c=>this.rgba(c,1)), dim=BANK.map(c=>this.rgba(c,0.11)),
+          park=BANK.map(c=>this.rgba(c,0.32)), railC=BANK.map(c=>this.rgba(c,0.85));
     return (this.g={w, h, N, B, P, rail, yb, nSeg, pitch, seg, cw, bw, xs, ghost, rails, fill, dim, park, railC});
   },
 
@@ -122,7 +136,7 @@ const LCARS_HUD={
     pill.lineTo(x0+r, py+ph);
     pill.arc(x0+r, py+r, r, Math.PI/2, Math.PI*1.5);
     pill.closePath();
-    ctx.fillStyle="#FF9900"; ctx.fill(pill);
+    ctx.fillStyle=this.cols().OR; ctx.fill(pill);
     ctx.fillStyle="#000"; ctx.textAlign="right"; ctx.textBaseline="alphabetic";
     ctx.fillText(label, x0+pw-r*0.9, py+ph-Math.round(px*0.2));
     try{ ctx.letterSpacing="0px"; }catch(e){}
@@ -135,7 +149,7 @@ const LCARS_HUD={
   spark(ctx, w, h, data){
     const n=data.length;
     if(n<2) return;
-    const c=this.SPARK[ctx.canvas.id]||this.SPARK["sp-cpu"];
+    const C=this.cols(), c=C.SPARK[ctx.canvas.id]||C.SPARK["sp-cpu"];
     let mx=0; for(let i=0;i<n;i++) if(data[i]>mx) mx=data[i];
     const top=clamp(mx*1.2, 20, 100), hotAt=c[3] ? 90 : 1e9;
     const yb=Math.floor(h)-1, span=yb-1, sw=(w-1)/n, bw=Math.max(1, Math.round(sw*0.62));
@@ -148,7 +162,7 @@ const LCARS_HUD={
     ctx.fillStyle=this.rgba(c,0.95); ctx.fill(cols);
     ctx.fillStyle=PAL.alert; ctx.fill(hot);
     const v=data[n-1], hh=Math.max(1, Math.round(clamp(v/top,0,1)*span));
-    ctx.fillStyle=v>=hotAt ? PAL.alert : this.TAN;
+    ctx.fillStyle=v>=hotAt ? PAL.alert : C.TAN;
     ctx.fillRect(Math.round(1+(n-1)*sw), yb-hh, bw, hh+1);
   }
 };

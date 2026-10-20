@@ -95,7 +95,8 @@ layers, and audio reactivity and metric animation speed sit here too.
 bracket ticks, numbered headers, tick-ring gauges and an LED spectrum
 visualizer. **Glass** has frosted panels with soft borders. **LCARS** turns the
 panels into Star Trek computer screens, with its own orange, tan and lilac
-palette, and restyles the Starship captions to match. **Terminal** is a
+palette, and restyles the Starship captions to match. **LCARS (Accent)** is the
+same console with its palette built from your accent color. **Terminal** is a
 monochrome CRT with box-drawing frames and block-character bars. **Minimal**
 drops the boxes and leaves hairline rules and small text tabs.
 

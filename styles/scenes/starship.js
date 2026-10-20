@@ -3118,6 +3118,7 @@ const STARSHIP=(()=>{
     const hdg=((-P.yaw*180/Math.PI)%360+360)%360;
     // the LCARS panel style redraws the caption and callouts as console buttons
     const lc=document.body.classList.contains("hud-lcars");
+    if(lc) lcPal();
     c.textAlign="center"; c.textBaseline="alphabetic";
     if(lc) lcCaption(c, S, B, fs, hdg, sp);
     else{
@@ -3185,10 +3186,19 @@ const STARSHIP=(()=>{
   /* LCARS overlay parts. The caption is a header run: bar, block, the name on
      black, the registry on a button, bar to a rounded end, and a row of three
      buttons under it. A callout is its label on a button, with the leader and
-     the marker in the button's color. lcFont(c, 0) puts the stretch back. */
+     the marker in the button's color. lcFont(c, 0) puts the stretch back.
+     The colors are the panel style's --lc-* (LCARS (Accent) builds them
+     from the accent); lcPal() reads them again when the palette changes. */
   const LC={ font:'"Bahnschrift Condensed","Bahnschrift SemiCondensed",Bahnschrift,"Arial Narrow",sans-serif',
-             or:"#FF9900", tan:"#FFCC99", pch:"#FF9966", lil:"#CC99CC", per:"#9999FF", bv:"#9999CC",
-             cyc:["#FF9900","#CC99CC","#9999FF","#FFCC99","#FF9966","#FFCC66","#9999CC"] };
+             or:"#FF9900", tan:"#FFCC99", pch:"#FF9966", lil:"#CC99CC", per:"#9999FF", bv:"#9999CC", gold:"#FFCC66",
+             cyc:null, gen:-1 };
+  function lcPal(){
+    if(LC.gen===PAL.gen) return;
+    const cs=getComputedStyle(document.body);
+    ["or","tan","pch","lil","per","bv","gold"].forEach(k=>{ LC[k]=cs.getPropertyValue("--lc-"+k).trim()||LC[k]; });
+    LC.cyc=[LC.or, LC.lil, LC.per, LC.tan, LC.pch, LC.gold, LC.bv];
+    LC.gen=PAL.gen;
+  }
   function lcFont(c, px){
     if(px) c.font="400 "+px.toFixed(1)+"px "+LC.font;
     try{ c.fontStretch=px ? "condensed" : "normal"; }catch(e){}

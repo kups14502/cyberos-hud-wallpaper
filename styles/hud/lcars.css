@@ -6,8 +6,10 @@
    radius on the inside of the bend, and a thinner one closing the bottom.
    Headers are runs of flat segments with the title on black and a rounded
    cap; small labels are black on rounded "buttons". The frame palette is
-   the classic one and does not follow the accent; the Alert color still
-   marks high readings. Right-hand stacks mirror, so the elbows sit on the
+   the classic one and does not follow the accent (LCARS (Accent) swaps it,
+   see hud/lcars-accent.css); the Alert color still marks high readings.
+   Every tint below is mixed from the --lc-* colors, so swapping those
+   recolors the lot. Right-hand stacks mirror, so the elbows sit on the
    screen edges.
    Geometry: the panel fill is clipped by its own border-radius (the outer
    sweep), and the frame is one ::before of flat gradient layers, flipped
@@ -19,10 +21,13 @@ body.hud-lcars{
   --lc-font: "Bahnschrift Condensed","Bahnschrift SemiCondensed",Bahnschrift,"Arial Narrow",sans-serif;
   --lc-or:#FF9900; --lc-tan:#FFCC99; --lc-pch:#FF9966; --lc-lil:#CC99CC;
   --lc-per:#9999FF; --lc-bv:#9999CC; --lc-gold:#FFCC66; --lc-red:#CC6666;
-  --lc-or-d:rgba(255,153,0,0.2);    --lc-tan-d:rgba(255,204,153,0.18);
-  --lc-pch-d:rgba(255,153,102,0.2); --lc-lil-d:rgba(204,153,204,0.2);
-  --lc-per-d:rgba(153,153,255,0.2); --lc-bv-d:rgba(153,153,204,0.2);
-  --lc-gold-d:rgba(255,204,102,0.18);
+  --lc-or-d:color-mix(in srgb, var(--lc-or) 20%, transparent);
+  --lc-tan-d:color-mix(in srgb, var(--lc-tan) 18%, transparent);
+  --lc-pch-d:color-mix(in srgb, var(--lc-pch) 20%, transparent);
+  --lc-lil-d:color-mix(in srgb, var(--lc-lil) 20%, transparent);
+  --lc-per-d:color-mix(in srgb, var(--lc-per) 20%, transparent);
+  --lc-bv-d:color-mix(in srgb, var(--lc-bv) 20%, transparent);
+  --lc-gold-d:color-mix(in srgb, var(--lc-gold) 18%, transparent);
   --lc-w:2.7rem;      /* sidebar width */
   --lc-h:1.05rem;     /* header bar */
   --lc-hb:0.6rem;     /* footer bar */
@@ -42,9 +47,11 @@ body.hud-lcars{
    classic rules (edit-mode tags, drop targets) lands in LCARS colors. */
 body.hud-lcars #screens{
   --accent:var(--lc-or); --accent-bright:var(--lc-tan); --accent-dim:var(--lc-bv);
-  --accent-faint:rgba(255,153,0,0.16); --accent-line:rgba(255,153,0,0.4);
-  --accent-glow:rgba(255,153,0,0.45); --panel-brd:rgba(255,153,0,0.3);
-  --text:var(--lc-tan); --text-dim:rgba(153,153,204,0.9);
+  --accent-faint:color-mix(in srgb, var(--lc-or) 16%, transparent);
+  --accent-line:color-mix(in srgb, var(--lc-or) 40%, transparent);
+  --accent-glow:color-mix(in srgb, var(--lc-or) 45%, transparent);
+  --panel-brd:color-mix(in srgb, var(--lc-or) 30%, transparent);
+  --text:var(--lc-tan); --text-dim:color-mix(in srgb, var(--lc-bv) 90%, transparent);
 }
 
 /* ------------------------------- PANEL SHELL ------------------------------ */
@@ -332,8 +339,8 @@ body.hud-lcars .tn.off .led{ background:var(--lc-bv-d); }
 body.hud-lcars .tn .nm{ color:var(--lc-tan); }
 body.hud-lcars .tn .nm b{ color:var(--lc-tan); font-weight:400; }
 body.hud-lcars .tn .nm .os{ color:var(--lc-bv); font-size:0.74rem; letter-spacing:0.08em; text-transform:uppercase; }
-body.hud-lcars .tn.off .nm, body.hud-lcars .tn.off .nm b{ color:rgba(255,204,153,0.5); }
-body.hud-lcars .tn.off .nm .os{ color:rgba(153,153,204,0.6); }
+body.hud-lcars .tn.off .nm, body.hud-lcars .tn.off .nm b{ color:color-mix(in srgb, var(--lc-tan) 50%, transparent); }
+body.hud-lcars .tn.off .nm .os{ color:color-mix(in srgb, var(--lc-bv) 60%, transparent); }
 body.hud-lcars .tn .st{
   min-width:3.6rem; padding:0.18rem 0.4rem 0.06rem; text-align:right;
   font-size:0.72rem; letter-spacing:0.08em; line-height:1; text-transform:uppercase;
@@ -447,7 +454,7 @@ body.hud-lcars .col.x-r #np{ left:0; right:var(--lc-w); flex-direction:row-rever
 body.hud-lcars .col.x-r #np::after{ border-radius:calc(var(--lc-h)/2) 0 0 calc(var(--lc-h)/2); }
 
 /* ------------------------------ SCREEN CHROME ------------------------------ */
-body.hud-lcars .corner{ width:1.6rem; height:1.6rem; border-color:rgba(153,153,204,0.35); border-width:0.18rem; }
+body.hud-lcars .corner{ width:1.6rem; height:1.6rem; border-color:color-mix(in srgb, var(--lc-bv) 35%, transparent); border-width:0.18rem; }
 body.hud-lcars .corner.tl{ border-top-left-radius:0.9rem; }
 body.hud-lcars .corner.tr{ border-top-right-radius:0.9rem; }
 body.hud-lcars .corner.bl{ border-bottom-left-radius:0.9rem; }
