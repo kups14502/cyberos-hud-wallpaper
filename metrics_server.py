@@ -21,7 +21,9 @@ Stop:
     Close the window / Ctrl+C.
 
 Security note: it binds to 127.0.0.1 only (loopback), so it is not reachable
-from other machines on your network. It serves read-only stats and nothing else.
+from other machines on your network. It serves read-only stats. The one thing it
+writes is a backup copy of the wallpaper's dragged panel layout, and only a
+wallpaper on this PC can write or read that.
 
 Performance: the once-per-second sample does NOT spawn any subprocess. GPU stats
 come from the NVIDIA NVML library (loaded once via ctypes), disk stats from
@@ -1610,12 +1612,68 @@ class WeAudioWatchdog(threading.Thread):
 
 
 # ---------------------------------------------------------------------------
+# Second copy of the wallpaper's dragged panel layout.
+# Wallpaper Engine keeps the wallpaper's localStorage in a LevelDB log, and a
+# forced kill of WE (the watchdog's only way to restart it) can tear the record
+# being written. LevelDB then throws away the rest of that 32 KB block at every
+# start, so every later save looks fine until the next restart and is gone
+# after it: the panels jump back to an old arrangement. Seen on 2026-10-22,
+# with every move since 09-29 lost that way. So the wallpaper also saves the
+# layout here, stamped with the time it was made, and at start it takes
+# whichever copy is newer. Only this PC can write it, and an older copy never
+# replaces a newer one, so two wallpaper instances cannot undo each other.
+# ---------------------------------------------------------------------------
+_LAYOUT_LOCK = threading.Lock()
+LAYOUT_MAX_BYTES = 64 * 1024
+
+
+def _layout_path():
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "CyberOS-HUD", "layout.json")
+
+
+def _read_layout():
+    try:
+        with open(_layout_path(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _store_layout(raw):
+    """Validate and save a layout the wallpaper posted. Returns an HTTP status.
+    Shape checks only; the wallpaper validates every placement when it loads."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return 400
+    if (not isinstance(data, dict)
+            or not isinstance(data.get("ov", {}), dict)
+            or not isinstance(data.get("ord", {}), dict)
+            or not isinstance(data.get("t"), (int, float)) or isinstance(data.get("t"), bool)):
+        return 400
+    path = _layout_path()
+    with _LAYOUT_LOCK:
+        if _read_layout().get("t", 0) > data["t"]:
+            return 409
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    return 204
+
+
+# ---------------------------------------------------------------------------
 # HTTP handler with permissive CORS so the wallpaper's browser can fetch it.
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Cache-Control", "no-store")
 
     def do_OPTIONS(self):
@@ -1671,12 +1729,53 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+        elif self.path.startswith("/layout"):
+            # Only this PC's wallpaper keeps a layout here, so a bind to a LAN
+            # or tailnet address must not publish it either.
+            if not self._loopback():
+                self.send_response(403)
+                self._cors()
+                self.end_headers()
+                return
+            payload = json.dumps(_read_layout()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._cors()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
         else:
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self._cors()
             self.end_headers()
             self.wfile.write(b"CyberOS HUD metrics companion. GET /metrics or /audio")
+
+    def _loopback(self):
+        return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+    def do_POST(self):
+        # The wallpaper posts as text/plain, a "simple" request, so the browser
+        # sends it without an OPTIONS preflight.
+        status = 404
+        if self.path.startswith("/layout"):
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if not self._loopback():
+                status = 403
+            elif not 0 < length <= LAYOUT_MAX_BYTES:
+                status = 413 if length > LAYOUT_MAX_BYTES else 400
+            else:
+                try:
+                    status = _store_layout(self.rfile.read(length).decode("utf-8"))
+                except Exception:
+                    status = 500
+        self.send_response(status)
+        self._cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, *args):
         pass  # stay quiet

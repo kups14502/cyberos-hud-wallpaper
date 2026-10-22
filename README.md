@@ -433,7 +433,11 @@ a JSON blob. (Simpler alternative: a shortcut to the same `pythonw` + script in
   property by hand.
 - **Dragged panel positions** are stored in the browser storage of that PC's
   Wallpaper Engine, not in the wallpaper, so they do not travel with the Workshop
-  item and are not shared between machines.
+  item and are not shared between machines. With the companion running they are
+  also saved to `%LOCALAPPDATA%\CyberOS-HUD\layout.json`, and the newer copy wins
+  at each start. Wallpaper Engine's browser storage can lose recent saves after
+  Wallpaper Engine is force-closed, which shows up as panels jumping back to an
+  old arrangement after a restart; the companion's copy prevents that.
 - **Mouse input** is only accepted while **Layout edit mode** is on. At all other
   times the wallpaper is transparent to the mouse and cannot swallow a click meant
   for your desktop.

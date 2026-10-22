@@ -3114,6 +3114,7 @@ async function pollReal(){
       }
       if(domReady){ renderDrives(); renderTailnet(); }
       M.source="REAL"; realOK=true;
+      if(!ep.remote && domReady) syncLayoutCopy();
       // a remote companion's foreground window is on another machine
       gameSeen(!ep.remote && d.fullscreen===true);
       setModeTag("REAL · "+ep.host);
@@ -3402,7 +3403,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "3.10";
+const VERSION = "3.11";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -4026,6 +4027,7 @@ const LAY={
   ov:{},            // dragged placement overrides, keyed by panel id
   ord:{},           // stacking order the user dropped panels in, keyed "<monitor>|<anchor>"
   snap:true,
+  savedAt:0,        // ms timestamp of the stored layout; the newer copy wins
   geoSig:"", placeSig:"", _preset:{}
 };
 
@@ -4050,8 +4052,10 @@ function validPlacement(o){
   return null;
 }
 function loadLayoutStore(){
+  try{ applyLayoutStore(JSON.parse(localStorage.getItem(LS_KEY)||"null")); }catch(e){}
+}
+function applyLayoutStore(o){
   try{
-    const o=JSON.parse(localStorage.getItem(LS_KEY)||"null");
     if(!o || typeof o!=="object") return;
     const ov={};
     Object.keys(o.ov||{}).forEach(k=>{
@@ -4069,10 +4073,61 @@ function loadLayoutStore(){
     });
     LAY.ord=ord;
     LAY.snap=o.snap!==false;
+    LAY.savedAt=(isFinite(+o.t) && +o.t>0) ? +o.t : 0;
   }catch(e){}
 }
+function layoutJSON(){
+  return JSON.stringify({ov:LAY.ov, ord:LAY.ord, snap:LAY.snap, t:LAY.savedAt});
+}
 function saveLayoutStore(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify({ov:LAY.ov, ord:LAY.ord, snap:LAY.snap})); }catch(e){}
+  LAY.savedAt=Date.now();
+  try{ localStorage.setItem(LS_KEY, layoutJSON()); }catch(e){}
+  pushLayoutCopy();
+}
+
+/* Wallpaper Engine keeps localStorage in a LevelDB log, and a forced kill of WE
+   can tear the record it was writing. LevelDB then drops the rest of that 32 KB
+   block at every start, so each later save holds until the next restart and is
+   gone after it: the panels jump back to an old arrangement. The local companion
+   keeps a second copy on disk (GET/POST /layout), and once per load the newer of
+   the two copies wins. A remote companion describes another PC, so never it. */
+const LAYOUT_SYNC={done:false, busy:false};
+function layoutCopyUrl(){
+  const ep=metricsEndpoint();
+  if(ep.remote) return null;
+  try{ return new URL("/layout", ep.url).href; }catch(e){ return null; }
+}
+function pushLayoutCopy(){
+  const url=layoutCopyUrl();
+  if(!url) return;
+  // text/plain keeps it a simple request: no CORS preflight
+  try{ fetch(url, {method:"POST", body:layoutJSON(), cache:"no-store"}).catch(()=>{}); }catch(e){}
+}
+async function syncLayoutCopy(){
+  if(LAYOUT_SYNC.done || LAYOUT_SYNC.busy) return;
+  const url=layoutCopyUrl();
+  if(!url) return;
+  LAYOUT_SYNC.busy=true;
+  const ctl=new AbortController(), tmr=setTimeout(()=>ctl.abort(), 1500);
+  try{
+    const res=await fetch(url, {cache:"no-store", signal:ctl.signal});
+    if(!res.ok) throw 0;
+    let o;
+    try{ o=await res.json(); }catch(e){ LAYOUT_SYNC.done=true; return; }   // older companion: no /layout
+    LAYOUT_SYNC.done=true;
+    const t=(o && isFinite(+o.t)) ? +o.t : 0;
+    if(t > LAY.savedAt){
+      if(DRAG.on) cancelDrag();
+      applyLayoutStore(o);
+      try{ localStorage.setItem(LS_KEY, layoutJSON()); }catch(e){}
+      LAY.placeSig="";
+      placePanels();
+      updateEditMode();
+    }else if(LAY.savedAt > t){
+      pushLayoutCopy();
+    }
+  }catch(e){ /* companion not answering yet; the next good poll tries again */ }
+  finally{ clearTimeout(tmr); LAYOUT_SYNC.busy=false; }
 }
 
 /* ---------------- 1. discover monitors ---------------- */
