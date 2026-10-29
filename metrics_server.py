@@ -1370,6 +1370,75 @@ def _input_idle_seconds():
     return ((ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0
 
 
+# No keyboard or mouse input does not mean nobody is looking: a video, a VR
+# session or a controller game all look idle. A WE restart is only invisible
+# when Windows has the screens off or the session is locked.
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+
+class _POWERBROADCAST_SETTING(ctypes.Structure):
+    _fields_ = [("PowerSetting", _GUID), ("DataLength", ctypes.c_uint32),
+                ("Data", ctypes.c_uint32)]
+
+
+_POWER_CB = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+                               ctypes.c_void_p)
+
+
+class _DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS(ctypes.Structure):
+    _fields_ = [("Callback", _POWER_CB), ("Context", ctypes.c_void_p)]
+
+
+_GUID_CONSOLE_DISPLAY_STATE = _GUID(
+    0x6FE69556, 0x704A, 0x47A0,
+    (ctypes.c_ubyte * 8)(0x8F, 0x24, 0xC2, 0x8D, 0x93, 0x6F, 0xDA, 0x47))
+_PBT_POWERSETTINGCHANGE = 0x8013
+_DEVICE_NOTIFY_CALLBACK = 2
+# Assume the screens are on until Windows says otherwise.
+_display = {"on": True}
+_display_refs = []
+
+
+def _on_display_state(_context, kind, setting):
+    if kind == _PBT_POWERSETTINGCHANGE and setting:
+        s = ctypes.cast(setting, ctypes.POINTER(_POWERBROADCAST_SETTING)).contents
+        # 0 = off, 1 = on, 2 = dimmed (dimmed still counts as watched)
+        _display["on"] = s.Data != 0
+    return 0
+
+
+def _watch_display_state():
+    """Subscribe to the console display state. Windows calls back at once with
+    the current state, then on every change. False if it cannot subscribe."""
+    cb = _POWER_CB(_on_display_state)
+    params = _DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS(cb, None)
+    handle = ctypes.c_void_p()
+    rc = ctypes.windll.powrprof.PowerSettingRegisterNotification(
+        ctypes.byref(_GUID_CONSOLE_DISPLAY_STATE), _DEVICE_NOTIFY_CALLBACK,
+        ctypes.byref(params), ctypes.byref(handle))
+    if rc != 0:
+        return False
+    _display_refs.extend([cb, params, handle])
+    return True
+
+
+def _session_locked():
+    """A locked session has no input desktop this process may open."""
+    _u32.OpenInputDesktop.restype = ctypes.c_void_p
+    _u32.CloseDesktop.argtypes = [ctypes.c_void_p]
+    desk = _u32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP
+    if not desk:
+        return True
+    _u32.CloseDesktop(desk)
+    return False
+
+
+def _desktop_unseen():
+    return not _display["on"] or _session_locked()
+
+
 def _default_watchdog_log():
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     return os.path.join(base, "CyberOS-HUD", "we-watchdog.log")
@@ -1388,7 +1457,9 @@ class WeAudioWatchdog(threading.Thread):
     MAX_FAILED_FIXES = 3
     BACKOFF = 4.0            # cooldown multiplier per attempt that did not stick
     RECOVERED_AFTER = 900.0  # quiet for this long = the last fix worked
-    IDLE_BEFORE_FIX = 300.0  # no keyboard/mouse input for this long = nobody watching
+    # Also required: screens off or session locked (see _desktop_unseen). This
+    # keeps a restart from landing the moment someone unlocks or wakes the PC.
+    IDLE_BEFORE_FIX = 300.0
 
     def __init__(self, we_dir=WE_DIR_DEFAULT, wallpaper_path="", verbose=False,
                  log_path=None):
@@ -1515,7 +1586,7 @@ class WeAudioWatchdog(threading.Thread):
         self._log("reapplied wallpaper on monitor 0 to clear the stacked view")
 
     def _remediate(self):
-        self._log("remediating: PC is idle, restarting WE to reattach audio capture")
+        self._log("remediating: screens off or PC locked, restarting WE to reattach audio capture")
         # Stamp the cooldown up front: if the restart fails (WE not installed
         # where we think, permissions, whatever) we must not retry every poll.
         self._last_fix = time.time()
@@ -1536,9 +1607,16 @@ class WeAudioWatchdog(threading.Thread):
     def run(self):
         self._log("started (peak>%.2f + wallpaper reporting silence for %.0fs)"
                   % (self.PEAK_MIN, self.STARVE_SECONDS))
+        if not _watch_display_state():
+            self._log("cannot watch the screen state; WE restarts only while the PC is locked")
+        screens_on = None
         while True:
             time.sleep(self.POLL)
             try:
+                if self.verbose and _display["on"] != screens_on:
+                    if screens_on is not None:
+                        self._log("screens " + ("on" if _display["on"] else "off"))
+                    screens_on = _display["on"]
                 device, peak = _default_output_level()
                 if device and device != self._last_device:
                     if self._last_device is not None and self.verbose:
@@ -1560,7 +1638,8 @@ class WeAudioWatchdog(threading.Thread):
                         self._pending = False
                         self._log("audio capture came back on its own, restart canceled")
                     elif (_input_idle_seconds() >= self.IDLE_BEFORE_FIX
-                          and not _fullscreen_app()):
+                          and not _fullscreen_app()
+                          and _desktop_unseen()):
                         self._pending = False
                         if self._last_fix:
                             self._failed_fixes += 1
@@ -1605,8 +1684,7 @@ class WeAudioWatchdog(threading.Thread):
                     self._pending = True
                     self._starved_since = None
                     self._log("audio is playing but the wallpaper reports silence; "
-                              "restarting WE after %.0fs without input"
-                              % self.IDLE_BEFORE_FIX)
+                              "restarting WE once the screens are off or the PC is locked")
             except Exception as exc:
                 self._log("error: %s" % exc)
 

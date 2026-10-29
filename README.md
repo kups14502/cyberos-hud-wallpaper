@@ -371,6 +371,7 @@ $action  = New-ScheduledTaskAction -Execute $pythonw -Argument ('"'+$script+'"')
 $logon   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $daily   = New-ScheduledTaskTrigger -Daily -At 12:00am
 $daily.Repetition = (New-ScheduledTaskTrigger -Once -At 12:00am -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
+$daily.Repetition.StopAtDurationEnd = $false   # else Task Scheduler kills the companion every midnight
 $set     = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
 Register-ScheduledTask -TaskName "CyberOS HUD Metrics" -Action $action -Trigger $daily,$logon -Settings $set
 Start-ScheduledTask -TaskName "CyberOS HUD Metrics"   # start it now too
