@@ -1146,7 +1146,8 @@ WE_DIR_DEFAULT = r"C:\Program Files (x86)\Steam\steamapps\common\wallpaper_engin
 
 # what the wallpaper last told us about its audio feed
 _AUDIO_LOCK = threading.Lock()
-_AUDIO_REPORT = {"state": None, "sum": 0.0, "ts": 0.0, "screens": None, "viewport": None}
+_AUDIO_REPORT = {"state": None, "sum": 0.0, "ts": 0.0, "screens": None, "viewport": None,
+                 "src": None, "we_sum": None}
 
 
 def _note_audio_report(path):
@@ -1177,12 +1178,23 @@ def _note_audio_report(path):
     viewport = (q.get("vp") or [None])[0]
     if viewport and not re.match(r"^\d{2,5}x\d{2,5}$", viewport):
         viewport = None
+    # src=c: the visualizer draws from this companion's own capture (/pcm), so
+    # WE's capture no longer matters. wesum is what WE itself is delivering.
+    src = (q.get("src") or [None])[0]
+    if src not in ("c", "w"):
+        src = None
+    try:
+        we_sum = float((q.get("wesum") or [""])[0])
+    except ValueError:
+        we_sum = None
     with _AUDIO_LOCK:
         _AUDIO_REPORT["state"] = state
         _AUDIO_REPORT["sum"] = total
         _AUDIO_REPORT["ts"] = time.time()
         _AUDIO_REPORT["screens"] = screens
         _AUDIO_REPORT["viewport"] = viewport
+        _AUDIO_REPORT["src"] = src
+        _AUDIO_REPORT["we_sum"] = we_sum
 
 
 _CLSCTX_ALL = 23
@@ -1281,7 +1293,241 @@ def _default_output_level():
         _com_release(enum)
 
 
-_ENUM_PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+# ---------------------------------------------------------------------------
+# System audio for the visualizer.
+# Wallpaper Engine's own capture goes deaf whenever the default output device
+# changes (a headset connects, VR starts, a monitor wakes its HDMI endpoint) and
+# stays deaf until WE restarts. So the companion captures the output itself: a
+# WASAPI loopback stream on the current default device, reopened the moment the
+# default moves. The wallpaper fetches the newest samples from /pcm and runs the
+# FFT in JavaScript, which keeps this side to one byte copy per packet and the
+# no-Python edition's dependency list unchanged. Capture runs only while a
+# wallpaper keeps asking for it.
+# ---------------------------------------------------------------------------
+_IID_IAUDIO_CLIENT = "{1CB9AD4C-DBFA-4C32-B178-C2F568A703B2}"
+_IID_IAUDIO_CAPTURE = "{C8ADBD64-E71E-48A0-A4DE-185C395CD317}"
+_AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000
+_AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM = 0x80000000
+_AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY = 0x08000000
+_AUDCLNT_BUFFERFLAGS_SILENT = 0x2
+
+
+class _WaveFormatEx(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [("wFormatTag", ctypes.c_uint16), ("nChannels", ctypes.c_uint16),
+                ("nSamplesPerSec", ctypes.c_uint32), ("nAvgBytesPerSec", ctypes.c_uint32),
+                ("nBlockAlign", ctypes.c_uint16), ("wBitsPerSample", ctypes.c_uint16),
+                ("cbSize", ctypes.c_uint16)]
+
+
+def _default_render(enum):
+    """(IMMDevice, id) for the default multimedia output, the endpoint
+    _default_output_level reads. The caller releases the device."""
+    dev = ctypes.c_void_p()
+    hr = _vcall(enum, 4, ctypes.c_int32, ctypes.c_int32,
+                ctypes.POINTER(ctypes.c_void_p))(enum, 0, 1, ctypes.byref(dev))
+    if hr != 0 or not dev:
+        return (None, None)
+    dev_id = None
+    pid = ctypes.c_wchar_p()
+    if _vcall(dev, 5, ctypes.POINTER(ctypes.c_wchar_p))(dev, ctypes.byref(pid)) == 0:
+        dev_id = pid.value
+        ctypes.windll.ole32.CoTaskMemFree(pid)
+    return (dev, dev_id)
+
+
+class LoopbackFeed(threading.Thread):
+    IDLE_STOP = 10.0       # stop capturing this long after the last /pcm request
+    KEEP_FRAMES = 16384    # newest frames kept for the wallpaper
+    STALE = 0.15           # no packet for this long means nothing is playing
+    CHECK_DEVICE = 0.5     # how often to look for a new default output
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.lock = threading.Lock()
+        self.buf = bytearray()
+        self.rate = 0
+        self.channels = 0
+        self.block = 0
+        self.device = None
+        self.error = None
+        self.opened = 0
+        self.last_packet = 0.0
+        self.last_request = time.time()
+
+    def snapshot(self, frames):
+        """(rate, channels, newest frames as float32 bytes). Empty bytes when
+        nothing is playing, since loopback simply stops delivering packets.
+        Zero channels while no capture is open, so the wallpaper keeps using
+        WE's samples instead of drawing silence."""
+        with self.lock:
+            self.last_request = time.time()
+            if not self.block:
+                return (0, 0, b"")
+            if time.time() - self.last_packet > self.STALE:
+                return (self.rate, self.channels, b"")
+            n = min(frames * self.block, len(self.buf))
+            return (self.rate, self.channels, bytes(self.buf[len(self.buf) - n:]))
+
+    def status(self):
+        with self.lock:
+            return {"device": self.device, "rate": self.rate, "channels": self.channels,
+                    "opened": self.opened, "error": self.error,
+                    "playing": bool(self.block) and time.time() - self.last_packet <= self.STALE}
+
+    def _idle(self):
+        return time.time() - self.last_request >= self.IDLE_STOP
+
+    def run(self):
+        _ensure_com()
+        while not self._idle():
+            try:
+                self._capture()
+            except Exception as exc:
+                with self.lock:
+                    self.error = str(exc)
+                    self.block = 0
+                time.sleep(1.0)
+
+    def _capture(self):
+        """Capture from the default output until it changes, the device goes
+        away (any failed call), or nobody has asked for samples in a while."""
+        ole32 = ctypes.windll.ole32
+        enum = ctypes.c_void_p()
+        dev = client = capture = fmt = None
+        try:
+            hr = ole32.CoCreateInstance(ctypes.byref(_guid(_CLSID_MMDEVICE_ENUM)), None,
+                                        _CLSCTX_ALL,
+                                        ctypes.byref(_guid(_IID_IMMDEVICE_ENUM)),
+                                        ctypes.byref(enum))
+            if hr != 0 or not enum:
+                raise OSError("MMDeviceEnumerator failed (0x%08X)" % (hr & 0xFFFFFFFF))
+            dev, dev_id = _default_render(enum)
+            if not dev:
+                raise OSError("no default output device")
+
+            # IMMDevice::Activate(IAudioClient)
+            client = ctypes.c_void_p()
+            hr = _vcall(dev, 3, ctypes.POINTER(_GUID), ctypes.c_uint32, ctypes.c_void_p,
+                        ctypes.POINTER(ctypes.c_void_p))(
+                            dev, ctypes.byref(_guid(_IID_IAUDIO_CLIENT)),
+                            _CLSCTX_ALL, None, ctypes.byref(client))
+            if hr != 0 or not client:
+                raise OSError("IAudioClient activation failed (0x%08X)" % (hr & 0xFFFFFFFF))
+
+            # IAudioClient::GetMixFormat. Shared-mode mixes are 32-bit float on
+            # practically every system; anything else is converted to float by
+            # the audio engine, so the wallpaper only ever decodes one format.
+            fmt = ctypes.c_void_p()
+            hr = _vcall(client, 8, ctypes.POINTER(ctypes.c_void_p))(client, ctypes.byref(fmt))
+            if hr != 0 or not fmt:
+                raise OSError("GetMixFormat failed (0x%08X)" % (hr & 0xFFFFFFFF))
+            wf = ctypes.cast(fmt, ctypes.POINTER(_WaveFormatEx)).contents
+            tag = wf.wFormatTag
+            if tag == 0xFFFE and wf.cbSize >= 22:
+                tag = ctypes.cast(fmt.value + 24, ctypes.POINTER(ctypes.c_uint32)).contents.value
+            flags = _AUDCLNT_STREAMFLAGS_LOOPBACK
+            want = fmt
+            if not (tag == 3 and wf.wBitsPerSample == 32):
+                conv = _WaveFormatEx(3, wf.nChannels, wf.nSamplesPerSec,
+                                     wf.nSamplesPerSec * wf.nChannels * 4,
+                                     wf.nChannels * 4, 32, 0)
+                want = ctypes.cast(ctypes.pointer(conv), ctypes.c_void_p)
+                flags |= (_AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                          | _AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY)
+            rate, channels = wf.nSamplesPerSec, wf.nChannels
+            block = channels * 4
+
+            # IAudioClient::Initialize(shared, loopback, 200 ms buffer, 0, format, NULL)
+            hr = _vcall(client, 3, ctypes.c_int32, ctypes.c_uint32, ctypes.c_int64,
+                        ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p)(
+                            client, 0, flags, 2000000, 0, want, None)
+            if hr != 0:
+                raise OSError("loopback Initialize failed (0x%08X)" % (hr & 0xFFFFFFFF))
+            # IAudioClient::GetService(IAudioCaptureClient)
+            capture = ctypes.c_void_p()
+            hr = _vcall(client, 14, ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p))(
+                client, ctypes.byref(_guid(_IID_IAUDIO_CAPTURE)), ctypes.byref(capture))
+            if hr != 0 or not capture:
+                raise OSError("IAudioCaptureClient failed (0x%08X)" % (hr & 0xFFFFFFFF))
+            hr = _vcall(client, 10)(client)          # IAudioClient::Start
+            if hr != 0:
+                raise OSError("loopback Start failed (0x%08X)" % (hr & 0xFFFFFFFF))
+
+            with self.lock:
+                self.buf = bytearray()
+                self.rate, self.channels, self.block = rate, channels, block
+                self.device, self.error = dev_id, None
+                self.opened += 1
+
+            # IAudioCaptureClient::GetBuffer / ReleaseBuffer / GetNextPacketSize
+            get_buf = _vcall(capture, 3, ctypes.POINTER(ctypes.c_void_p),
+                             ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32),
+                             ctypes.c_void_p, ctypes.c_void_p)
+            release = _vcall(capture, 4, ctypes.c_uint32)
+            next_size = _vcall(capture, 5, ctypes.POINTER(ctypes.c_uint32))
+            size, data = ctypes.c_uint32(), ctypes.c_void_p()
+            frames, bflags = ctypes.c_uint32(), ctypes.c_uint32()
+            keep = self.KEEP_FRAMES * block
+            checked = time.time()
+            while True:
+                time.sleep(0.01)
+                if next_size(capture, ctypes.byref(size)) < 0:
+                    raise OSError("output device went away")
+                while size.value:
+                    if get_buf(capture, ctypes.byref(data), ctypes.byref(frames),
+                               ctypes.byref(bflags), None, None) < 0:
+                        raise OSError("output device went away")
+                    n = frames.value
+                    if bflags.value & _AUDCLNT_BUFFERFLAGS_SILENT or not data:
+                        chunk = bytes(n * block)
+                    else:
+                        chunk = ctypes.string_at(data, n * block)
+                    release(capture, n)
+                    with self.lock:
+                        self.buf += chunk
+                        if len(self.buf) > keep:
+                            del self.buf[:len(self.buf) - keep]
+                        self.last_packet = time.time()
+                    if next_size(capture, ctypes.byref(size)) < 0:
+                        raise OSError("output device went away")
+                now = time.time()
+                if self._idle():
+                    return
+                if now - checked >= self.CHECK_DEVICE:
+                    checked = now
+                    probe, probe_id = _default_render(enum)
+                    _com_release(probe)
+                    if probe_id and probe_id != dev_id:
+                        return                       # reopen on the new default
+        finally:
+            if client:
+                _vcall(client, 11)(client)           # IAudioClient::Stop
+            _com_release(capture)
+            _com_release(client)
+            if fmt:
+                ole32.CoTaskMemFree(fmt)
+            _com_release(dev)
+            _com_release(enum)
+            with self.lock:
+                self.block = 0
+
+
+_FEED_LOCK = threading.Lock()
+_FEED = None
+
+
+def _loopback_feed():
+    """The running capture, started on the first request after it went idle."""
+    global _FEED
+    with _FEED_LOCK:
+        if _FEED is None or not _FEED.is_alive():
+            _FEED = LoopbackFeed()
+            _FEED.start()
+        return _FEED
+
+
+_ENUM_PROC =ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
 
 def _stacked_view_count():
@@ -1625,16 +1871,23 @@ class WeAudioWatchdog(threading.Thread):
 
                 with _AUDIO_LOCK:
                     state = _AUDIO_REPORT["state"]
+                    src = _AUDIO_REPORT["src"]
                     age = time.time() - _AUDIO_REPORT["ts"]
 
                 # No fresh report means no wallpaper is talking to us (or it is a
                 # remote setup, or an older build): nothing to diagnose.
                 fresh = state is not None and age < self.REPORT_MAX_AGE
+                # A wallpaper drawing from our own capture does not need WE's,
+                # so a deaf WE is nothing to restart it over.
+                ours = fresh and src == "c"
 
                 if self._pending:
                     # WE's own "reload audio" setting sometimes reattaches
                     # capture by itself; live samples mean the restart is moot.
-                    if fresh and state == "1":
+                    if ours:
+                        self._pending = False
+                        self._log("wallpaper switched to the companion's capture, restart canceled")
+                    elif fresh and state == "1":
                         self._pending = False
                         self._log("audio capture came back on its own, restart canceled")
                     elif (_input_idle_seconds() >= self.IDLE_BEFORE_FIX
@@ -1652,7 +1905,7 @@ class WeAudioWatchdog(threading.Thread):
                             self._remediate()
                     continue
 
-                starved = fresh and state == "0" and peak > self.PEAK_MIN
+                starved = fresh and not ours and state == "0" and peak > self.PEAK_MIN
                 # Never restart WE under a fullscreen game: a deaf visualizer
                 # nobody can see beats a desktop flash in the middle of a match.
                 # Wallpapers from v2.11 already report "x" in game mode; this
@@ -1774,6 +2027,31 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+        elif self.path.startswith("/pcm"):
+            # Newest output samples for the visualizer: a 16-byte header (rate,
+            # channels, frames, reserved; little-endian uint32) and interleaved
+            # float32 frames. Loopback only: this is whatever the PC is playing.
+            if sys.platform != "win32" or not self._loopback():
+                self.send_response(404 if sys.platform != "win32" else 403)
+                self._cors()
+                self.end_headers()
+                return
+            import struct
+            try:
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                want = int((q.get("n") or ["2048"])[0])
+            except ValueError:
+                want = 2048
+            want = max(256, min(want, LoopbackFeed.KEEP_FRAMES))
+            rate, channels, data = _loopback_feed().snapshot(want)
+            frames = len(data) // (channels * 4) if channels else 0
+            payload = struct.pack("<IIII", rate, channels, frames, 0) + data
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self._cors()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
         elif self.path.startswith("/audio"):
             # Diagnostic: what the wallpaper last reported about its audio feed,
             # next to the real output level. Lets you tell "WE is feeding the
@@ -1784,6 +2062,8 @@ class Handler(BaseHTTPRequestHandler):
                 ts = _AUDIO_REPORT["ts"]
                 screens = _AUDIO_REPORT["screens"]
                 viewport = _AUDIO_REPORT["viewport"]
+                src = _AUDIO_REPORT["src"]
+                we_sum = _AUDIO_REPORT["we_sum"]
             device, peak = (None, 0.0)
             if sys.platform == "win32":
                 try:
@@ -1793,12 +2073,16 @@ class Handler(BaseHTTPRequestHandler):
             body = {
                 "wallpaper_audio": state,            # "1" live, "0" starved, "x" off, null none
                 "wallpaper_frame_sum": round(total, 6),
+                # "c" = drawn from the companion's capture, "w" = from WE's
+                "wallpaper_source": src,
+                "we_frame_sum": round(we_sum, 6) if we_sum is not None else None,
                 "report_age_s": round(time.time() - ts, 2) if ts else None,
                 "output_peak": round(peak, 5),
                 "output_device": device,
                 # layout the wallpaper resolved: >1 screens means it is spanning
                 "wallpaper_screens": screens,
                 "wallpaper_viewport": viewport,
+                "capture": _FEED.status() if _FEED is not None and _FEED.is_alive() else None,
             }
             payload = json.dumps(body).encode("utf-8")
             self.send_response(200)

@@ -3005,6 +3005,9 @@ function metricsUrlWithAudio(ep){
     const vis = CFG.audio && (!GAME.on || CFG.gameVisualizer);
     u.searchParams.set("aud", vis ? (AUD.live?"1":"0") : "x");
     u.searchParams.set("audsum", (AUD.lastSum||0).toFixed(5));
+    // which capture the visualizer is drawing: the companion's own, or WE's
+    u.searchParams.set("src", CAUD.on ? "c" : "w");
+    u.searchParams.set("wesum", (AUD.weSum||0).toFixed(5));
     // Piggyback the resolved layout too. On a spanned desktop this is the only
     // way to see which layout the wallpaper actually settled on without
     // screenshotting the desktop or opening a CEF debug port: curl /audio.
@@ -3473,13 +3476,136 @@ function renderTailnet(){
    Uses Wallpaper Engine's audio listener when present (128 freq values:
    64 left + 64 right). Falls back to a gentle idle waveform otherwise.
    ========================================================================= */
-const AUD={ data:new Array(64).fill(0), smooth:new Array(64).fill(0), live:false, quietSince:0, lastSum:0 };
+const AUD={ data:new Array(64).fill(0), smooth:new Array(64).fill(0), live:false, quietSince:0, lastSum:0, weSum:0 };
 // WE keeps calling the listener with all-zero frames when the captured device is
 // silent (or its capture has died), which would latch live=true forever and draw
 // a dead flat line. Drop back to the idle waveform after this much silence.
 const AUD_QUIET_MS=3000, AUD_QUIET_SUM=0.002;
+// WE's listener. While the companion feeds the visualizer, WE's samples are only
+// summed for the diagnostics (/audio on the companion shows both).
 function onAudioSamples(samples){
   if(!samples || !samples.length){ return; }
+  const half=Math.floor(samples.length/2);
+  let s=0; for(let i=0;i<64;i++) s+=((samples[i]||0)+(samples[i+half]||0))*0.5;
+  AUD.weSum=s;
+  if(!CAUD.on) audioFrame(samples);
+}
+
+/* Companion audio. WE's own capture goes deaf whenever the default output
+   device changes (a headset connects, VR starts, a monitor wakes its HDMI
+   endpoint) and stays deaf until WE restarts. A local companion from v3.12
+   captures the output itself and follows device switches, so while it answers
+   /pcm the visualizer runs on that. Raw samples come over loopback and the FFT
+   runs here, which keeps the companion to a byte copy per packet. */
+const CAUD={ on:false, busy:false, next:0, n:2048, plan:null, map:null, out:new Float32Array(128) };
+const CAUD_MS=33;
+function caudUrl(){
+  if(!CFG.realMetrics || !realOK) return null;
+  const ep=metricsEndpoint(); if(ep.remote) return null;
+  try{ const u=new URL(ep.url); u.pathname="/pcm"; u.search="?n="+CAUD.n; return u.href; }catch(e){ return null; }
+}
+function caudTick(now){
+  if(CAUD.busy || now<CAUD.next) return;
+  const url=caudUrl();
+  if(!url){ CAUD.on=false; return; }
+  CAUD.busy=true; CAUD.next=now+CAUD_MS;
+  const ctl=new AbortController(), tmr=setTimeout(()=>ctl.abort(), 600);
+  fetch(url, {cache:"no-store", signal:ctl.signal}).then(r=>{
+    if(!r.ok) throw r.status;               // 404: a companion older than v3.12
+    return r.arrayBuffer();
+  }).then(buf=>{
+    CAUD.on=caudFrame(buf);
+  }).catch(e=>{
+    CAUD.on=false; CAUD.next=performance.now()+(e===404 ? 60000 : 5000);
+  }).finally(()=>{ clearTimeout(tmr); CAUD.busy=false; });
+}
+// FFT size for about 43 ms of audio: 2048 at 44.1 and 48 kHz.
+function caudSize(rate){ return Math.min(16384, Math.max(512, 1<<Math.round(Math.log2(rate*0.0427)))); }
+function fftPlan(n){
+  const bits=Math.round(Math.log2(n)), rev=new Uint32Array(n);
+  for(let i=0;i<n;i++){ let r=0; for(let b=0;b<bits;b++) r|=((i>>b)&1)<<(bits-1-b); rev[i]=r; }
+  const cos=new Float32Array(n/2), sin=new Float32Array(n/2), win=new Float32Array(n);
+  for(let i=0;i<n/2;i++){ cos[i]=Math.cos(2*Math.PI*i/n); sin[i]=-Math.sin(2*Math.PI*i/n); }
+  let ws=0; for(let i=0;i<n;i++){ win[i]=0.5-0.5*Math.cos(2*Math.PI*i/(n-1)); ws+=win[i]; }
+  return { n, rev, cos, sin, win, norm:2/ws, re:new Float32Array(n), im:new Float32Array(n),
+           mL:new Float32Array(n/2), mR:new Float32Array(n/2) };
+}
+function fftRun(p){
+  const n=p.n, re=p.re, im=p.im, cos=p.cos, sin=p.sin;
+  for(let size=2; size<=n; size<<=1){
+    const half=size>>1, step=n/size;
+    for(let i=0;i<n;i+=size){
+      for(let j=0,k=0;j<half;j++,k+=step){
+        const a=i+j, b=a+half;
+        const tr=re[b]*cos[k]-im[b]*sin[k], ti=re[b]*sin[k]+im[b]*cos[k];
+        re[b]=re[a]-tr; im[b]=im[a]-ti; re[a]+=tr; im[a]+=ti;
+      }
+    }
+  }
+}
+// False while the companion has no capture open, so WE's samples stand in.
+function caudFrame(buf){
+  const dv=new DataView(buf);
+  const rate=dv.getUint32(0,true), ch=dv.getUint32(4,true), frames=dv.getUint32(8,true);
+  if(!ch) return false;
+  const out=CAUD.out;
+  CAUD.n=caudSize(rate);
+  const n=CAUD.n;
+  if(frames<n){ out.fill(0); audioFrame(out); return true; }   // nothing playing
+  let p=CAUD.plan; if(!p || p.n!==n) p=CAUD.plan=fftPlan(n);
+  // Left in the real part, right in the imaginary: one complex FFT, two spectra.
+  const pcm=new Float32Array(buf, 16, frames*ch), off=(frames-n)*ch, r1=ch>1 ? 1 : 0;
+  for(let i=0;i<n;i++){
+    const w=p.win[i], j=p.rev[i], s=off+i*ch;
+    p.re[j]=pcm[s]*w; p.im[j]=pcm[s+r1]*w;
+  }
+  fftRun(p);
+  const re=p.re, im=p.im, mL=p.mL, mR=p.mR, k2=p.norm*0.5;
+  mL[0]=Math.abs(re[0])*p.norm; mR[0]=Math.abs(im[0])*p.norm;
+  for(let k=1;k<n/2;k++){
+    const ar=re[k], ai=im[k], br=re[n-k], bi=im[n-k];
+    mL[k]=Math.hypot(ar+br, ai-bi)*k2;
+    mR[k]=Math.hypot(ar-br, ai+bi)*k2;
+  }
+  caudBands(rate, n, mL, mR, out);
+  audioFrame(out);
+  return true;
+}
+/* Bars laid out the way WE lays out its own, fitted on 2026-11-01 against a
+   minute of music captured both ways: one FFT bin per bar up to about 700 Hz,
+   then log-spaced to 3.2 kHz at bar 43 and 16 kHz at bar 63. Level is the
+   band's peak amplitude^0.8 times a gain that rises with frequency, eased
+   halfway toward each new frame. That tracks WE's bars at r=0.84 with the same
+   overall level, so the sensitivity setting means what it did before. */
+function caudMap(rate, n){
+  const res=rate/n, half=n/2, fc=new Float64Array(64);
+  for(let j=0;j<64;j++){
+    fc[j]= j<30 ? (j+1.25)*23.4375
+         : j<=43 ? 709*Math.pow(3200/709, (j-29)/14)
+         : 3200*Math.pow(5, (j-43)/20);
+  }
+  const lo=new Uint16Array(64), hi=new Uint16Array(64), gain=new Float32Array(64);
+  for(let j=0;j<64;j++){
+    const e0= j ? Math.sqrt(fc[j-1]*fc[j]) : fc[0]*fc[0]/Math.sqrt(fc[0]*fc[1]);
+    const e1= j<63 ? Math.sqrt(fc[j]*fc[j+1]) : fc[63]*fc[63]/Math.sqrt(fc[62]*fc[63]);
+    lo[j]=Math.min(half-1, Math.max(1, Math.round(e0/res)));
+    hi[j]=Math.min(half, Math.max(lo[j]+1, Math.round(e1/res)));
+    const L=Math.log(fc[j]); gain[j]=Math.exp(0.1129*L*L - 0.968*L + 2.284);
+  }
+  return { rate, n, lo, hi, gain };
+}
+function caudBands(rate, n, mL, mR, out){
+  let m=CAUD.map; if(!m || m.rate!==rate || m.n!==n) m=CAUD.map=caudMap(rate, n);
+  for(let j=0;j<64;j++){
+    let l=0, r=0;
+    for(let k=m.lo[j];k<m.hi[j];k++){ if(mL[k]>l) l=mL[k]; if(mR[k]>r) r=mR[k]; }
+    const g=m.gain[j];
+    out[j]   +=(g*Math.pow(l,0.8)-out[j])*0.5;
+    out[64+j]+=(g*Math.pow(r,0.8)-out[64+j])*0.5;
+  }
+}
+
+function audioFrame(samples){
   // average L/R -> 64 bins. Sensitivity scales what gets drawn, not the
   // silence test, so a raised gain cannot hold a dead capture's noise "live".
   const half=Math.floor(samples.length/2), g=CFG.audioGain;
@@ -3514,6 +3640,7 @@ function drawAudio(t){
     cv._chk=t;
     if(!cv._ctx || Math.abs(cv._w-cv.getBoundingClientRect().width)>1){ audioSetup(); AUDGRAD.clear(); }
   }
+  if(CFG.audio) caudTick(t);
   const ctx=cv._ctx, w=cv._w, h=cv._h, mid=h/2, N=64;
   ctx.clearRect(0,0,w,h);
 

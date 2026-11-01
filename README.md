@@ -335,6 +335,13 @@ and that the wallpaper's **Audio-reactive visualizer** property is on. With no
 audio feed (or during silence) it falls back to the idle wave by design. If the
 bars do react but only a little, raise **Audio sensitivity**.
 
+Wallpaper Engine's own capture often goes deaf after the default output device
+changes (a headset connects, VR starts, a monitor wakes up) and stays deaf until
+WE restarts. With the companion running (v3.12 or later), the visualizer does
+not depend on it: the companion captures your default output itself, follows
+device switches, and the wallpaper draws from that. `http://127.0.0.1:8377/audio`
+shows `"wallpaper_source": "c"` while it does.
+
 ### Auto-start the companion on login (Windows)
 
 The recommended installer above already sets this up via a Startup-folder
