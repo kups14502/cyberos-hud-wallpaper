@@ -3406,7 +3406,7 @@ function buildTerminal(){
 }
 
 /* top-right label that replaced the header bar, e.g. "HOST//OS  v0.1.7" */
-const VERSION = "3.12";
+const VERSION = "3.13";
 function updateOsLabel(){
   const el=$("#os-label"); if(!el) return;
   el.querySelector(".host").textContent = activeHostName().toUpperCase().replace(/\s+/g,"")+"//OS";
@@ -14046,28 +14046,63 @@ const STARSHIP=(()=>{
   const REDRAW_MS=33, TAU=Math.PI*2, DEG=String.fromCharCode(176), DOT=String.fromCharCode(183);
   const ORDER=["galaxy","constitution","intrepid","defiant"];
   const YAW0=-0.62, STILL_T=0;
-  const ST={ cv:null, lab:null, ctx:null, R:null, failed:false, id:"", geos:{}, box:null, lay:"",
+  const ST={ cv:null, lab:null, ctx:null, R:null, failed:false, css:false, fix:0, tries:0, id:"", geos:{}, box:null, lay:"",
              acc:REDRAW_MS, redraw:true, e:0, side:{}, ly:{}, font:"" };
   const sm=(a,b,x)=>{ const u=clamp((x-a)/(b-a),0,1); return u*u*(3-2*u); };
 
   function dom(){
-    if(ST.cv || ST.failed) return !!ST.cv;
-    const css=document.createElement("style");
-    css.textContent=
-      "#ship-gl,#ship-lab{position:fixed;left:0;top:0;pointer-events:none;z-index:1;display:none}"+
-      "body[data-scene=starship]:not(.no-terrain) #ship-gl,body[data-scene=starship]:not(.no-terrain) #ship-lab{display:block}"+
-      "body.has-bgmedia:not(.bg-keep-scene) #ship-gl,body.has-bgmedia:not(.bg-keep-scene) #ship-lab{display:none}"+
-      // kept over a picture, the stars rise to z 2; the ship stays in front of them
-      "body.has-bgmedia.bg-keep-scene #ship-gl,body.has-bgmedia.bg-keep-scene #ship-lab{z-index:3}";
-    document.head.appendChild(css);
-    const stage=document.getElementById("stage"), at=document.getElementById("screens");
-    ST.cv=document.createElement("canvas"); ST.cv.id="ship-gl";
-    ST.lab=document.createElement("canvas"); ST.lab.id="ship-lab";
-    stage.insertBefore(ST.cv, at); stage.insertBefore(ST.lab, at);
-    ST.R=SHIPGL.create(ST.cv);
-    if(!ST.R){ ST.failed=true; console.warn("CyberOS HUD: the starship scene needs WebGL"); return false; }
-    ST.ctx=ST.lab.getContext("2d");
+    if(ST.R) return true;
+    if(ST.failed || ST.fix) return false;   // no WebGL, or a lost pair waiting to be replaced
+    if(!ST.css){
+      const css=document.createElement("style");
+      css.textContent=
+        "#ship-gl,#ship-lab{position:fixed;left:0;top:0;pointer-events:none;z-index:1;display:none}"+
+        "body[data-scene=starship]:not(.no-terrain) #ship-gl,body[data-scene=starship]:not(.no-terrain) #ship-lab{display:block}"+
+        "body.has-bgmedia:not(.bg-keep-scene) #ship-gl,body.has-bgmedia:not(.bg-keep-scene) #ship-lab{display:none}"+
+        // kept over a picture, the stars rise to z 2; the ship stays in front of them
+        "body.has-bgmedia.bg-keep-scene #ship-gl,body.has-bgmedia.bg-keep-scene #ship-lab{z-index:3}";
+      document.head.appendChild(css);
+      ST.css=true;
+    }
+    if(!build()){ ST.failed=true; console.warn("CyberOS HUD: the starship scene needs WebGL"); return false; }
     return true;
+  }
+
+  /* A fresh pair of canvases in place of the old one. A lost WebGL context is
+     not restored in place: after a graphics driver update the restored canvas
+     stayed a white box until the page was reloaded, and a new canvas is what a
+     reload gives. */
+  function build(){
+    const cv=document.createElement("canvas"), lab=document.createElement("canvas");
+    cv.id="ship-gl"; lab.id="ship-lab";
+    const R=SHIPGL.create(cv);
+    if(!R) return false;
+    if(ST.cv){ ST.cv.remove(); ST.lab.remove(); }
+    const stage=document.getElementById("stage"), at=document.getElementById("screens");
+    stage.insertBefore(cv, at); stage.insertBefore(lab, at);
+    cv.addEventListener("webglcontextlost", lost);
+    ST.cv=cv; ST.lab=lab; ST.R=R; ST.ctx=lab.getContext("2d");
+    ST.id=""; ST.lay=""; ST.side={}; ST.ly={};
+    if(typeof guardCanvases==="function") guardCanvases();
+    return true;
+  }
+  /* Hide the dead pair at once, so it never shows as a blank box, and build the
+     new one once the GPU is back: first after 1.5 s, then backing off to a
+     minute while it is still away. */
+  function lost(e){
+    if(e.target!==ST.cv || ST.fix) return;
+    ST.R=null;
+    ST.cv.style.visibility=ST.lab.style.visibility="hidden";
+    ST.tries=0;
+    retry();
+  }
+  function retry(){
+    ST.fix=setTimeout(()=>{
+      ST.fix=0;
+      if(!build()){ retry(); return; }
+      ST.tries=0;
+      if(GAME.on) gameStill();   // the loop that would draw the new pair is stopped
+    }, Math.min(60000, 1500*Math.pow(2, ST.tries++)));
   }
 
   /* The box: centered on the primary monitor, a little above the middle,
